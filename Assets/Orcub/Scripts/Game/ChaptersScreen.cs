@@ -12,7 +12,7 @@ namespace Orcub.Game
     /// </summary>
     public sealed class ChaptersScreen : MonoBehaviour
     {
-        const float CardHeight = 360f, Gap = 34f;
+        const float CardHeight = 400f, Gap = 34f;
 
         UiKit _kit;
         Action<int> _onOpen;
@@ -65,7 +65,7 @@ namespace Orcub.Game
 
             var view = UiKit.Rect("Viewport", safe);
             UiKit.Anchor(view, 0f, 0f, 1f, 0.78f);
-            view.gameObject.AddComponent<RectMask2D>();
+            view.gameObject.AddComponent<RectMask2D>().softness = new Vector2Int(0, 50);
             var hit = view.gameObject.AddComponent<Image>();
             hit.color = new Color(0, 0, 0, 0);
             _content = UiKit.Rect("Content", view);
@@ -117,26 +117,29 @@ namespace Orcub.Game
 
             var ink = UiKit.Ink;
             var soft = new Color(ink.r, ink.g, ink.b, 0.72f);
+            // text block: sits high when a button follows, centred when it doesn't
+            bool hasButton = isCurrent || nextLocked;
+            float lift = hasButton ? 0f : -0.12f;
             var cap = kit.MakeText(rt, $"Chapter {chapter + 1} · Levels {Chapters.First(chapter) + 1}–{Chapters.Last(chapter) + 1}",
                 UiKit.Caption, soft, TextAnchor.MiddleLeft);
-            UiKit.Anchor(cap.rectTransform, 0.38f, 0.76f, 0.98f, 0.92f);
+            UiKit.Anchor(cap.rectTransform, 0.38f, 0.75f + lift, 0.98f, 0.9f + lift);
             var name = kit.MakeText(rt, Chapters.Name(chapter), 54, ink, TextAnchor.MiddleLeft);
-            UiKit.Anchor(name.rectTransform, 0.38f, 0.56f, 0.86f, 0.76f);
+            UiKit.Anchor(name.rectTransform, 0.38f, 0.56f + lift, 0.86f, 0.75f + lift);
 
             var star = kit.MakeImage(rt, art.uiStarClay, UiKit.StarGold);
-            UiKit.Anchor(star.rectTransform, 0.38f, 0.38f, 0.45f, 0.55f);
+            UiKit.Anchor(star.rectTransform, 0.38f, 0.4f + lift, 0.45f, 0.55f + lift);
             var stars = kit.MakeText(rt, $"{Chapters.Stars(chapter)}/{Chapters.LevelCount(chapter) * 3}", UiKit.Body, ink, TextAnchor.MiddleLeft);
-            UiKit.Anchor(stars.rectTransform, 0.47f, 0.37f, 0.8f, 0.56f);
+            UiKit.Anchor(stars.rectTransform, 0.47f, 0.39f + lift, 0.8f, 0.56f + lift);
 
             if (isCurrent)
             {
                 var go = kit.Pill(rt, "Continue", UiKit.Mint, UiKit.Body, () => _onOpen?.Invoke(chapter));
-                UiKit.Anchor(go, 0.38f, 0.11f, 0.84f, 0.33f);
+                UiKit.Anchor(go, 0.38f, 0.08f, 0.84f, 0.35f);
             }
             else if (nextLocked)
             {
                 var need = kit.MakeImage(rt, art.uiPill, new Color(0.78f, 0.7f, 0.66f), sliced: true);
-                UiKit.Anchor(need.rectTransform, 0.38f, 0.12f, 0.82f, 0.31f);
+                UiKit.Anchor(need.rectTransform, 0.38f, 0.1f, 0.82f, 0.3f);
                 var t = kit.MakeText(need.transform, $"Finish chapter {chapter}", UiKit.Caption, soft);
                 UiKit.Anchor(t.rectTransform, 0, 0.06f, 1, 0.94f);
             }

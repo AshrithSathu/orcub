@@ -618,7 +618,7 @@ namespace Orcub.Game
         void OpenPause()
         {
             if (_levelOver || _hud == null || _hud.PopupOpen) return;
-            _wreath?.Show();
+            _wreath?.Show(frame: false);
             ShowPauseCard();
         }
 
@@ -655,7 +655,7 @@ namespace Orcub.Game
                 action();
                 return;
             }
-            _wreath?.Show();
+            _wreath?.Show(frame: false);
             _hud.ShowOutOfLives(
                 onRefillAd: () => _hud.ShowAdPlaceholder(1.4f, () =>
                 {

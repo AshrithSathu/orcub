@@ -21,7 +21,7 @@ namespace Orcub.Game
     {
         public const float TopBandFraction = 0.10f;
         public const float GoalBandFraction = 0.055f;
-        public const float TrayFraction = 0.155f;
+        public const float TrayFraction = 0.135f;
         const float DevBandFraction = 0.045f;
 
         /// <summary>Share of the safe area the board must keep clear at the top.</summary>
@@ -107,64 +107,99 @@ namespace Orcub.Game
             if (_devTools) BuildDev();
         }
 
+        // All three HUD bands share the same side margins so their edges line up.
+        const float SideMargin = 0.04f;
+
+        /// <summary>
+        /// The clay slab has a lip at the bottom; content is centred on its face (the part above the lip),
+        /// not on the whole sprite, or everything reads as sitting low.
+        /// </summary>
+        static RectTransform Face(RectTransform slab)
+        {
+            var face = UiKit.Rect("Face", slab);
+            UiKit.Anchor(face, 0.025f, 0.14f, 0.975f, 0.92f);
+            return face;
+        }
+
+        /// <summary>Square child, centred vertically at x (0..1 of parent), sized as a share of the parent's height.</summary>
+        static RectTransform SquareAt(RectTransform parent, string name, float x, float heightShare, Vector2 pivot)
+        {
+            var rt = UiKit.Rect(name, parent);
+            rt.anchorMin = new Vector2(x, 0.5f - heightShare * 0.5f);
+            rt.anchorMax = new Vector2(x, 0.5f + heightShare * 0.5f);
+            rt.pivot = pivot;
+            rt.offsetMin = rt.offsetMax = Vector2.zero;
+            rt.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+            return rt;
+        }
+
         void BuildTopBar()
         {
             var kit = _kit;
             var band = UiKit.Rect("TopBand", _safe);
             UiKit.Anchor(band, 0f, 1f - TopBandFraction, 1f, 1f);
             var slab = kit.MakeImage(band, _art.uiSlab, UiKit.Slab, sliced: true).rectTransform;
-            UiKit.Anchor(slab, 0.04f, 0.1f, 0.96f, 0.95f);
+            UiKit.Anchor(slab, SideMargin, 0.12f, 1f - SideMargin, 0.94f);
+            var face = Face(slab);
 
-            var pause = kit.RoundButton(slab, "Pause", _art.uiPause, UiKit.Coral, UiKit.Cream, () => Pause?.Invoke());
-            UiKit.Anchor(pause, 0.045f, 0.1f, 0.045f, 0.9f);
-            pause.pivot = new Vector2(0f, 0.5f);
-            pause.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+            // left: pause
+            var pauseSlot = SquareAt(face, "PauseSlot", 0.02f, 0.86f, new Vector2(0f, 0.5f));
+            var pause = kit.RoundButton(pauseSlot, "Pause", _art.uiPause, UiKit.Coral, UiKit.Cream, () => Pause?.Invoke());
+            UiKit.Anchor(pause, 0, 0, 1, 1);
             _hitAreas.Add(pause);
 
-            _level = kit.MakeText(slab, "Lv 1", UiKit.Body, UiKit.Ink);
-            UiKit.Anchor(_level.rectTransform, 0.2f, 0f, 0.42f, 1f);
-            var divider = kit.MakeImage(slab, null, new Color(UiKit.Ink.r, UiKit.Ink.g, UiKit.Ink.b, 0.2f));
-            UiKit.Anchor(divider.rectTransform, 0.435f, 0.26f, 0.44f, 0.74f);
+            // level
+            _level = kit.MakeText(face, "Level 1", UiKit.Body, UiKit.Ink);
+            UiKit.Anchor(_level.rectTransform, 0.16f, 0f, 0.43f, 1f);
+            var divider = kit.Divider(face);
+            UiKit.Anchor(divider.rectTransform, 0.445f, 0.2f, 0.45f, 0.8f);
 
-            // moves is the hero: big number, small caption underneath
-            _moves = kit.MakeText(slab, "0", 74, UiKit.Ink);
-            UiKit.Anchor(_moves.rectTransform, 0.46f, 0.36f, 0.78f, 0.98f);
-            _movesLabel = kit.MakeText(slab, "moves", 30, new Color(UiKit.Ink.r, UiKit.Ink.g, UiKit.Ink.b, 0.7f));
-            UiKit.Anchor(_movesLabel.rectTransform, 0.46f, 0.12f, 0.78f, 0.4f);
+            // moves is the hero: number and caption are one group, centred on the face
+            var moves = UiKit.Rect("Moves", face);
+            UiKit.Anchor(moves, 0.47f, 0f, 0.8f, 1f);
+            _moves = kit.MakeText(moves, "0", 76, UiKit.Ink);
+            var mrt = _moves.rectTransform;
+            mrt.anchorMin = mrt.anchorMax = new Vector2(0.5f, 0.5f);
+            mrt.sizeDelta = new Vector2(220f, 84f);
+            mrt.anchoredPosition = new Vector2(0f, 14f);
+            _movesLabel = kit.MakeText(moves, "moves", UiKit.Caption, new Color(UiKit.Ink.r, UiKit.Ink.g, UiKit.Ink.b, 0.7f));
+            var lrt = _movesLabel.rectTransform;
+            lrt.anchorMin = lrt.anchorMax = new Vector2(0.5f, 0.5f);
+            lrt.sizeDelta = new Vector2(220f, 40f);
+            lrt.anchoredPosition = new Vector2(0f, -40f);
 
-            var heart = UiKit.Rect("Lives", slab);
-            UiKit.Anchor(heart, 0.955f, 0.04f, 0.955f, 0.96f);
-            heart.pivot = new Vector2(1f, 0.5f);
+            // right: lives (heart sits inside the bar, never past its edge)
+            var heart = SquareAt(face, "Lives", 0.98f, 0.9f, new Vector2(1f, 0.5f));
             var hImg = heart.gameObject.AddComponent<Image>();
             hImg.sprite = _art.uiHeartClay;
             hImg.color = UiKit.HeartRed;
             hImg.preserveAspect = true;
             hImg.raycastTarget = false;
-            heart.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
             _lives = kit.MakeText(heart, Lives.Count.ToString(), UiKit.Label, UiKit.Cream);
-            UiKit.Anchor(_lives.rectTransform, 0f, 0.1f, 1f, 0.9f);
+            UiKit.Anchor(_lives.rectTransform, 0f, 0.14f, 1f, 0.94f);
         }
 
         void BuildGoal()
         {
             var kit = _kit;
             var goal = UiKit.Rect("Goal", _safe);
-            UiKit.Anchor(goal, 0.12f, 1f - TopBandFraction - GoalBandFraction, 0.88f, 1f - TopBandFraction);
+            UiKit.Anchor(goal, SideMargin + 0.05f, 1f - TopBandFraction - GoalBandFraction, 1f - SideMargin - 0.05f, 1f - TopBandFraction);
             var pill = kit.MakeImage(goal, _art.uiSlab, UiKit.Slab, sliced: true).rectTransform;
-            UiKit.Anchor(pill, 0f, 0.05f, 1f, 0.95f);
-            _goalText = kit.MakeText(pill, "Free all gears", UiKit.Caption, UiKit.Ink, TextAnchor.MiddleLeft);
-            UiKit.Anchor(_goalText.rectTransform, 0.08f, 0f, 0.56f, 1f);
-            _goalIcons = UiKit.Rect("Gears", pill);
-            UiKit.Anchor(_goalIcons, 0.57f, 0.16f, 0.94f, 0.84f);
+            UiKit.Anchor(pill, 0f, 0.04f, 1f, 0.96f);
+            var face = Face(pill);
+            _goalText = kit.MakeText(face, "Free all gears", UiKit.Caption, UiKit.Ink, TextAnchor.MiddleLeft);
+            UiKit.Anchor(_goalText.rectTransform, 0.06f, 0f, 0.56f, 1f);
+            _goalIcons = UiKit.Rect("Gears", face);
+            UiKit.Anchor(_goalIcons, 0.56f, 0.12f, 0.95f, 0.88f);
         }
 
         void BuildTray()
         {
             var kit = _kit;
-            float y0 = (_devTools ? DevBandFraction : 0f) + 0.008f;
+            float y0 = (_devTools ? DevBandFraction : 0f) + 0.012f;
             var tray = UiKit.Rect("Tray", _safe);
-            UiKit.Anchor(tray, 0.04f, y0, 0.96f, y0 + TrayFraction);
-            var shelf = kit.Card(tray);
+            UiKit.Anchor(tray, SideMargin, y0, 1f - SideMargin, y0 + TrayFraction);
+            var shelf = kit.Card(tray, 0.7f);
             UiKit.Anchor(shelf.rectTransform, 0f, 0f, 1f, 1f);
             _hitAreas.Add(tray);   // the whole shelf belongs to the UI, never the board
 
@@ -178,16 +213,19 @@ namespace Orcub.Game
             {
                 var (kind, glyph, label) = items[i];
                 var slot = UiKit.Rect(label, tray);
-                UiKit.Anchor(slot, i / 3f, 0f, (i + 1) / 3f, 1f);
-                var button = kit.RoundButton(slot, label, glyph, UiKit.Coral, UiKit.Cream, () => Booster?.Invoke(kind));
-                UiKit.Anchor(button, 0.5f, 0.3f, 0.5f, 0.92f);
-                button.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+                UiKit.Anchor(slot, i / 3f, 0.1f, (i + 1) / 3f, 0.92f);
+                // button and its label are one unit: label sits right under the button
+                var holder = UiKit.Rect("Button", slot);
+                UiKit.Anchor(holder, 0.5f, 0.3f, 0.5f, 1f);
+                holder.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+                var button = kit.RoundButton(holder, label, glyph, UiKit.Coral, UiKit.Cream, () => Booster?.Invoke(kind));
+                UiKit.Anchor(button, 0, 0, 1, 1);
                 var badge = kit.MakeImage(button, _art.uiRound, UiKit.CardCream);
-                UiKit.Anchor(badge.rectTransform, 0.66f, 0.62f, 1.06f, 1.02f);
+                UiKit.Anchor(badge.rectTransform, 0.68f, 0.66f, 1.04f, 1.02f);
                 var count = kit.MakeText(badge.transform, "3", UiKit.Caption, UiKit.Ink);
-                UiKit.Anchor(count.rectTransform, 0, 0.05f, 1, 0.95f);
-                var caption = kit.MakeText(slot, label, UiKit.Caption, UiKit.Ink);
-                UiKit.Anchor(caption.rectTransform, 0f, 0.04f, 1f, 0.28f);
+                UiKit.Anchor(count.rectTransform, 0, 0.08f, 1, 0.96f);
+                var caption = kit.MakeText(slot, label, UiKit.Caption, UiKit.Ink, TextAnchor.UpperCenter);
+                UiKit.Anchor(caption.rectTransform, 0f, 0f, 1f, 0.27f);
                 _boosters[kind] = (button.GetComponent<Image>(), count);
             }
         }
@@ -238,7 +276,7 @@ namespace Orcub.Game
 
         public void SetLevel(int number, string info)
         {
-            _level.text = $"Lv {number}";
+            _level.text = $"Level {number}";
             if (_info != null) _info.text = info;
         }
 
@@ -372,7 +410,8 @@ namespace Orcub.Game
             _popup = UiKit.Rect("Popup", _cards);
             UiKit.Anchor(_popup, 0, 0, 1, 1);
             var blocker = _popup.gameObject.AddComponent<Image>();
-            blocker.color = new Color(0, 0, 0, 0);
+            blocker.color = new Color(0.05f, 0.01f, 0.03f, 0f);
+            if (cream) StartCoroutine(FadeScrim(blocker, 0.5f));   // wreath cards dim the world themselves
             _card = UiKit.Rect("Card", _popup);
             _card.anchorMin = _card.anchorMax = new Vector2(0.5f, 0.5f);
             _card.pivot = new Vector2(0.5f, 0.5f);
@@ -386,6 +425,19 @@ namespace Orcub.Game
             }
             StartCoroutine(FadeIn(_card.gameObject.AddComponent<CanvasGroup>()));
             return _card;
+        }
+
+        static IEnumerator FadeScrim(Image scrim, float alpha)
+        {
+            float t = 0f;
+            while (t < 1f && scrim != null)
+            {
+                t += Time.unscaledDeltaTime / 0.2f;
+                var c = scrim.color;
+                c.a = alpha * UiKit.EaseOut(Mathf.Clamp01(t));
+                scrim.color = c;
+                yield return null;
+            }
         }
 
         static IEnumerator FadeIn(CanvasGroup g)
@@ -490,7 +542,7 @@ namespace Orcub.Game
         public void ShowPause(Action onRestart, Action onResume, Action onHome)
         {
             var card = OpenCard(cream: true);
-            Title(card, "Paused", 0.82f, 0.96f, 80);
+            Title(card, "Paused", 0.8f, 0.93f, 80);
             Toggle(card, _art.uiSound, "Sound", GameSettings.SoundOn, on => GameSettings.SoundOn = on, 0.67f, 0.78f);
             Toggle(card, _art.uiHaptics, "Haptics", GameSettings.HapticsOn, on => GameSettings.HapticsOn = on, 0.54f, 0.65f);
             var resume = _kit.Pill(card, "Resume", UiKit.Mint, UiKit.Title, () => { ClosePopup(); onResume(); });
@@ -518,11 +570,18 @@ namespace Orcub.Game
             var card = OpenCard(cream: true);
             Title(card, title, 0.68f, 0.84f, 72);
             var cost = UiKit.Rect("Cost", card);
-            UiKit.Anchor(cost, 0.2f, 0.54f, 0.8f, 0.65f);
-            var h = _kit.MakeImage(cost, _art.uiHeartClay, UiKit.HeartRed);
-            UiKit.Anchor(h.rectTransform, 0f, 0f, 0.24f, 1f);
+            UiKit.Anchor(cost, 0f, 0.54f, 1f, 0.65f);
             var t = _kit.MakeText(cost, "Uses 1 life", UiKit.Body, UiKit.Ink, TextAnchor.MiddleLeft);
-            UiKit.Anchor(t.rectTransform, 0.28f, 0f, 1f, 1f);
+            float tw = t.preferredWidth, hw = 64f, gap = 16f, x0 = -(hw + gap + tw) * 0.5f;
+            var h = _kit.MakeImage(cost, _art.uiHeartClay, UiKit.HeartRed);
+            var hrt = h.rectTransform;
+            hrt.anchorMin = hrt.anchorMax = new Vector2(0.5f, 0.5f);
+            hrt.sizeDelta = new Vector2(hw, hw);
+            hrt.anchoredPosition = new Vector2(x0 + hw * 0.5f, 0f);
+            var trt = t.rectTransform;
+            trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 0.5f);
+            trt.sizeDelta = new Vector2(tw + 4f, 80f);
+            trt.anchoredPosition = new Vector2(x0 + hw + gap + tw * 0.5f, 0f);
             var ok = _kit.Pill(card, confirmLabel, UiKit.Coral, UiKit.Title, () => { ClosePopup(); onConfirm(); });
             UiKit.Anchor(ok, 0.14f, 0.32f, 0.86f, 0.49f);
             var cancel = _kit.Link(card, "Cancel", OnCard, () => { ClosePopup(); onCancel(); });
@@ -540,18 +599,16 @@ namespace Orcub.Game
             UiKit.Anchor(timer.rectTransform, 0f, 0.53f, 1f, 0.62f);
             StartCoroutine(Countdown(timer));
             var ad = _kit.Pill(card, "Refill with ad", UiKit.Coral, UiKit.Body, () => { ClosePopup(); onRefillAd(); }, _art.uiFilm);
-            UiKit.Anchor(ad, 0.08f, 0.39f, 0.92f, 0.52f);
-            var cogs = _kit.Pill(card, "Refill for 12 cogs", UiKit.Mint, UiKit.Label,
-                () => { if (onRefillCogs != null) { ClosePopup(); onRefillCogs(); } }, _art.uiCogClay, UiKit.Brass);
-            UiKit.Anchor(cogs, 0.08f, 0.25f, 0.92f, 0.38f);
-            if (onRefillCogs == null)
+            if (onRefillCogs != null)   // the cog shop isn't live yet: no dead buttons
             {
-                var g = cogs.gameObject.AddComponent<CanvasGroup>();
-                g.alpha = 0.45f;
-                g.interactable = false;
+                UiKit.Anchor(ad, 0.1f, 0.33f, 0.9f, 0.48f);
+                var cogs = _kit.Pill(card, "Refill for 12 cogs", UiKit.Mint, UiKit.Label,
+                    () => { ClosePopup(); onRefillCogs(); }, _art.uiCogClay, UiKit.Brass);
+                UiKit.Anchor(cogs, 0.1f, 0.2f, 0.9f, 0.31f);
             }
-            var back = _kit.Link(card, "Back", OnCard, () => { ClosePopup(); onBack(); });
-            UiKit.Anchor(back, 0.34f, 0.13f, 0.66f, 0.24f);
+            else UiKit.Anchor(ad, 0.1f, 0.27f, 0.9f, 0.43f);
+            var back = _kit.Link(card, "Not now", OnCard, () => { ClosePopup(); onBack(); });
+            UiKit.Anchor(back, 0.3f, 0.08f, 0.7f, 0.2f);
         }
 
         IEnumerator Countdown(Text label)

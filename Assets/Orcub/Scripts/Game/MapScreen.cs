@@ -319,14 +319,21 @@ namespace Orcub.Game
             {
                 var col = UiKit.Rect($"Stars{i + 1}", box);
                 UiKit.Anchor(col, i / 3f, 0.06f, (i + 1) / 3f, 0.64f);
+                const float starW = 46f, textW = 86f, gap = 8f;
+                float groupW = (i + 1) * starW + gap + textW, x0 = -groupW * 0.5f;
                 for (int s = 0; s <= i; s++)
                 {
                     var st = kit.MakeImage(col, art.uiStarClay, UiKit.StarGold);
-                    float w = 0.13f, x0 = 0.5f - (i + 1) * w * 0.5f + s * w - 0.2f;
-                    UiKit.Anchor(st.rectTransform, x0, 0.2f, x0 + w, 0.8f);
+                    var srt = st.rectTransform;
+                    srt.anchorMin = srt.anchorMax = new Vector2(0.5f, 0.5f);
+                    srt.sizeDelta = new Vector2(starW, starW);
+                    srt.anchoredPosition = new Vector2(x0 + starW * (s + 0.5f), 0f);
                 }
-                _targets[i] = kit.MakeText(col, "", UiKit.Label, ink, TextAnchor.MiddleLeft);
-                UiKit.Anchor(_targets[i].rectTransform, 0.5f + (i + 1) * 0.065f - 0.17f, 0f, 1f, 1f);
+                _targets[i] = kit.MakeText(col, "", UiKit.Body, ink, TextAnchor.MiddleLeft);
+                var trt = _targets[i].rectTransform;
+                trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 0.5f);
+                trt.sizeDelta = new Vector2(textW, 64f);
+                trt.anchoredPosition = new Vector2(x0 + (i + 1) * starW + gap + textW * 0.5f, 0f);
                 if (i > 0)
                 {
                     var d = kit.Divider(box);

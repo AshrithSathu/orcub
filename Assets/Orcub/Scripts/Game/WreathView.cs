@@ -87,9 +87,11 @@ namespace Orcub.Game
 
         public bool Visible => gameObject.activeSelf && _outT < 0f;
 
-        public void Show()
+        /// <param name="frame">false = only dim the board (cream cards bring their own panel)</param>
+        public void Show(bool frame = true)
         {
             gameObject.SetActive(true);
+            _frame.gameObject.SetActive(frame);
             _t = 0f;
             _outT = -1f;
             _clampsSnapped = false;
