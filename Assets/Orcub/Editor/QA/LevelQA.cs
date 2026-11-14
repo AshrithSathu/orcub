@@ -74,6 +74,16 @@ namespace Orcub.QA
                             row.Notes.Add($"slot median rating drops {previous:F1} -> {median:F1} (>25 Elo)");
                     previous = median;
                 }
+                for (int slot = 200; slot < 2000; slot += 7)
+                    for (int variant = 0; variant < 5; variant++)
+                    {
+                        var data = InfiniteGenerator.Generate(slot, variant);
+                        var row = Inspect(data, slot, variant);
+                        if (JsonUtility.ToJson(data) != JsonUtility.ToJson(InfiniteGenerator.Generate(slot, variant))) row.Hard.Add("non-deterministic generation");
+                        // Generated geometry and bot failures are release gates, not advisories.
+                        row.Hard.AddRange(row.Checks); row.Checks.Clear();
+                        report.Rows.Add(row);
+                    }
             }
             catch (Exception e) { report.PackFailures.Add("Pack load/sweep: " + e.GetType().Name + ": " + e.Message); }
             Write(report);

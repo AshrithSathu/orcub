@@ -11,7 +11,7 @@ namespace Orcub.Core
             get
             {
                 int total = 0;
-                for (int i = 0; i < LevelLibrary.Count; i++) total += Progress.BestStars(i);
+                for (int i = 0; i < Mathf.Max(LevelLibrary.CuratedCount, Progress.HighestUnlocked); i++) total += Progress.BestStars(i);
                 return total;
             }
         }

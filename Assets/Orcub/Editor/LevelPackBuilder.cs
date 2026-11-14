@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Orcub.EditorTools
 {
-    /// <summary>Preserves chapter 1 and builds five solver-validated choices for every later saga slot.</summary>
+    /// <summary>Preserves the shipped 200 levels; optional later slots use the infinite generator.</summary>
     public static class LevelPackBuilder
     {
         public const string PackPath = "Assets/Orcub/Resources/Orcub/levels.json";
@@ -22,14 +22,14 @@ namespace Orcub.EditorTools
             var variants = new LevelVariants[count];
             for (int slot = 0; slot < count; slot++)
             {
-                if (slot < 20)
+                if (slot < LevelLibrary.CuratedCount)
                 {
                     levels[slot] = previous.levels[slot];
                     variants[slot] = previous.variants[slot];
                     continue;
                 }
                 var choices = new LevelData[5];
-                for (int variant = 0; variant < 5; variant++) choices[variant] = SagaGenerator.Generate(slot, variant, baseSeed);
+                for (int variant = 0; variant < 5; variant++) choices[variant] = InfiniteGenerator.Generate(slot, variant);
                 levels[slot] = choices[0];
                 variants[slot] = new LevelVariants { choices = choices };
             }

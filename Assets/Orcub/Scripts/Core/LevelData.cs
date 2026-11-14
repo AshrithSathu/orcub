@@ -9,6 +9,7 @@ namespace Orcub.Core
     public sealed class LevelData
     {
         public int id;
+        public string gen_version; // null for curated; algorithm plus content-curve fingerprint otherwise
         public string mechanic_intro;
         public bool is_boss;
         public string[] mechanics;

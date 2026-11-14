@@ -6,6 +6,7 @@ namespace Orcub.Core
     public sealed class Tuning
     {
         public string Version = "v2.1";
+        public InfiniteCurve Infinite = new InfiniteCurve();
         public int EarlyMoves = 5, PaceWindow = 8, RecentVariants = 2;
         public int StepDownAfter = 2, MovesAfter = 4, HintAfter = 5, SafetyMargin = 2, MaxExtraMoves = 10;
         public float TargetWinRate = .75f, BetaConcentration = 32, TargetSpread = 140;
@@ -23,6 +24,8 @@ namespace Orcub.Core
         public Tuning Snapshot() => FromJson(JsonUtility.ToJson(this));
         public void Validate()
         {
+            if (Infinite == null) throw new ArgumentException("Missing infinite curve");
+            Infinite.Validate();
             foreach (var field in typeof(Tuning).GetFields())
                 if (field.FieldType == typeof(float))
                 {

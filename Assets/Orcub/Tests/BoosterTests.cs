@@ -193,7 +193,7 @@ namespace Orcub.Tests
         }
 
         [Test]
-        public void StarBank_UsesBestStarsWithinLibrary_AndRejectsOverspending()
+        public void StarBank_UsesBestStarsAcrossSaga_AndRejectsOverspending()
         {
             ResetMeta();
             Assert.AreEqual(0, StarBank.TotalEarned);
@@ -203,7 +203,6 @@ namespace Orcub.Tests
             Progress.RecordWin(0, 2);
             Progress.RecordWin(0, 1);
             Progress.RecordWin(1, 3);
-            Progress.RecordWin(LevelLibrary.Count, 3);
             Assert.AreEqual(5, StarBank.TotalEarned);
             Assert.IsTrue(StarBank.TrySpend(0));
             Assert.IsTrue(StarBank.TrySpend(3));
@@ -213,6 +212,10 @@ namespace Orcub.Tests
             Assert.AreEqual(3, StarBank.Spent);
             Progress.RecordWin(0, 3);
             Assert.AreEqual(3, StarBank.Available);
+            Assert.IsTrue(StarBank.TrySpend(3));
+            Assert.AreEqual(0, StarBank.Available);
+            Progress.RecordWin(LevelLibrary.CuratedCount, 3);
+            Assert.AreEqual(3, StarBank.Available, "Generated levels earn spendable stars");
             Assert.IsTrue(StarBank.TrySpend(3));
             Assert.AreEqual(0, StarBank.Available);
         }

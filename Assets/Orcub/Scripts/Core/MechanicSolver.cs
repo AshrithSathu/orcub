@@ -28,8 +28,9 @@ namespace Orcub.Core
             return false;
         }
 
-        public static bool Solve(LevelDef def, out Result result, out List<int> order)
+        public static bool Solve(LevelDef def, out Result result, out List<int> order, int budgetMilliseconds = int.MaxValue)
         {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             if (def.Rings.Count > 20) throw new ArgumentException("Search supports at most 20 rings");
             var m = new PuzzleModel(def);
             var stats = new Result();
@@ -39,6 +40,7 @@ namespace Orcub.Core
             int branches = 0;
             int Visit()
             {
+                if (clock.ElapsedMilliseconds >= budgetMilliseconds) throw new TimeoutException("Solver budget exceeded");
                 int pathStart = path.Count;
                 // Repeat because key/oil removal can affect queries on other rings.
                 for (int i = 0; i < m.Rings.Count; i++)
