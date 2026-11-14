@@ -177,7 +177,7 @@ namespace Orcub.Net
             if(kind=="level_end") ConsumableGateway.LevelEnded?.Invoke();
             // Hold optional pre-consent events durably; Flush selects eligible events.
             if (data is AttemptRecord record) data = JObject.Parse(JsonUtility.ToJson(record));
-            if(kind=="level_start" || kind=="level_end") { var payload=JObject.FromObject(data); int index=(int?)payload["LevelIndex"]??0; payload["gen_version"]=index<200 ? 0 : InfiniteGenerator.Version; payload["curated"]=index<200; data=payload; }
+            if(kind=="level_start" || kind=="level_end") { var payload=JObject.FromObject(data); int index=(int?)payload["LevelIndex"]??0; payload["gen_version"]=index<LevelLibrary.CuratedCount ? 0 : InfiniteGenerator.Version; payload["curated"]=index<LevelLibrary.CuratedCount; data=payload; }
             queue.AddCaptured(kind, data, Application.isEditor || Debug.isDebugBuild, AnalyticsConsent.Resolved ? (AnalyticsConsent.Allowed ? 1 : 0) : -1);
             if(kind=="level_end") LastLevelEndEventId=queue.LastAddedId;
             if (!firebaseReady || !AnalyticsConsent.Allowed) return;

@@ -162,6 +162,7 @@ pub fn router(s: Arc<App>) -> Router {
         .route("/v1/admin/revenue", get(economy::revenue))
         .route("/v1/save", put(save_put).get(save_get))
         .route("/v1/link", post(link))
+        .route("/v1/link/prepare", post(prepare_link))
         .route("/v1/account", delete(account_delete))
         .route("/v1/account/export", get(account_export))
         .route("/v1/admin/funnel", get(funnel))
@@ -538,12 +539,45 @@ async fn save_get(State(s): State<Arc<App>>, h: HeaderMap) -> Result<Response> {
 struct LinkRequest {
     player_id: Uuid,
 }
+async fn prepare_link(
+    State(s): State<Arc<App>>,
+    h: HeaderMap,
+    Json(body): Json<LinkRequest>,
+) -> Result<Json<Value>> {
+    let uid = s.firebase.verify_anonymous(&h).await?;
+    install_player(&s, &h, body.player_id).await?;
+    let credential = h
+        .get("x-install-token")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(ApiError::unauthorized())?;
+    let proof = format!("merge:{}", Uuid::new_v4());
+    let mut tx = s.pool.begin().await?;
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT firebase_uid FROM players WHERE id=$1 FOR UPDATE")
+            .bind(body.player_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if owner.as_deref() != Some(uid.as_str()) {
+        return Err(ApiError::unauthorized());
+    }
+    sqlx::query("INSERT INTO guest_merge_proofs(player_id,firebase_uid,credential_hash,proof_hash) VALUES($1,$2,$3,$4) ON CONFLICT(player_id) DO UPDATE SET firebase_uid=$2,credential_hash=$3,proof_hash=$4,created_at=now()")
+        .bind(body.player_id).bind(uid).bind(hex(&digest(credential))).bind(hex(&digest(&proof))).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"merge_proof":proof})))
+}
 async fn link(
     State(s): State<Arc<App>>,
     h: HeaderMap,
     Json(body): Json<LinkRequest>,
 ) -> Result<Json<Value>> {
     let uid = verified_uid(&s, &h).await?;
+    let mut body = body;
+    let mut h = h;
+    if let Some(canonical)=sqlx::query_scalar::<_,Uuid>("SELECT a.player_id FROM wallet_aliases a JOIN players p ON p.id=a.player_id WHERE a.token=$1 AND p.firebase_uid=$2").bind(body.player_id).bind(&uid).fetch_optional(&s.pool).await? {
+        install_player(&s,&h,canonical).await?;
+        body.player_id=canonical;
+        h.remove("x-previous-firebase-token");
+    }
     let previous = if let Some(token) = h.get("x-previous-firebase-token") {
         let mut old = HeaderMap::new();
         old.insert(
@@ -554,7 +588,20 @@ async fn link(
             ))
             .map_err(|_| ApiError::unauthorized())?,
         );
-        Some(s.firebase.verify_anonymous(&old).await?)
+        if token
+            .to_str()
+            .map_err(|_| ApiError::unauthorized())?
+            .starts_with("merge:")
+        {
+            let credential = h
+                .get("x-install-token")
+                .and_then(|v| v.to_str().ok())
+                .ok_or(ApiError::unauthorized())?;
+            let proof = token.to_str().map_err(|_| ApiError::unauthorized())?;
+            Some(sqlx::query_scalar::<_,String>("SELECT firebase_uid FROM guest_merge_proofs WHERE player_id=$1 AND proof_hash=$2 AND credential_hash=$3").bind(body.player_id).bind(hex(&digest(proof))).bind(hex(&digest(credential))).fetch_optional(&s.pool).await?.ok_or(ApiError::unauthorized())?)
+        } else {
+            Some(s.firebase.verify_anonymous(&old).await?)
+        }
     } else {
         None
     };
@@ -630,6 +677,10 @@ async fn link(
             .execute(&mut *tx)
             .await?;
     } else {
+        sqlx::query("DELETE FROM guest_merge_proofs WHERE player_id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE players SET firebase_uid=$1 WHERE id=$2")
             .bind(uid)
             .bind(id)
@@ -952,6 +1003,83 @@ mod account_tests {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+    }
+    #[sqlx::test(migrations = "./migrations")]
+    async fn durable_merge_proof_survives_guest_token_expiry_and_lost_ack(pool: PgPool) {
+        let mut state = new_state(pool.clone(), "admin", false);
+        Arc::get_mut(&mut state).unwrap().firebase = auth::fixture();
+        let app = router(state);
+        let guest = Uuid::new_v4();
+        let account = Uuid::new_v4();
+        for (id, uid, secret) in [
+            (guest, "guest-proof", "proof-install"),
+            (account, "returning-proof", "account-install"),
+        ] {
+            sqlx::query("INSERT INTO players(id,firebase_uid) VALUES($1,$2)")
+                .bind(id)
+                .bind(uid)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO installs(install_id,player_id,credential_hash,metadata,first_open_ts) VALUES($1,$2,$3,'{}',now())").bind(Uuid::new_v4()).bind(id).bind(hex(&digest(secret))).execute(&pool).await.unwrap();
+        }
+        let guest_token = auth::test_token("guest-proof", json!({}));
+        let (status, prepared) = call(
+            app.clone(),
+            "POST",
+            "/v1/link/prepare",
+            json!({"player_id":guest}),
+            &guest_token,
+            "proof-install",
+        )
+        .await;
+        assert_eq!(status, 200);
+        let proof = prepared["merge_proof"].as_str().unwrap();
+        // The old Firebase token is no longer sent; only a fresh returning-account token is needed.
+        let token = auth::test_token(
+            "returning-proof",
+            json!({"firebase":{"sign_in_provider":"google.com"}}),
+        );
+        for secret in ["account-install", "proof-install", "proof-install"] {
+            let res = app
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method("POST")
+                        .uri("/v1/link")
+                        .header("content-type", "application/json")
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("x-install-token", secret)
+                        .header("x-previous-firebase-token", proof)
+                        .body(Body::from(json!({"player_id":guest}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                res.status(),
+                if secret == "account-install" {
+                    401
+                } else {
+                    200
+                }
+            );
+        }
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM guest_merge_proofs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        let (status, _) = call(
+            app,
+            "POST",
+            "/v1/link/prepare",
+            json!({"player_id":account}),
+            &token,
+            "account-install",
+        )
+        .await;
+        assert_eq!(status, 401); // A permanent account cannot mint an anonymous transfer capability.
     }
     #[sqlx::test(migrations = "./migrations")]
     async fn tombstone_never_skips_a_relinked_identity(pool: PgPool) {

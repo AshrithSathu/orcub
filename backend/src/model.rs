@@ -272,7 +272,11 @@ impl Event {
         let typed: KnownEvent = serde_json::from_value(json!({"kind":self.kind,"data":self.data}))
             .map_err(|_| ApiError::bad("event does not match typed schema"))?;
         if let KnownEvent::LevelEnd(a) = &typed {
-            if a.version != 2 || a.result.outcome > 2 || a.features.moves.len() > 32 {
+            if a.level_index >= 100000
+                || a.version != 2
+                || a.result.outcome > 2
+                || a.features.moves.len() > 32
+            {
                 return Err(ApiError::bad("invalid attempt schema"));
             }
             timestamp(a.started_utc)?;

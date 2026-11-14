@@ -44,7 +44,7 @@ pub(crate) async fn lock(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
     Ok(())
 }
 pub(crate) async fn snapshot(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
-    Ok(sqlx::query_scalar("SELECT to_jsonb(w) || jsonb_build_object('lives',LEAST(5,lives+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))::int),'lives_updated_at',CASE WHEN lives+floor(extract(epoch FROM (now()-lives_updated_at))/1800)>=5 THEN now() ELSE lives_updated_at+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))*interval '30 minutes' END,'applied_keys',COALESCE((SELECT jsonb_agg(idempotency_key) FROM (SELECT idempotency_key FROM wallet_ledger WHERE player_id=$1 AND reason='consume' ORDER BY created_at DESC LIMIT 4096) recent),'[]'::jsonb),'rewarded_nonces',COALESCE((SELECT jsonb_agg(nonce) FROM (SELECT nonce FROM rewarded_nonces WHERE player_id=$1 AND confirmed_at>now()-interval '1 day' ORDER BY confirmed_at DESC LIMIT 40) recent),'[]'::jsonb),'remove_ads',EXISTS(SELECT 1 FROM purchases WHERE player_id=$1 AND product_id='com.orcub.puzzle.remove_ads' AND NOT revoked)) FROM wallets w WHERE player_id=$1").bind(id).fetch_one(&mut **tx).await?)
+    Ok(sqlx::query_scalar("SELECT to_jsonb(w) || jsonb_build_object('lives',LEAST(5,lives+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))::int),'lives_updated_at',CASE WHEN lives+floor(extract(epoch FROM (now()-lives_updated_at))/1800)>=5 THEN now() ELSE lives_updated_at+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))*interval '30 minutes' END,'applied_keys','[]'::jsonb,'rewarded_nonces',COALESCE((SELECT jsonb_agg(nonce) FROM (SELECT nonce FROM rewarded_nonces WHERE player_id=$1 AND confirmed_at>now()-interval '1 day' ORDER BY confirmed_at DESC LIMIT 40) recent),'[]'::jsonb),'remove_ads',EXISTS(SELECT 1 FROM purchases WHERE player_id=$1 AND product_id='com.orcub.puzzle.remove_ads' AND NOT revoked)) FROM wallets w WHERE player_id=$1").bind(id).fetch_one(&mut **tx).await?)
 }
 pub(crate) async fn save_fields(tx: &mut Tx<'_>, id: Uuid, data: &mut SaveData) -> Result<()> {
     sqlx::query("INSERT INTO wallets(player_id) VALUES($1) ON CONFLICT DO NOTHING")
@@ -80,15 +80,24 @@ pub(crate) async fn entry(
         .await?;
     Ok(())
 }
+#[derive(Deserialize)]
+pub struct WalletQuery {
+    player_id: Uuid,
+    applied_since: Option<DateTime<Utc>>,
+}
 pub(crate) async fn wallet(
     State(s): State<Arc<App>>,
     h: HeaderMap,
-    Query(q): Query<PlayerQuery>,
+    Query(q): Query<WalletQuery>,
 ) -> Result<Response> {
     let id = owner(&s, &h, q.player_id).await?;
     let mut tx = s.pool.begin().await?;
     lock(&mut tx, id).await?;
-    let v = snapshot(&mut tx, id).await?;
+    let mut v = snapshot(&mut tx, id).await?;
+    if let Some(since) = q.applied_since {
+        let keys: Vec<String>=sqlx::query_scalar("SELECT idempotency_key FROM wallet_ledger WHERE player_id=$1 AND reason='consume' AND created_at >= $2 ORDER BY created_at DESC LIMIT 4096").bind(id).bind(since).fetch_all(&mut *tx).await?;
+        v["applied_keys"] = json!(keys);
+    }
     tx.commit().await?;
     Ok(([("cache-control", "no-store")], Json(v)).into_response())
 }
@@ -326,23 +335,38 @@ pub async fn grant(
             }
             "level_reward" => {
                 let level: Option<i32> = sqlx::query_scalar("SELECT (payload->>'LevelIndex')::int FROM events WHERE player_id=$1 AND event_id=$2 AND kind='level_end' AND (payload->'Result'->>'Outcome')::int=0 AND received_at>now()-interval '1 day'").bind(id).bind(b.ref_id).fetch_optional(&mut *tx).await?;
-                let level = level.ok_or(ApiError::bad("reward ineligible"))?;
+                let level = match level {
+                    Some(level) if (0..100000).contains(&level) => level,
+                    Some(_) => return Err(ApiError::bad("invalid level index")),
+                    None => {
+                        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE player_id=$1 AND event_id=$2)").bind(id).bind(b.ref_id).fetch_one(&mut *tx).await?;
+                        return Err(if exists {
+                            ApiError(StatusCode::GONE, "reward_expired")
+                        } else {
+                            ApiError(StatusCode::CONFLICT, "reward_pending")
+                        });
+                    }
+                };
                 let won: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wallet_ledger l WHERE l.player_id=$1 AND l.reason='level_reward' AND (l.ref_id=$2 OR EXISTS(SELECT 1 FROM events e WHERE e.player_id=$1 AND e.event_id::text=l.ref_id AND (e.payload->>'LevelIndex')::int=$3)))").bind(id).bind(format!("level:{level}")).bind(level).fetch_one(&mut *tx).await?;
                 if won {
                     let w = snapshot(&mut tx, id).await?;
                     tx.commit().await?;
                     return Ok(Json(json!({"wallet":w,"granted":0})));
                 }
+                let missing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM generate_series(0,$2-1) n WHERE NOT EXISTS(SELECT 1 FROM wallet_ledger l WHERE l.player_id=$1 AND l.reason='level_reward' AND (l.ref_id='level:' || n::text OR EXISTS(SELECT 1 FROM events e WHERE e.player_id=$1 AND e.event_id::text=l.ref_id AND (e.payload->>'LevelIndex')::int=n))))").bind(id).bind(level).fetch_one(&mut *tx).await?;
+                if missing {
+                    return Err(ApiError(StatusCode::CONFLICT, "reward_sequence_pending"));
+                }
                 let boss = level % 20 == 19;
                 let n:i64=sqlx::query_scalar("SELECT count(*) FROM wallet_ledger WHERE player_id=$1 AND reason='level_reward' AND delta=$2 AND created_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'").bind(id).bind(if boss {50_i64} else {5_i64}).fetch_one(&mut *tx).await?;
                 if n >= if boss {
-                    100
+                    3
                 } else {
                     catalog()["grants"]["level_reward_daily_cap"]
                         .as_i64()
                         .unwrap()
                 } {
-                    return Err(ApiError::bad("reward cap"));
+                    return Err(ApiError(StatusCode::GONE, "reward_cap"));
                 }
                 if boss { 50 } else { 5 }
             }
@@ -765,15 +789,24 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
     lock(tx, guest).await?;
     let mut carried = daily::merge(tx, canonical, guest).await?;
     carried.extend(unlock::merge(tx, canonical, guest).await?);
+    let levels: Vec<i64> = sqlx::query_scalar("SELECT max(g.delta) FROM wallet_ledger g LEFT JOIN events e ON e.player_id=$2 AND e.event_id::text=g.ref_id WHERE g.player_id=$2 AND g.reason='level_reward' AND NOT EXISTS(SELECT 1 FROM wallet_ledger c LEFT JOIN events ce ON ce.player_id=$1 AND ce.event_id::text=c.ref_id WHERE c.player_id=$1 AND c.reason='level_reward' AND COALESCE(CASE WHEN c.ref_id LIKE 'level:%' THEN c.ref_id ELSE NULL END,'level:' || (ce.payload->>'LevelIndex'))=COALESCE(CASE WHEN g.ref_id LIKE 'level:%' THEN g.ref_id ELSE NULL END,'level:' || (e.payload->>'LevelIndex'))) GROUP BY COALESCE(CASE WHEN g.ref_id LIKE 'level:%' THEN g.ref_id ELSE NULL END,'level:' || (e.payload->>'LevelIndex'))").bind(canonical).bind(guest).fetch_all(&mut **tx).await?;
+    carried.extend(levels.into_iter().map(|gold| json!({"gold":gold})));
     let mut g = snapshot(tx, guest).await?;
     // Remove guest grant value, then credit only daily dates newly owned by the account.
-    let rows=sqlx::query("SELECT reward,created_at FROM (SELECT receipt->'reward' reward,created_at FROM daily_claims WHERE player_id=$1 UNION ALL SELECT receipt->'reward',created_at FROM booster_unlock_claims WHERE player_id=$1 UNION ALL SELECT jsonb_build_object('gold',delta),created_at FROM wallet_ledger WHERE player_id=$1 AND (reason='level_reward' OR (reason IN ('daily_gift','daily_puzzle') AND NOT EXISTS(SELECT 1 FROM daily_claims WHERE player_id=$1))) UNION ALL SELECT CASE WHEN reason='consume' THEN jsonb_build_object('inventory',jsonb_build_object(replace(request->>'kind','booster_',''),-(request->>'count')::int)) ELSE jsonb_build_object('gold',delta) END,created_at FROM wallet_ledger WHERE player_id=$1 AND (reason='consume' OR delta<0)) x ORDER BY created_at").bind(guest).fetch_all(&mut **tx).await?;
+    let rows=sqlx::query("SELECT reward,created_at,reason,request,delta FROM (SELECT receipt->'reward' reward,created_at,''::text reason,'{}'::jsonb request,0::bigint delta FROM daily_claims WHERE player_id=$1 UNION ALL SELECT receipt->'reward',created_at,''::text,'{}'::jsonb,0::bigint FROM booster_unlock_claims WHERE player_id=$1 UNION ALL SELECT jsonb_build_object('gold',delta),created_at,reason,request,delta FROM wallet_ledger WHERE player_id=$1 AND (reason='level_reward' OR (reason IN ('daily_gift','daily_puzzle') AND NOT EXISTS(SELECT 1 FROM daily_claims WHERE player_id=$1))) UNION ALL SELECT CASE WHEN reason='consume' THEN jsonb_build_object('inventory',jsonb_build_object(replace(request->>'kind','booster_',''),-(request->>'count')::int)) ELSE jsonb_build_object('gold',delta) END,created_at,reason,request,delta FROM wallet_ledger WHERE player_id=$1 AND (reason='consume' OR (delta<0 AND reason IN ('booster','continue','refill_lives')))) x ORDER BY created_at").bind(guest).fetch_all(&mut **tx).await?;
     let mut held = std::collections::HashMap::<String, i64>::new();
     let mut grant_until = DateTime::<Utc>::MIN_UTC;
     for row in rows {
         let reward: Value = row.get("reward");
         let at: DateTime<Utc> = row.get("created_at");
         let gold = reward["gold"].as_i64().unwrap_or(0);
+        if row.get::<String, _>("reason") == "booster" && held.get("gold").copied().unwrap_or(0) > 0
+        {
+            let request: Value = row.get("request");
+            if let Some(kind) = request["booster"].as_str() {
+                *held.entry(kind.into()).or_default() += 1;
+            }
+        }
         let v = held.entry("gold".into()).or_default();
         *v = (*v + gold).max(0);
         if let Some(items) = reward["inventory"].as_object() {

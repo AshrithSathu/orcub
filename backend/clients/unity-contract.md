@@ -82,7 +82,7 @@ Allowed reason: `continue`, `refill_lives`, `booster`. For continue, ref_id is t
 ```
 `effect` is null for non-continue sinks. Same key and same fields returns the current wallet and the same effect with no new debit. Do not apply the effect twice. Key reused for a different action or insufficient balance gives 409 `{"error":"idempotency key reused"}` / `{"error":"insufficient gold"}`. New continue purchases need a new idempotency_key but the same attempt ref_id.
 
-`POST /v1/wallet/grant` uses the same request shape. `daily_gift`: ref_id is an action UUID, 20 gold once per UTC day. `level_reward`: ref_id is an acknowledged winning level_end event_id from the last day, 5 gold once/event, max 20 rewards per UTC day. `booster` omitted/null. Response `{"wallet":WALLET}`. Server chooses the amount; arbitrary gold or starter-pack grant requests fail 400. A previously claimed daily gift with a new key returns 409. Reward telemetry remains client-reported; install auth is not gameplay attestation.
+`POST /v1/wallet/grant` uses the same request shape. `daily_gift`: ref_id is an action UUID, 20 gold once per UTC day. `level_reward`: ref_id is an acknowledged winning level_end event_id from the last day, 5 gold once/level, max 20 normal rewards per UTC day. `booster` omitted/null. Response `{"wallet":WALLET}`. Server chooses the amount; arbitrary gold or starter-pack grant requests fail 400. A previously claimed daily gift with a new key returns 409. Reward telemetry remains client-reported; install auth is not gameplay attestation.
 
 `POST /v1/iap/apple`:
 ```json
@@ -198,7 +198,7 @@ At account merge, subtract receipt-recorded unlock quantities from the guest rem
 
 Consume bodies additionally accept `occurred_at` (RFC3339 UTC). Old clients may omit it (receipt time). The server clamps it to `[consume_floor, now]`, with consume_floor initialised at wallet creation, advanced to each accepted event, and raised to now by explicit wallet reads. Replay the durable FIFO queue before fetching a fresh wallet on foreground. This serialised server checkpoint prevents backdating accepted spends; FIFO clients retain original times and keys for retries. Regeneration is evaluated at that bounded event time; returned wallet lives/anchor are projected to now without advancing the stored event-time regeneration anchor. Unlimited lives make life spends free at the bounded event time, including requests received after expiry. Clients must not enqueue life losses during unlimited time. Offline clock manipulation remains outside the trust boundary: server balance wins and only definitive insufficient-inventory responses discard a queued benefit (no retroactive gameplay clawback).
 
-`applied_keys` lists recorded consume keys (merged keys may have a player UUID prefix); remove those reservations before displaying balances. `rewarded_nonces` lists SSV-confirmed life grants. A provisional rewarded refill is local, nonce-deduplicated, capped at 20 per UTC day, and becomes authoritative only through SSV. Post-refill consumes carry optional `rewarded_nonce`; the server returns retriable 503 until SSV confirms it, then applies them at occurred_at. This prevents the confirmation poll from advancing the observed-time floor ahead of offline spends. A gold refill is a distinct explicit 90-gold action requiring UI confirmation. `Lives.Refill()` never spends gold.
+`applied_keys` on a GET with `applied_since` lists recorded consume keys (merged keys may have a player UUID prefix); remove those reservations before displaying balances. `rewarded_nonces` lists SSV-confirmed life grants. A provisional rewarded refill is local, nonce-deduplicated, capped at 20 per UTC day, and becomes authoritative only through SSV. Post-refill consumes carry optional `rewarded_nonce`; the server returns retriable 503 until SSV confirms it, then applies them at occurred_at. This prevents the confirmation poll from advancing the observed-time floor ahead of offline spends. A gold refill is a distinct explicit 90-gold action requiring UI confirmation. `Lives.Refill()` never spends gold.
 
 See ../docs/admob-ssv.md for nonce issuance, callback verification, conservative reservation cap, and console setup. Optional pre-consent events remain queued; first-party level_start/level_end proofs and bounded errors may be sent without advertising identifiers because rewards depend on them. Firebase events remain consent-gated.
 
@@ -210,15 +210,16 @@ See ../docs/admob-ssv.md for nonce issuance, callback verification, conservative
 `level_reward` uses the winning level_end event ID as ref_id, grants once per level
 per player (5 normal, 50 for index modulo 20 equal to 19), and returns `granted`
 (0 on replay). Normal clears retain the configured daily cap; bosses have an
-independent cap of 100 per UTC day.
+independent cap of 3 per UTC day. Every earlier level must already have a reward marker (zero tolerance); LevelIndex outside 0..99999 is rejected. Missing evidence / sequence gaps return retryable 409; expired/ineligible evidence and daily caps return final 410. Merge credits remaining guest first clears only for levels the account has not already received.
 
 `daily_puzzle_end` is essential first-party gameplay evidence, sent without consent
 and without ad identifiers. A 401 renews installation credentials and retries;
 only 400/410/422 permanently reject a daily grant.
 
-Wallet acknowledgement lists are bounded to the latest 4096 consumes and 40
-confirmed nonces from the last day. GET wallet does not advance consume_floor.
+Wallet `applied_keys` is empty by default. GET may supply `applied_since` (oldest pending consume timestamp) to receive up to 4096 relevant consume keys; consume success acknowledges its submitted key directly. Confirmed nonce lists contain up to 40 entries from the last day. GET wallet does not advance consume_floor.
 Only life consumes wait for an owned, unconfirmed nonce younger than 10 minutes;
 unknown or older nonces process against real balances. Clients stop tagging new
 spends after 10 minutes. Existing queued tags retain their stable fingerprint for
 lost acknowledgements, and the server releases them normally after that deadline.
+
+Before switching a linked Firebase anonymous guest, POST `/v1/link/prepare` with `{player_id}` and the current anonymous Firebase/installation credentials. Persist returned `merge_proof` alongside the old guest ID token. Later `/v1/link` accepts it in `X-Previous-Firebase-Token` (prefix `merge:`), bound to that source UID and exact install credential. It remains valid until merge/deletion; regular Firebase authentication of the destination still applies. The canonical alias makes a lost link response retryable. Permanent Firebase accounts cannot mint this capability.

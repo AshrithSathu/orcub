@@ -167,10 +167,11 @@ namespace Orcub.Ads
             yield return new WaitForSecondsRealtime(config.reloadDelaySeconds);
             load();
         }
+        public static string NormalizeRewardedPlacement(string placement) => placement.Contains("lives") ? "rewarded_lives" : placement.StartsWith("rewarded_") ? placement : "rewarded_" + placement;
         public void RewardedOfferShown(string placement) => TrackAd("ad_offer", placement.StartsWith("rewarded_") ? placement : "rewarded_" + placement);
         public async void ShowRewarded(string placement, Action onReward, Action onClosedWithoutReward)
         {
-            placement = "rewarded_" + placement;
+            placement = NormalizeRewardedPlacement(placement);
             if (!RewardedReady) { FailAd(placement, "not_ready"); onClosedWithoutReward?.Invoke(); return; }
             showing = true;
 

@@ -50,6 +50,7 @@ namespace Orcub.Store
         public long Balance { get; private set; }
         public bool IsCached { get; private set; } = true;
         public bool RemoveAds { get; private set; }
+        public DateTimeOffset LastConfirmedRefresh { get; private set; }
         public JObject Snapshot { get; private set; }
         public event Action Changed;
         internal Wallet(IStoreBackend backend, IStoreCache cache) { this.backend = backend; this.cache = cache; }
@@ -70,12 +71,14 @@ namespace Orcub.Store
             if(value["lives"]!=null && value["lives"].Type!=JTokenType.Integer) throw new InvalidOperationException("wallet_cache_lives");
             if(value["inventory"] is JObject inventory && inventory.Properties().Any(x=>x.Value.Type!=JTokenType.Integer)) throw new InvalidOperationException("wallet_cache_inventory");
             Snapshot = (JObject)value.DeepClone(); Balance = (long)value["gold"]; RemoveAds = (bool)value["remove_ads"];
+            if(!cached) LastConfirmedRefresh=DateTimeOffset.UtcNow;
             IsCached = cached; cache.Write("wallet." + backend.PlayerId, value.ToString()); afterPersist?.Invoke(); Changed?.Invoke();
         }
+        public Func<string> OldestPending { get; set; }
         public async Task Refresh()
         {
             await gate.WaitAsync();
-            try { Apply(await backend.Request("/v1/wallet?player_id=" + backend.PlayerId, "GET")); }
+            try { Apply(await backend.Request("/v1/wallet?player_id=" + backend.PlayerId + (string.IsNullOrEmpty(OldestPending?.Invoke()) ? "" : "&applied_since="+Uri.EscapeDataString(OldestPending())), "GET")); }
             finally { gate.Release(); }
         }
         internal async Task<JObject> Submit(string path, object body)
@@ -183,6 +186,7 @@ namespace Orcub.Store
             await RetryPending(); await Refresh();
             Products = await kit.LoadProducts(ProductIds); Changed?.Invoke();
         }
+        public Func<string> OldestPending { get; set; }
         public async Task Refresh()
         {
             await Wallet.Refresh();

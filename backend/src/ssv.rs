@@ -6,7 +6,8 @@ use std::{collections::HashMap, sync::OnceLock};
 use tokio::sync::Mutex;
 
 type Keys = HashMap<String, String>;
-static KEYS: OnceLock<Mutex<(Instant, Instant, Keys)>> = OnceLock::new();
+type KeyCache = (Instant, Instant, Keys, std::collections::VecDeque<String>);
+static KEYS: OnceLock<Mutex<KeyCache>> = OnceLock::new();
 fn verify(raw: &str, keys: &Keys) -> Result<HashMap<String, String>> {
     let (content, tail) = raw
         .split_once("&signature=")
@@ -53,7 +54,14 @@ fn verify(raw: &str, keys: &Keys) -> Result<HashMap<String, String>> {
 }
 pub async fn callback(State(s): State<Arc<App>>, RawQuery(raw): RawQuery) -> Result<Json<Value>> {
     let raw = raw.ok_or(ApiError::unauthorized())?;
-    let cache = KEYS.get_or_init(|| Mutex::new((Instant::now(), Instant::now(), Keys::new())));
+    let cache = KEYS.get_or_init(|| {
+        Mutex::new((
+            Instant::now(),
+            Instant::now(),
+            Keys::new(),
+            std::collections::VecDeque::new(),
+        ))
+    });
     let id = reqwest::Url::parse(&format!("https://ssv.invalid/?{raw}"))
         .map_err(|_| ApiError::unauthorized())?
         .query_pairs()
@@ -63,7 +71,17 @@ pub async fn callback(State(s): State<Arc<App>>, RawQuery(raw): RawQuery) -> Res
     let refresh = {
         let mut keys = cache.lock().await;
         let due = keys.0 <= Instant::now() || !keys.2.contains_key(&id);
-        if due && keys.1 <= Instant::now() {
+        if keys.1 <= Instant::now() {
+            keys.3.clear();
+        }
+        let rotation = keys.3.len() < 8
+            && !keys.2.contains_key(&id)
+            && !keys.3.contains(&id)
+            && id.len() <= 64;
+        if rotation {
+            keys.3.push_back(id.clone());
+        }
+        if due && (keys.1 <= Instant::now() || rotation) {
             keys.0 = Instant::now() + Duration::from_secs(3600);
             keys.1 = Instant::now() + Duration::from_secs(60);
             true
@@ -203,6 +221,7 @@ pub async fn nonce(
     install_player(&s, &h, b.player_id).await?;
     if ![
         "rewarded_lives",
+        "rewarded_refill_lives",
         "out_of_lives",
         "retry_lives",
         "rewarded_out_of_lives",

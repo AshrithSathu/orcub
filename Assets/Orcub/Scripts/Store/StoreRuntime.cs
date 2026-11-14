@@ -43,6 +43,7 @@ namespace Orcub.Store
         public static async Task<string> PrepareAdRefill(string placement)
         {
             if (Service==null || ClientServices.Instance==null) return null;
+            placement=AdService.NormalizeRewardedPlacement(placement);
             using var response=await ClientServices.Instance.Request("/v1/ads/nonce","POST",new { player_id=ClientServices.Instance.PlayerId,placement });
             if(response.responseCode!=200) return null;
             return (string)JObject.Parse(response.downloadHandler.text)["nonce"];
@@ -104,7 +105,9 @@ namespace Orcub.Store
         }
         public void Track(string kind, object data) => ClientServices.Instance.Track(kind, data);
         public string Read(string key) => PlayerPrefs.GetString("orcub.store." + key, "");
-        public void Write(string key, string value) { if(PlayerPrefs.GetString("orcub.store."+key, "") == value) return; PlayerPrefs.SetString("orcub.store." + key, value); prefsDirty=true; }
+        public void Write(string key, string value) { if(PlayerPrefs.GetString("orcub.store."+key, "") == value) return; PlayerPrefs.SetString("orcub.store." + key, value); prefsDirty=true; if(key.StartsWith("consume.") || key.StartsWith("adgrants.")) FlushPrefs(); }
+        void FlushPrefs() { if(prefsDirty) { PlayerPrefs.Save(); prefsDirty=false; } }
+        void OnApplicationQuit() => FlushPrefs();
         bool prefsDirty; double nextPrefsSave;
         void LateUpdate() { if(prefsDirty && Time.realtimeSinceStartupAsDouble>=nextPrefsSave) { PlayerPrefs.Save(); prefsDirty=false; nextPrefsSave=Time.realtimeSinceStartupAsDouble+2; } }
         void OnApplicationPause(bool paused) { if(paused && prefsDirty) { PlayerPrefs.Save(); prefsDirty=false; } }
@@ -112,12 +115,19 @@ namespace Orcub.Store
         {
             if(instance==null || !Guid.TryParse(eventId,out _)) throw new InvalidOperationException("reward_not_ready");
             await ClientServices.Instance.Flush();
-            var response=await Service.Wallet.Submit("/v1/wallet/grant",new { player_id=instance.PlayerId,reason="level_reward",ref_id=eventId,idempotency_key=eventId });
-            return (int?)response["granted"] ?? 0;
+            try {
+                var response=await Service.Wallet.Submit("/v1/wallet/grant",new { player_id=instance.PlayerId,reason="level_reward",ref_id=eventId,idempotency_key=eventId });
+                return (int?)response["granted"] ?? 0;
+            }
+            catch(StoreHttpException e) when (e.Status==410 || e.Status==400 || e.Status==422) {
+                instance.Track("error",new { code="level_reward_refused",context="level_reward" });
+                return 0;
+            }
         }
         double nextForeground;
         async void OnApplicationFocus(bool focused)
         {
+            if(!focused) FlushPrefs();
             if (!focused || Service == null || Time.realtimeSinceStartupAsDouble<nextForeground) return;
             nextForeground=Time.realtimeSinceStartupAsDouble+300;
             try { await consumption.Reconcile(); await PrepareAccount(); await Service.Initialize(); } catch (Exception) { }

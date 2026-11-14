@@ -79,3 +79,5 @@ daily rewards. It contains no advertising identifiers. Optional events are
 purged on explicit denial and are not captured during denial. Deletion tombstones
 expire after 30 days; rewarded nonces and unlimited windows are included in access
 exports and pruned after 30 days by retention.
+
+`guest_merge_proofs` stores only a hashed random merge capability, hashed install credential, guest Firebase UID, and issuance time. It authorises only transfer of that same anonymous player with the same install credential. It is excluded from account export to avoid exporting credentials and cascades away on merge/player deletion. It has no time expiry so interrupted sign-in can recover after the anonymous ID token expires.

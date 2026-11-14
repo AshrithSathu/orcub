@@ -13,3 +13,5 @@ Reference: https://developers.google.com/admob/unity/ssv
 Production status (2026-11-15, owner verified): `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON` is set on Railway and server-side deletion was smoke-tested end to end with `identity_deleted=true`. Credentials must never be logged or committed.
 
 Without the variable, backend data deletion succeeds with identity_deleted=false and the client retains its matching-UID Firebase deletion fallback. With configured credentials, failed admin deletion returns success with identity_deleted=false after writing a UID-hash tombstone, enabling the client fallback; authenticated retries finish the identity deletion without requiring the old player row. Tombstones hold only SHA256 identity/credential subjects, not email or raw tokens. They survive player deletion for retry safety and expire after 30 days.
+
+Lives placements accept `rewarded_lives`, `out_of_lives`, `retry_lives`, `rewarded_out_of_lives`, `rewarded_retry_lives`, and legacy `rewarded_refill_lives`. New clients normalise all lives placements to `rewarded_lives`.

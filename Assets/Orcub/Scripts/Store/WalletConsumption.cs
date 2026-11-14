@@ -18,7 +18,7 @@ namespace Orcub.Store
         public bool HasPending { get { Load(); return pending.Count>0; } }
         public string AttemptReference { get; set; } = Guid.NewGuid().ToString();
         public WalletConsumption(IStoreBackend backend, IStoreCache cache, Wallet wallet)
-        { this.backend = backend; this.cache = cache; this.wallet = wallet; }
+        { this.backend = backend; this.cache = cache; this.wallet = wallet; wallet.OldestPending = () => { Load(); return pending.OfType<JObject>().Select(x=>(string)x["created_at"]).OrderBy(x=>x).FirstOrDefault(); }; }
         void Load()
         {
             var account = backend.PlayerId ?? "unregistered";
@@ -103,7 +103,7 @@ namespace Orcub.Store
             int count = (int?)s["lives"] ?? 5;
             var confirmed=s["rewarded_nonces"] as JArray ?? new JArray();
             var grants=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)??"[]");
-            var latest=grants.OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && at>now.AddMinutes(-10));
+            var latest=grants.OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && (at>now.AddMinutes(-10) || wallet.LastConfirmedRefresh<at.AddMinutes(10)));
             if (latest!=null && !confirmed.Values<string>().Contains((string)latest["nonce"]) && TryTime(latest["at"],out var refillAt)) { count=5; stamp=refillAt; }
             foreach (var item in pending.OfType<JObject>().Where(x => (string)x["kind"] == "life"))
             {

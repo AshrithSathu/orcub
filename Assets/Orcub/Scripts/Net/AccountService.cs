@@ -22,6 +22,10 @@ namespace Orcub.Net
         string lastSaved;
         DateTime nextSave;
         const string PendingDelete = "orcub.delete.firebase_uid";
+        const string MergeToken = "orcub.link.previous";
+        const string MergeProof = "orcub.link.proof";
+        bool resumingDeletion;
+        bool HasDeletionIntent => User!=null && UnityEngine.PlayerPrefs.GetString("orcub.delete.intent", "")==User.UserId;
         long revision;
         public event Action Changed;
         /// <summary>Deletion finished locally; Firebase cleanup will retry on matching authenticated UID.</summary>
@@ -43,12 +47,17 @@ namespace Orcub.Net
         {
             auth = FirebaseAuth.DefaultInstance;
             if (User == null) await auth.SignInAnonymouslyAsync();
-            if (UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending", 0) == 1) { await DeleteAccount(); return; }
+            if (UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending", 0) == 1 || HasDeletionIntent) { resumingDeletion=true; try { await DeleteAccount(); } finally { resumingDeletion=false; } return; }
             if (await RetryIdentityDeletion()) return;
             await Link(); Changed?.Invoke();
         }
         public async Task Link(string previous = null)
         {
+            previous = previous ?? UnityEngine.PlayerPrefs.GetString(MergeToken, "");
+            var proof=UnityEngine.PlayerPrefs.GetString(MergeProof, "");
+            if(!string.IsNullOrEmpty(proof)) previous=proof;
+            if(string.IsNullOrEmpty(previous)) previous=null;
+            if(HasDeletionIntent) return;
             if (User == null || !client.Ready || deleting || client.Stopped || (Linked && previous==null)) return;
             if (UnityEngine.PlayerPrefs.GetString(PendingDelete, "") == User.UserId || UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending", 0) == 1) return;
             await gate.WaitAsync();
@@ -60,6 +69,7 @@ namespace Orcub.Net
                 Ensure(req);
                 if (client.Stopped) return;
                 client.SetPlayer((string)JObject.Parse(req.downloadHandler.text)["player_id"]); linked = true; linkedUid=User.UserId;
+                UnityEngine.PlayerPrefs.DeleteKey(MergeToken); UnityEngine.PlayerPrefs.DeleteKey(MergeProof); UnityEngine.PlayerPrefs.Save();
                 using var save = await Authorized("/v1/save", "GET"); Ensure(save);
                 if (client.Stopped) return;
                 var state = JObject.Parse(save.downloadHandler.text); revision = (long)state["revision"];
@@ -84,6 +94,7 @@ namespace Orcub.Net
         {
             if (auth == null) throw new InvalidOperationException("Firebase is not ready");
             if (google != null) throw new InvalidOperationException("Sign-in already pending");
+            await DrainBeforeSwitch(FlushSpends, () => Orcub.Core.ConsumableGateway.HasPendingSpends?.Invoke()==true);
             google = new TaskCompletionSource<string>();
             try
             {
@@ -95,10 +106,16 @@ namespace Orcub.Net
 #pragma warning disable CS0162
                 var token = await google.Task;
                 if (string.IsNullOrEmpty(token)) throw new OperationCanceledException("Google sign-in cancelled");
+                await DrainBeforeSwitch(FlushSpends, () => Orcub.Core.ConsumableGateway.HasPendingSpends?.Invoke()==true);
                 var credential = GoogleAuthProvider.GetCredential(token, null);
                 var oldUid = User?.UserId;
                 google = null;
                 var oldToken = User != null && User.IsAnonymous && linked ? await User.TokenAsync(true) : null;
+                if(oldToken!=null) {
+                    UnityEngine.PlayerPrefs.SetString(MergeToken,oldToken); UnityEngine.PlayerPrefs.Save();
+                    using var prepare=await Authorized("/v1/link/prepare","POST",new { player_id=client.PlayerId }); Ensure(prepare);
+                    UnityEngine.PlayerPrefs.SetString(MergeProof,(string)JObject.Parse(prepare.downloadHandler.text)["merge_proof"]); UnityEngine.PlayerPrefs.Save();
+                }
                 try { if (User != null && User.IsAnonymous) await User.LinkWithCredentialAsync(credential); else await auth.SignInWithCredentialAsync(credential); }
                 catch (Firebase.FirebaseException e) when ((AuthError)e.ErrorCode == AuthError.CredentialAlreadyInUse)
                 { await auth.SignInWithCredentialAsync(credential); }
@@ -110,6 +127,11 @@ namespace Orcub.Net
             }
             catch (Exception) { Failed?.Invoke("google_sign_in_failed"); throw; }
             finally { google = null; }
+        }
+        public static async Task DrainBeforeSwitch(Func<Task> flush, Func<bool> pending)
+        {
+            try { var drain=flush(); await Task.WhenAny(drain,Task.Delay(5000)); } catch(Exception) { }
+            if(pending()) throw new InvalidOperationException("guest_spends_pending");
         }
         public void GoogleResult(string token) => google?.TrySetResult(token);
         async Task FlushSpends() { try { var task=Orcub.Core.ConsumableGateway.FlushSpends?.Invoke(); if(task!=null) await Task.WhenAny(task,Task.Delay(5000)); } catch(Exception) { } }
@@ -188,7 +210,11 @@ namespace Orcub.Net
             string uid = User.UserId; bool identityDeleted=false;
             try
             {
-                await AccountDeletion.Run(() => UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending", 0) == 1 ? Task.CompletedTask : Reauthenticate(), async () => {
+                await AccountDeletion.Run(async () => {
+                    if(resumingDeletion || UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending",0)==1) return;
+                    try { await Reauthenticate(); }
+                    catch(Firebase.FirebaseException e) when ((AuthError)e.ErrorCode==AuthError.UserNotFound || (AuthError)e.ErrorCode==AuthError.UserDisabled) { }
+                }, async () => {
                     if (UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending", 0) == 0)
                     {
                         UnityEngine.PlayerPrefs.SetString("orcub.delete.intent",uid); UnityEngine.PlayerPrefs.Save();
@@ -212,7 +238,7 @@ namespace Orcub.Net
         public async void RequestSave() { try { await Save(); } catch (Exception) { Failed?.Invoke("cloud_save_failed"); } }
         public async Task Save(bool force = false)
         {
-            if (deleting || User == null) return;
+            if (deleting || HasDeletionIntent || User == null) return;
             if(!Linked) { if(!force) return; await Link(); if(!Linked) throw new InvalidOperationException("final_save_requires_link"); }
             if(PendingCloud!=null) { if(force) throw new InvalidOperationException("resolve_cloud_conflict_before_signout"); return; }
             if(force) await gate.WaitAsync(); else if(!await gate.WaitAsync(0)) return;
