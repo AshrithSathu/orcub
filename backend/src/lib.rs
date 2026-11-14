@@ -79,8 +79,51 @@ pub fn new_state(pool: PgPool, admin: &str, trust_country: bool) -> Arc<App> {
         ),
     })
 }
+fn page(body: &'static str) -> impl IntoResponse {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=600"),
+        ],
+        body,
+    )
+}
+
 pub fn router(s: Arc<App>) -> Router {
     Router::new()
+        // Developer website for the App Store listing (orcub.sathuashrith.com): ad networks crawl
+        // /app-ads.txt; the App Store requires privacy, support and account-deletion pages.
+        .route(
+            "/",
+            get(|| async { page(include_str!("../static/index.html")) }),
+        )
+        .route(
+            "/privacy",
+            get(|| async { page(include_str!("../static/privacy.html")) }),
+        )
+        .route(
+            "/support",
+            get(|| async { page(include_str!("../static/support.html")) }),
+        )
+        .route(
+            "/delete-account",
+            get(|| async { page(include_str!("../static/delete-account.html")) }),
+        )
+        .route(
+            "/app-ads.txt",
+            get(|| async {
+                (
+                    [
+                        (
+                            axum::http::header::CONTENT_TYPE,
+                            "text/plain; charset=utf-8",
+                        ),
+                        (axum::http::header::CACHE_CONTROL, "public, max-age=3600"),
+                    ],
+                    include_str!("../static/app-ads.txt"),
+                )
+            }),
+        )
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/readyz", get(ready))
         .route("/v1/install", post(install))
