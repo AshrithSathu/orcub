@@ -118,3 +118,6 @@ ArtSource/.automation/
 
 # macOS
 .DS_Store
+
+# Local-only research: third-party app material and large media - never commit
+ArtSource/research/
