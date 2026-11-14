@@ -36,10 +36,10 @@ namespace Orcub.Game
         bool _usedAdContinue, _levelOver;
         float _winAt = -1f, _failCheckAt = -1f;
         int _winStars;
-        bool _winNewBest;
         readonly Dictionary<int, float> _spinSpeed = new Dictionary<int, float>();
         LevelData _levelData;
         LevelHud _hud;
+        WreathView _wreath;
 
         PuzzleModel _model;
         readonly List<RingView> _rings = new List<RingView>();
@@ -111,7 +111,8 @@ namespace Orcub.Game
 
             _fx = Feedback.Create(transform, art);
             _crumbs = ClayCrumbs.Create(transform, art.spriteMaterial);
-            _hud = LevelHud.Create(transform, art.uiFont, art.uiStar, devTools);
+            _hud = LevelHud.Create(transform, art, devTools);
+            _wreath = WreathView.Create(transform, art, cam);
             _hud.Restart += () => LoadLevel(_levelIndex);
             _hud.Prev += () => LoadLevel(_levelIndex - 1);
             _hud.Next += () => LoadLevel(_levelIndex + 1);
@@ -168,6 +169,7 @@ namespace Orcub.Game
             _levelOver = false;
             _winAt = _failCheckAt = -1f;
             if (_hud != null) _hud.ClosePopup();
+            if (_wreath != null) _wreath.Hide();
             UpdateHud();
         }
 
@@ -257,7 +259,10 @@ namespace Orcub.Game
             if (_winAt > 0f && Time.time >= _winAt)
             {
                 _winAt = -1f;
-                _hud?.ShowWin(_levelIndex + 1, _winStars, _movesUsed, _winNewBest, () => LoadLevel(_levelIndex + 1));
+                _wreath?.Show();
+                _hud?.ShowWin(_levelIndex + 1, _winStars,
+                    onNext: () => LoadLevel(_levelIndex + 1),
+                    onReplay: () => LoadLevel(_levelIndex));
             }
             if (_failCheckAt > 0f && Time.time >= _failCheckAt && _spins.Count == 0 && _active < 0)
             {
@@ -473,9 +478,11 @@ namespace Orcub.Game
         {
             if (_levelOver || _model.IsSolved || MovesLeft > 0 || !HasActiveLinks()) return;
             _levelOver = true;
+            _wreath?.Show();
             _hud?.ShowOutOfMoves(ContinueMoves, !_usedAdContinue,
                 onWatchAd: () => _hud.ShowAdPlaceholder(1.4f, () =>
                 {
+                    _wreath?.Hide();
                     _usedAdContinue = true;
                     _bonusMoves += ContinueMoves;
                     _levelOver = false;
@@ -490,7 +497,7 @@ namespace Orcub.Game
             _levelOver = true;
             _fx?.Cleared();
             _winStars = _rules.StarsFor(_movesUsed);
-            _winNewBest = Progress.RecordWin(_levelIndex, _winStars);
+            Progress.RecordWin(_levelIndex, _winStars);
             _winAt = Time.time + 1.0f;   // let the last ring fly off and the chime ring first
         }
 

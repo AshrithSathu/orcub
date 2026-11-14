@@ -53,6 +53,17 @@ namespace Orcub.Game
         public Sprite uiHeart;
         public Sprite uiCog;
 
+        [Header("UI kit (approved: #1 top bar / buttons / stars, #4 gear-wreath cards)")]
+        public Sprite uiSlab;       // cream clay slab, sliced horizontally
+        public Sprite uiPill;       // puffy clay pill, sliced horizontally, tinted per button
+        public Sprite uiRound;      // round puffy clay button
+        public Sprite uiStarClay;   // neutral clay star: tinted gold (earned) or tan (unearned)
+        public Sprite uiRestart;    // circular-arrow glyph
+        public Sprite uiFilm;       // film/play glyph (watch ad)
+        public Sprite wreathArcA;   // world sprites with normal maps: the gear-wreath card frame
+        public Sprite wreathArcB;
+        public float wreathRadius = 3f;
+
         [Header("Background")]
         [Tooltip("Optional full-screen backdrop, scaled to cover the camera view.")]
         public Sprite backgroundSprite;

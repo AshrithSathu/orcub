@@ -11,3 +11,11 @@ The user approved these components from the four prototype sheets in this folder
 - Stars: from ui_1.png — chunky glossy-free clay stars, earned = butter yellow, unearned = tan clay.
 - Coin / currency icon: from ui_4.png — small brass clay cog.
 Text: Fredoka-style rounded font, plum or cream as in the references. Spell every word correctly.
+
+## Revision: declutter (user: "too cluttered", likes the idea)
+- Top bar: only "Level 12 | 5 moves" and the green restart button (no pause yet).
+- Level complete: thinner gear wreath with fewer teeth and two clamps; "Level 12", three clay stars (two earned),
+  one big "Next" puffy pill, and a small cream text link "Replay" underneath. No coins line.
+- Out of moves: same thin wreath; "Out of moves", ONE big coral pill "+5 moves" with a small film icon,
+  and a small cream text link "Retry" underneath. No cogs button.
+- Generous empty space, larger text, calm composition.

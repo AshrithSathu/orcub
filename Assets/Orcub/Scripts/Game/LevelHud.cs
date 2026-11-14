@@ -9,12 +9,12 @@ using UnityEngine.UI;
 namespace Orcub.Game
 {
     /// <summary>
-    /// In-game UI, built in code (no prefabs):
-    ///  - top band: Retry, "Level N", moves-left badge
-    ///  - win card: stars pop in one by one, moves used, Next
-    ///  - out-of-moves card: "+5 moves" (rewarded ad, once per attempt) or Retry
-    ///  - DEV: level skip buttons + stats line at the bottom
-    /// Everything sits inside the device safe area; the board camera leaves the top band free.
+    /// In-game UI (approved direction, decluttered):
+    ///  - top bar: one cream clay slab with "Level N | moves" and a round mint restart button (#1)
+    ///  - win card: inside the gear wreath (#4) - title, three clay stars, a Next pill, a small "Replay" link
+    ///  - out-of-moves card: inside the wreath - title, one "+5 moves" pill with a film glyph, a small "Retry" link
+    ///  - DEV: level skip buttons + stats line at the bottom (devTools only)
+    /// The wreath itself is world-space (<see cref="WreathView"/>); this draws the text and buttons over it.
     /// </summary>
     public sealed class LevelHud : MonoBehaviour
     {
@@ -22,43 +22,123 @@ namespace Orcub.Game
 
         public event Action Restart, Prev, Next;
 
-        static readonly Color Cream = new Color(1f, 0.95f, 0.88f);
-        static readonly Color CardColor = new Color(0.98f, 0.93f, 0.86f);
-        static readonly Color Plum = new Color(0.30f, 0.12f, 0.20f);
-        static readonly Color Go = new Color(0.45f, 0.76f, 0.52f);
-        static readonly Color Warn = new Color(0.95f, 0.45f, 0.38f);
+        static readonly Color Ink = new Color(0.23f, 0.09f, 0.15f);        // plum text on clay
+        static readonly Color Cream = new Color(1f, 0.95f, 0.88f);         // text on felt
+        static readonly Color Mint = new Color(0.49f, 0.80f, 0.56f);
+        static readonly Color Coral = new Color(0.95f, 0.51f, 0.42f);
+        static readonly Color StarGold = new Color(0.97f, 0.78f, 0.30f);
+        static readonly Color StarTan = new Color(0.74f, 0.62f, 0.52f);
+        static readonly Color SlabTint = new Color(0.98f, 0.92f, 0.82f);
 
+        OrcubArt _art;
         bool _devTools;
         Font _font;
-        Sprite _star;
         CanvasGroup _group;
-        RectTransform _safe;
-        Text _title, _info, _moves, _movesLabel;
-        RectTransform _movesBadge;
-        Image _movesBg;
+        RectTransform _canvasRect, _safe, _slab;
+        Text _level, _moves, _movesLabel, _info;
         readonly List<RectTransform> _hitAreas = new List<RectTransform>();
         Rect _lastSafe;
-        static Sprite _pill;
         float _targetAlpha = 1f;
         int _movesLeft = 99;
-        RectTransform _popup;
-        Coroutine _popupAnim;
+        float _movesBump;
+        RectTransform _popup, _card;
 
         public bool PopupOpen => _popup != null;
 
-        public static LevelHud Create(Transform parent, Font font, Sprite star, bool devTools)
+        public static LevelHud Create(Transform parent, OrcubArt art, bool devTools)
         {
             var go = new GameObject("HUD");
             go.transform.SetParent(parent, false);
             var hud = go.AddComponent<LevelHud>();
-            hud._font = font != null ? font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            hud._star = star;
+            hud._art = art;
+            hud._font = art.uiFont != null ? art.uiFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             hud._devTools = devTools;
             hud.BuildUi();
             return hud;
         }
 
-        // ------------------------------------------------------------------ construction helpers
+        // ------------------------------------------------------------------ helpers
+
+        RectTransform Rect(string name, Transform parent)
+        {
+            var rt = new GameObject(name, typeof(RectTransform)).GetComponent<RectTransform>();
+            rt.SetParent(parent, false);
+            return rt;
+        }
+
+        static void Anchor(RectTransform rt, float x0, float y0, float x1, float y1)
+        {
+            rt.anchorMin = new Vector2(x0, y0);
+            rt.anchorMax = new Vector2(x1, y1);
+            rt.offsetMin = rt.offsetMax = Vector2.zero;
+        }
+
+        Text Label(Transform parent, string text, int size, Color color, TextAnchor anchor = TextAnchor.MiddleCenter)
+        {
+            var t = Rect("Text", parent).gameObject.AddComponent<Text>();
+            t.font = _font;
+            t.fontSize = size;
+            t.color = color;
+            t.alignment = anchor;
+            t.text = text;
+            t.raycastTarget = false;
+            t.horizontalOverflow = HorizontalWrapMode.Overflow;
+            t.verticalOverflow = VerticalWrapMode.Overflow;
+            return t;
+        }
+
+        Image Img(Transform parent, Sprite sprite, Color color, bool sliced = false)
+        {
+            var img = Rect(sprite != null ? sprite.name : "Image", parent).gameObject.AddComponent<Image>();
+            img.sprite = sprite;
+            img.color = color;
+            img.raycastTarget = false;
+            if (sliced) img.type = Image.Type.Sliced;
+            else img.preserveAspect = true;
+            return img;
+        }
+
+        /// <summary>Puffy clay pill button: sliced pill sprite, label, optional glyph, squash on press.</summary>
+        RectTransform Pill(Transform parent, string label, Color tint, int fontSize, Action onClick, Sprite glyph = null)
+        {
+            var rt = Rect(label, parent);
+            var img = rt.gameObject.AddComponent<Image>();
+            img.sprite = _art.uiPill;
+            img.type = Image.Type.Sliced;
+            img.color = tint;
+            var btn = rt.gameObject.AddComponent<Button>();
+            btn.transition = Selectable.Transition.None;
+            btn.onClick.AddListener(() => { Haptics.Play(Haptics.Impact.Light, 0.6f); onClick(); });
+            rt.gameObject.AddComponent<PressSquash>();
+            var text = Label(rt, label, fontSize, Ink);
+            if (glyph != null)
+            {
+                Anchor(text.rectTransform, 0.30f, 0.06f, 0.95f, 0.94f);
+                var g = Img(rt, glyph, Ink);
+                Anchor(g.rectTransform, 0.10f, 0.24f, 0.30f, 0.80f);
+            }
+            else Anchor(text.rectTransform, 0f, 0.06f, 1f, 0.94f);
+            return rt;
+        }
+
+        /// <summary>Small underlined text action ("Replay", "Retry").</summary>
+        RectTransform TextLink(Transform parent, string label, Action onClick)
+        {
+            var rt = Rect(label, parent);
+            var hit = rt.gameObject.AddComponent<Image>();
+            hit.color = new Color(0, 0, 0, 0);
+            var btn = rt.gameObject.AddComponent<Button>();
+            btn.transition = Selectable.Transition.None;
+            btn.onClick.AddListener(() => { Haptics.Play(Haptics.Impact.Light, 0.5f); onClick(); });
+            rt.gameObject.AddComponent<PressSquash>();
+            var t = Label(rt, label, 44, Cream);
+            Anchor(t.rectTransform, 0f, 0.15f, 1f, 1f);
+            var line = Img(rt, null, new Color(Cream.r, Cream.g, Cream.b, 0.7f), sliced: false);
+            Anchor(line.rectTransform, 0.3f, 0.08f, 0.7f, 0.12f);
+            return rt;
+        }
+
+        // ------------------------------------------------------------------ build
 
         void BuildUi()
         {
@@ -69,136 +149,81 @@ namespace Orcub.Game
                 es.AddComponent<EventSystem>();
                 es.AddComponent<InputSystemUIInputModule>();
             }
-
             var canvas = gameObject.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 100;
             var scaler = gameObject.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1080, 1920);
-            scaler.matchWidthOrHeight = 0.5f;
+            scaler.matchWidthOrHeight = 0f;   // scale with width: phone layouts stay identical across heights
             gameObject.AddComponent<GraphicRaycaster>();
             _group = gameObject.AddComponent<CanvasGroup>();
+            _canvasRect = (RectTransform)transform;
 
-            _safe = NewRect("SafeArea", transform);
+            _safe = Rect("SafeArea", transform);
             ApplySafeArea();
 
-            var band = NewRect("TopBand", _safe);
-            Stretch(band, new Vector2(0f, 1f - TopBandFraction), Vector2.one);
+            // ---- top bar: one clay slab
+            var band = Rect("TopBand", _safe);
+            Anchor(band, 0f, 1f - TopBandFraction, 1f, 1f);
+            _slab = Img(band, _art.uiSlab, SlabTint, sliced: true).rectTransform;
+            Anchor(_slab, 0.04f, 0.14f, 0.96f, 0.92f);
 
-            _title = NewText("Title", band, 64, TextAnchor.MiddleCenter, Cream);
-            Stretch(_title.rectTransform, new Vector2(0.27f, 0f), new Vector2(0.73f, 1f));
-            AddShadow(_title);
+            _level = Label(_slab, "Level 1", 54, Ink);
+            Anchor(_level.rectTransform, 0.05f, 0.08f, 0.43f, 0.92f);
+            var divider = Img(_slab, null, new Color(Ink.r, Ink.g, Ink.b, 0.22f));
+            Anchor(divider.rectTransform, 0.45f, 0.28f, 0.455f, 0.72f);
+            _moves = Label(_slab, "0", 60, Ink, TextAnchor.MiddleRight);
+            Anchor(_moves.rectTransform, 0.47f, 0.08f, 0.61f, 0.92f);
+            _movesLabel = Label(_slab, "moves", 40, Ink, TextAnchor.MiddleLeft);
+            Anchor(_movesLabel.rectTransform, 0.63f, 0.08f, 0.8f, 0.86f);
 
-            Button(band, "Retry", new Vector2(0.03f, 0.22f), new Vector2(0.24f, 0.78f), () => Restart?.Invoke(), 40,
-                new Color(0f, 0f, 0f, 0.22f), Cream, track: true);
-
-            // Moves badge
-            _movesBadge = NewRect("Moves", band);
-            Stretch(_movesBadge, new Vector2(0.76f, 0.1f), new Vector2(0.97f, 0.9f));
-            _movesBg = _movesBadge.gameObject.AddComponent<Image>();
-            _movesBg.sprite = Pill();
-            _movesBg.type = Image.Type.Sliced;
-            _movesBg.color = new Color(0f, 0f, 0f, 0.22f);
-            _movesBg.raycastTarget = false;
-            _moves = NewText("Count", _movesBadge, 60, TextAnchor.MiddleCenter, Cream);
-            Stretch(_moves.rectTransform, new Vector2(0f, 0.28f), new Vector2(1f, 1f));
-            _movesLabel = NewText("Label", _movesBadge, 32, TextAnchor.MiddleCenter, new Color(1f, 0.95f, 0.88f, 0.7f));
-            Stretch(_movesLabel.rectTransform, new Vector2(0f, 0.02f), new Vector2(1f, 0.36f));
-            _movesLabel.text = "moves";
+            // round mint restart button at the slab's right end
+            var restart = Rect("Restart", _slab);
+            // grows leftwards from the slab's right end, sized by the slab height: never overflows
+            Anchor(restart, 0.945f, 0.16f, 0.945f, 0.84f);
+            var rImg = restart.gameObject.AddComponent<Image>();
+            rImg.sprite = _art.uiRound;
+            rImg.color = Mint;
+            rImg.preserveAspect = true;
+            var fit = restart.gameObject.AddComponent<AspectRatioFitter>();
+            fit.aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+            restart.pivot = new Vector2(1f, 0.5f);
+            var rBtn = restart.gameObject.AddComponent<Button>();
+            rBtn.transition = Selectable.Transition.None;
+            rBtn.onClick.AddListener(() => { Haptics.Play(Haptics.Impact.Light, 0.6f); Restart?.Invoke(); });
+            restart.gameObject.AddComponent<PressSquash>();
+            var glyph = Img(restart, _art.uiRestart, Cream);
+            Anchor(glyph.rectTransform, 0.2f, 0.2f, 0.8f, 0.8f);
+            _hitAreas.Add(restart);
 
             if (_devTools)
             {
-                var bottom = NewRect("DevBand", _safe);
-                Stretch(bottom, Vector2.zero, new Vector2(1f, 0.055f));
-                Button(bottom, "‹", new Vector2(0.02f, 0.1f), new Vector2(0.13f, 0.95f), () => Prev?.Invoke(), 56,
-                    new Color(0f, 0f, 0f, 0.18f), new Color(1f, 1f, 1f, 0.6f), track: true);
-                Button(bottom, "›", new Vector2(0.87f, 0.1f), new Vector2(0.98f, 0.95f), () => Next?.Invoke(), 56,
-                    new Color(0f, 0f, 0f, 0.18f), new Color(1f, 1f, 1f, 0.6f), track: true);
-                _info = NewText("Info", bottom, 24, TextAnchor.MiddleCenter, new Color(1f, 1f, 1f, 0.45f));
-                Stretch(_info.rectTransform, new Vector2(0.14f, 0f), new Vector2(0.86f, 1f));
+                var bottom = Rect("DevBand", _safe);
+                Anchor(bottom, 0f, 0f, 1f, 0.05f);
+                var prev = DevButton(bottom, "‹", 0.02f, 0.13f, () => Prev?.Invoke());
+                var next = DevButton(bottom, "›", 0.87f, 0.98f, () => Next?.Invoke());
+                _hitAreas.Add(prev);
+                _hitAreas.Add(next);
+                _info = Label(bottom, "", 22, new Color(1f, 1f, 1f, 0.4f));
+                Anchor(_info.rectTransform, 0.14f, 0f, 0.86f, 1f);
                 _info.horizontalOverflow = HorizontalWrapMode.Wrap;
             }
         }
 
-        RectTransform NewRect(string name, Transform parent)
+        RectTransform DevButton(Transform parent, string label, float x0, float x1, Action onClick)
         {
-            var rt = new GameObject(name, typeof(RectTransform)).GetComponent<RectTransform>();
-            rt.SetParent(parent, false);
-            return rt;
-        }
-
-        static void Stretch(RectTransform rt, Vector2 min, Vector2 max)
-        {
-            rt.anchorMin = min;
-            rt.anchorMax = max;
-            rt.offsetMin = rt.offsetMax = Vector2.zero;
-        }
-
-        Text NewText(string name, Transform parent, int size, TextAnchor anchor, Color color)
-        {
-            var t = NewRect(name, parent).gameObject.AddComponent<Text>();
-            t.font = _font;
-            t.fontSize = size;
-            t.alignment = anchor;
-            t.color = color;
-            t.raycastTarget = false;
-            t.horizontalOverflow = HorizontalWrapMode.Overflow;
-            t.verticalOverflow = VerticalWrapMode.Overflow;
-            return t;
-        }
-
-        static void AddShadow(Graphic g, float alpha = 0.35f)
-        {
-            var s = g.gameObject.AddComponent<Shadow>();
-            s.effectColor = new Color(0f, 0f, 0f, alpha);
-            s.effectDistance = new Vector2(0f, -4f);
-        }
-
-        RectTransform Button(Transform parent, string label, Vector2 min, Vector2 max, Action onClick, int fontSize,
-            Color bg, Color fg, bool track)
-        {
-            var rt = NewRect(label, parent);
-            Stretch(rt, min, max);
+            var rt = Rect(label, parent);
+            Anchor(rt, x0, 0.08f, x1, 0.95f);
             var img = rt.gameObject.AddComponent<Image>();
-            img.sprite = Pill();
+            img.sprite = _art.uiPill;
             img.type = Image.Type.Sliced;
-            img.color = bg;
+            img.color = new Color(1f, 1f, 1f, 0.12f);
             var btn = rt.gameObject.AddComponent<Button>();
-            btn.targetGraphic = img;
-            var colors = btn.colors;
-            colors.pressedColor = new Color(0.8f, 0.8f, 0.8f, 1f);
-            btn.colors = colors;
-            btn.onClick.AddListener(() =>
-            {
-                Haptics.Play(Haptics.Impact.Light, 0.6f);
-                onClick();
-            });
-            var t = NewText("Label", rt, fontSize, TextAnchor.MiddleCenter, fg);
-            Stretch(t.rectTransform, Vector2.zero, Vector2.one);
-            t.text = label;
-            if (track) _hitAreas.Add(rt);
+            btn.onClick.AddListener(() => onClick());
+            var t = Label(rt, label, 52, new Color(1f, 1f, 1f, 0.6f));
+            Anchor(t.rectTransform, 0, 0, 1, 1);
             return rt;
-        }
-
-        /// <summary>Rounded "pill" sprite generated at runtime (9-sliced), so the UI needs no texture assets.</summary>
-        static Sprite Pill()
-        {
-            if (_pill != null) return _pill;
-            const int n = 64, r = 28;
-            var tex = new Texture2D(n, n, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
-            var px = new Color[n * n];
-            for (int y = 0; y < n; y++)
-            for (int x = 0; x < n; x++)
-            {
-                float cx = Mathf.Clamp(x + 0.5f, r, n - r), cy = Mathf.Clamp(y + 0.5f, r, n - r);
-                float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(cx, cy));
-                px[y * n + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(r - d + 0.5f));
-            }
-            tex.SetPixels(px);
-            tex.Apply();
-            _pill = Sprite.Create(tex, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(r, r, r, r));
-            return _pill;
         }
 
         void ApplySafeArea()
@@ -219,18 +244,24 @@ namespace Orcub.Game
             _group.alpha = Mathf.MoveTowards(_group.alpha, _targetAlpha, Time.unscaledDeltaTime * 3f);
             _group.interactable = _group.blocksRaycasts = _targetAlpha > 0.5f;
 
-            // Moves badge pulses warm red when running low.
+            // moves number: bumps on change, turns coral and breathes when 3 or fewer remain
+            _movesBump = Mathf.MoveTowards(_movesBump, 0f, Time.unscaledDeltaTime * 3f);
             bool low = _movesLeft <= 3;
-            float pulse = low ? 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 6f) : 0f;
-            _movesBg.color = low ? Color.Lerp(new Color(0f, 0f, 0f, 0.22f), new Color(Warn.r, Warn.g, Warn.b, 0.75f), pulse)
-                                 : new Color(0f, 0f, 0f, 0.22f);
-            float s = Mathf.Lerp(_movesBadge.localScale.x, 1f, 1f - Mathf.Exp(-12f * Time.unscaledDeltaTime));
-            _movesBadge.localScale = new Vector3(s, s, 1f);
+            float breathe = low ? 0.06f * (0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 6f)) : 0f;
+            _moves.transform.localScale = Vector3.one * (1f + _movesBump * 0.25f + breathe);
+            _moves.color = low ? Color.Lerp(Ink, Coral, 0.9f) : Ink;
+
+            if (_card != null)
+            {
+                // keep the card content inside the wreath's ring, whatever the screen size
+                float w = _canvasRect.rect.width * WreathView.WidthOfView * 0.86f;
+                _card.sizeDelta = new Vector2(w, w);
+            }
         }
 
         public void SetLevel(int number, string info)
         {
-            _title.text = $"Level {number}";
+            _level.text = $"Level {number}";
             if (_info != null) _info.text = info;
         }
 
@@ -239,7 +270,7 @@ namespace Orcub.Game
             _movesLeft = movesLeft;
             _moves.text = movesLeft.ToString();
             _movesLabel.text = movesLeft == 1 ? "move" : "moves";
-            if (bump) _movesBadge.localScale = Vector3.one * 1.15f;
+            if (bump) _movesBump = 1f;
         }
 
         public void SetVisible(bool visible, bool instant = false)
@@ -248,7 +279,7 @@ namespace Orcub.Game
             if (instant && _group != null) _group.alpha = _targetAlpha;
         }
 
-        /// <summary>True if a screen point is on a HUD control or a popup is open (the board should ignore it).</summary>
+        /// <summary>True if a screen point is on a HUD control or a card is open (the board should ignore it).</summary>
         public bool Covers(Vector2 screenPoint)
         {
             if (_popup != null) return true;
@@ -258,44 +289,34 @@ namespace Orcub.Game
             return false;
         }
 
-        // ------------------------------------------------------------------ popups
+        // ------------------------------------------------------------------ cards (drawn inside the wreath)
 
-        RectTransform OpenCard(float heightFraction)
+        RectTransform OpenCard()
         {
             ClosePopup();
-            _popup = NewRect("Popup", transform);
-            Stretch(_popup, Vector2.zero, Vector2.one);
-            var dim = _popup.gameObject.AddComponent<Image>();
-            dim.color = new Color(0.05f, 0.01f, 0.04f, 0.55f);   // also blocks touches to the board
-
-            var card = NewRect("Card", _popup);
-            card.anchorMin = new Vector2(0.08f, 0.5f - heightFraction / 2f);
-            card.anchorMax = new Vector2(0.92f, 0.5f + heightFraction / 2f);
-            card.offsetMin = card.offsetMax = Vector2.zero;
-            var img = card.gameObject.AddComponent<Image>();
-            img.sprite = Pill();
-            img.type = Image.Type.Sliced;
-            img.pixelsPerUnitMultiplier = 0.45f;               // bigger corner radius on the card
-            img.color = CardColor;
-            var sh = card.gameObject.AddComponent<Shadow>();
-            sh.effectColor = new Color(0f, 0f, 0f, 0.35f);
-            sh.effectDistance = new Vector2(0f, -10f);
-
-            if (_popupAnim != null) StopCoroutine(_popupAnim);
-            _popupAnim = StartCoroutine(PopIn(card));
-            return card;
+            _popup = Rect("Popup", transform);
+            Anchor(_popup, 0, 0, 1, 1);
+            var blocker = _popup.gameObject.AddComponent<Image>();
+            blocker.color = new Color(0, 0, 0, 0);        // the dim is the wreath's; this only blocks touches
+            _card = Rect("Card", _popup);
+            _card.anchorMin = _card.anchorMax = new Vector2(0.5f, 0.5f);
+            _card.pivot = new Vector2(0.5f, 0.5f);
+            float w = _canvasRect.rect.width * WreathView.WidthOfView * 0.86f;
+            _card.sizeDelta = new Vector2(w, w);
+            StartCoroutine(FadeIn(_card.gameObject.AddComponent<CanvasGroup>()));
+            return _card;
         }
 
-        IEnumerator PopIn(RectTransform card)
+        static IEnumerator FadeIn(CanvasGroup g)
         {
+            g.alpha = 0f;
+            yield return new WaitForSecondsRealtime(0.28f);   // let the wreath arcs swing in first
             float t = 0f;
-            while (t < 1f && card != null)
+            while (t < 1f && g != null)
             {
-                t += Time.unscaledDeltaTime / 0.32f;
-                float k = Mathf.Clamp01(t);
-                const float c1 = 1.7f, c3 = c1 + 1f;
-                float back = 1f + c3 * Mathf.Pow(k - 1f, 3f) + c1 * Mathf.Pow(k - 1f, 2f);
-                card.localScale = Vector3.one * Mathf.LerpUnclamped(0.7f, 1f, back);
+                t += Time.unscaledDeltaTime / 0.2f;
+                g.alpha = t;
+                g.transform.localScale = Vector3.one * Mathf.Lerp(0.92f, 1f, t);
                 yield return null;
             }
         }
@@ -304,105 +325,111 @@ namespace Orcub.Game
         {
             if (_popup != null) Destroy(_popup.gameObject);
             _popup = null;
+            _card = null;
         }
 
-        /// <summary>Level complete: stars pop in one by one, then Next.</summary>
-        public void ShowWin(int level, int stars, int movesUsed, bool newBest, Action onNext)
+        /// <summary>Level complete: title, three clay stars (they pop in one by one), Next, Replay link.</summary>
+        public void ShowWin(int level, int stars, Action onNext, Action onReplay)
         {
-            var card = OpenCard(0.42f);
-            var title = NewText("Title", card, 76, TextAnchor.MiddleCenter, Plum);
-            Stretch(title.rectTransform, new Vector2(0f, 0.78f), new Vector2(1f, 0.95f));
-            title.text = stars == 3 ? "Perfect!" : stars == 2 ? "Great!" : "Solved!";
-            var sub = NewText("Sub", card, 36, TextAnchor.MiddleCenter, new Color(Plum.r, Plum.g, Plum.b, 0.7f));
-            Stretch(sub.rectTransform, new Vector2(0f, 0.68f), new Vector2(1f, 0.78f));
-            sub.text = $"Level {level}  ·  {movesUsed} moves" + (newBest ? "  ·  new best" : "");
+            var card = OpenCard();
+            var title = Label(card, $"Level {level}", 84, Cream);
+            Anchor(title.rectTransform, 0f, 0.74f, 1f, 0.92f);
+            Shadow(title);
 
-            var row = NewRect("Stars", card);
-            Stretch(row, new Vector2(0.12f, 0.3f), new Vector2(0.88f, 0.66f));
-            var starImgs = new List<Image>();
+            var full = new List<Image>();
             for (int i = 0; i < 3; i++)
             {
-                var slot = NewRect("Star" + i, row);
-                float x0 = i / 3f, x1 = (i + 1) / 3f;
-                float lift = i == 1 ? 0.1f : 0f;               // middle star sits a little higher
-                Stretch(slot, new Vector2(x0 + 0.02f, 0.05f + lift), new Vector2(x1 - 0.02f, 0.95f + lift));
-                var empty = slot.gameObject.AddComponent<Image>();
-                empty.sprite = _star;
-                empty.preserveAspect = true;
-                empty.color = new Color(0.25f, 0.1f, 0.16f, 0.25f);   // dim socket
-                var full = NewRect("Full", slot).gameObject.AddComponent<Image>();
-                Stretch(full.rectTransform, Vector2.zero, Vector2.one);
-                full.sprite = _star;
-                full.preserveAspect = true;
-                full.transform.localScale = Vector3.zero;
-                starImgs.Add(full);
+                float x0 = 0.08f + i * 0.285f, lift = i == 1 ? 0.05f : 0f;
+                var socket = Img(card, _art.uiStarClay, StarTan);
+                Anchor(socket.rectTransform, x0, 0.43f + lift, x0 + 0.27f, 0.71f + lift);
+                var star = Img(socket.transform, _art.uiStarClay, StarGold);
+                Anchor(star.rectTransform, 0, 0, 1, 1);
+                star.transform.localScale = Vector3.zero;
+                full.Add(star);
             }
-
-            var next = Button(card, "Next", new Vector2(0.22f, 0.07f), new Vector2(0.78f, 0.24f), () => { ClosePopup(); onNext(); }, 52, Go, Color.white, track: false);
-            AddShadow(next.GetComponentInChildren<Text>(), 0.25f);
-            StartCoroutine(PopStars(starImgs, stars));
+            var next = Pill(card, "Next", Mint, 64, () => { ClosePopup(); onNext(); });
+            Anchor(next, 0.12f, 0.19f, 0.88f, 0.39f);
+            var replay = TextLink(card, "Replay", () => { ClosePopup(); onReplay(); });
+            Anchor(replay, 0.3f, 0.04f, 0.7f, 0.16f);
+            StartCoroutine(PopStars(full, stars));
         }
 
-        IEnumerator PopStars(List<Image> imgs, int count)
+        IEnumerator PopStars(List<Image> stars, int count)
         {
-            yield return new WaitForSecondsRealtime(0.35f);
-            for (int i = 0; i < count && i < imgs.Count; i++)
+            yield return new WaitForSecondsRealtime(0.6f);
+            for (int i = 0; i < count && i < stars.Count; i++)
             {
-                var img = imgs[i];
+                var img = stars[i];
                 if (img == null) yield break;
                 Haptics.Play(i == count - 1 ? Haptics.Impact.Medium : Haptics.Impact.Light, 0.9f);
                 float t = 0f;
                 while (t < 1f && img != null)
                 {
-                    t += Time.unscaledDeltaTime / 0.28f;
+                    t += Time.unscaledDeltaTime / 0.3f;
                     float k = Mathf.Clamp01(t);
                     const float c1 = 2.2f, c3 = c1 + 1f;
                     float back = 1f + c3 * Mathf.Pow(k - 1f, 3f) + c1 * Mathf.Pow(k - 1f, 2f);
                     img.transform.localScale = Vector3.one * Mathf.Max(0f, back);
-                    img.transform.localRotation = Quaternion.Euler(0, 0, (1f - k) * -25f);
+                    img.transform.localRotation = Quaternion.Euler(0, 0, (1f - k) * -30f);
                     yield return null;
                 }
-                yield return new WaitForSecondsRealtime(0.12f);
+                yield return new WaitForSecondsRealtime(0.14f);
             }
         }
 
-        /// <summary>Out of moves: watch an ad for +N moves (once per attempt), or retry.</summary>
+        /// <summary>Out of moves: one "+N moves" pill (rewarded ad) and a Retry link. No pill if the ad was used.</summary>
         public void ShowOutOfMoves(int bonusMoves, bool canWatchAd, Action onWatchAd, Action onRetry)
         {
-            var card = OpenCard(0.36f);
-            var title = NewText("Title", card, 70, TextAnchor.MiddleCenter, Plum);
-            Stretch(title.rectTransform, new Vector2(0f, 0.74f), new Vector2(1f, 0.94f));
-            title.text = "Out of moves";
-            var sub = NewText("Sub", card, 36, TextAnchor.MiddleCenter, new Color(Plum.r, Plum.g, Plum.b, 0.7f));
-            Stretch(sub.rectTransform, new Vector2(0.06f, 0.56f), new Vector2(0.94f, 0.74f));
-            sub.horizontalOverflow = HorizontalWrapMode.Wrap;
-            sub.text = canWatchAd ? "So close! Keep going?" : "Give it another go.";
-
+            var card = OpenCard();
+            var title = Label(card, "Out of moves", 76, Cream);
+            Anchor(title.rectTransform, 0f, 0.66f, 1f, 0.84f);
+            Shadow(title);
             if (canWatchAd)
             {
-                var ad = Button(card, $"+{bonusMoves} moves  ·  watch ad", new Vector2(0.1f, 0.3f), new Vector2(0.9f, 0.5f),
-                    () => { ClosePopup(); onWatchAd(); }, 44, Go, Color.white, track: false);
-                AddShadow(ad.GetComponentInChildren<Text>(), 0.25f);
+                var ad = Pill(card, $"+{bonusMoves} moves", Coral, 60, () => { ClosePopup(); onWatchAd(); }, _art.uiFilm);
+                Anchor(ad, 0.06f, 0.36f, 0.94f, 0.58f);
             }
-            Button(card, "Retry", new Vector2(0.28f, 0.07f), new Vector2(0.72f, canWatchAd ? 0.24f : 0.4f),
-                () => { ClosePopup(); onRetry(); }, 46, new Color(Plum.r, Plum.g, Plum.b, 0.85f), Cream, track: false);
+            var retry = TextLink(card, "Retry", () => { ClosePopup(); onRetry(); });
+            Anchor(retry, 0.3f, canWatchAd ? 0.18f : 0.4f, 0.7f, canWatchAd ? 0.3f : 0.54f);
         }
 
         /// <summary>Placeholder for a rewarded video until the ads SDK is wired in.</summary>
         public void ShowAdPlaceholder(float seconds, Action onFinished)
         {
-            var card = OpenCard(0.2f);
-            var t = NewText("Ad", card, 44, TextAnchor.MiddleCenter, Plum);
-            Stretch(t.rectTransform, Vector2.zero, Vector2.one);
-            t.text = "Rewarded ad plays here\n(placeholder)";
+            var card = OpenCard();
+            var t = Label(card, "Rewarded ad plays here\n(placeholder)", 46, Cream);
+            Anchor(t.rectTransform, 0, 0, 1, 1);
             t.horizontalOverflow = HorizontalWrapMode.Wrap;
             StartCoroutine(AfterRealtime(seconds, () => { ClosePopup(); onFinished(); }));
+        }
+
+        static void Shadow(Graphic g)
+        {
+            var s = g.gameObject.AddComponent<UnityEngine.UI.Shadow>();
+            s.effectColor = new Color(0f, 0f, 0f, 0.4f);
+            s.effectDistance = new Vector2(0f, -5f);
         }
 
         static IEnumerator AfterRealtime(float seconds, Action a)
         {
             yield return new WaitForSecondsRealtime(seconds);
             a();
+        }
+    }
+
+    /// <summary>Clay-like squash when a button is pressed.</summary>
+    public sealed class PressSquash : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
+    {
+        float _target = 1f;
+
+        public void OnPointerDown(PointerEventData e) => _target = 0.93f;
+        public void OnPointerUp(PointerEventData e) => _target = 1f;
+        public void OnPointerExit(PointerEventData e) => _target = 1f;
+
+        void Update()
+        {
+            float s = Mathf.Lerp(transform.localScale.x, _target, 1f - Mathf.Exp(-25f * Time.unscaledDeltaTime));
+            transform.localScale = new Vector3(s, s, 1f);
         }
     }
 }

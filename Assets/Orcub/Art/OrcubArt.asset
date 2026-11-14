@@ -57,6 +57,15 @@ MonoBehaviour:
   uiStar: {fileID: 21300000, guid: f63b7c24d1b8b4c4aa48ddd5d79e6a70, type: 3}
   uiHeart: {fileID: 21300000, guid: e526994ba637244849bc95d3a5fda6db, type: 3}
   uiCog: {fileID: 21300000, guid: 079d246feb48d4c1d964fdde418d1c40, type: 3}
+  uiSlab: {fileID: 21300000, guid: 26f93195573524bd8aef93cf0d1b207b, type: 3}
+  uiPill: {fileID: 21300000, guid: e68466681afe34bf698e042fea7dffec, type: 3}
+  uiRound: {fileID: 21300000, guid: 745a9242efcf04745908570d50cf1fca, type: 3}
+  uiStarClay: {fileID: 21300000, guid: f77d345dba28c41059b36ab79dec2f4b, type: 3}
+  uiRestart: {fileID: 21300000, guid: 44cf41010587c45c4b859a1cd5139211, type: 3}
+  uiFilm: {fileID: 21300000, guid: 5fb8685457c244d209067193fe733b27, type: 3}
+  wreathArcA: {fileID: 21300000, guid: d2941f9db6cf54ca589a7b8bbc99dce3, type: 3}
+  wreathArcB: {fileID: 21300000, guid: 197f53fe9f51b4c26bff25b321f584cd, type: 3}
+  wreathRadius: 3
   backgroundSprite: {fileID: 21300000, guid: df0554ba07329439e838f42117425bde, type: 3}
   masterVolume: 0.9
   sfxTick: {fileID: 8300000, guid: 39b060b59b52e4aa4a82be142c4cb7cc, type: 3}

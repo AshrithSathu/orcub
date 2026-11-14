@@ -225,6 +225,7 @@ namespace Orcub.EditorTools
             art.uiStar = ImportUiIcon("Assets/Orcub/Art/UI/star.png");
             art.uiHeart = ImportUiIcon("Assets/Orcub/Art/UI/heart.png");
             art.uiCog = ImportUiIcon("Assets/Orcub/Art/UI/cog.png");
+            ImportUiKit(art);
             // Soft-clay palette: saturated enough to read on navy, chalky enough to feel like clay.
             art.ringPalette = new[]
             {
@@ -347,6 +348,43 @@ namespace Orcub.EditorTools
             art.logoLetterColors = new[] { 1, 2, 3, 4 }; // r yellow, c mint, u sky, b lavender (o is coral = 0)
             art.logoOCenter = new Vector2(meta.o.cx, meta.o.cy);
             art.logoOHeight = meta.o.height;
+        }
+
+        /// <summary>UI kit from build_ui_kit.py: pre-lit sliced UI images + normal-mapped wreath arcs.</summary>
+        static void ImportUiKit(OrcubArt art)
+        {
+            const string dir = "Assets/Orcub/Art/UI";
+            var jsonPath = Path.Combine(ProjectRoot, dir, "ui_kit.json");
+            if (!File.Exists(jsonPath)) { Debug.LogWarning("[Orcub] ui_kit.json missing"); return; }
+            var json = File.ReadAllText(jsonPath);
+            int Border(string key)
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(json, "\"" + key + "\"\\s*:\\s*\\{[^}]*\"border\"\\s*:\\s*(\\d+)");
+                return m.Success ? int.Parse(m.Groups[1].Value) : 0;
+            }
+            Sprite Ui(string name, bool slicedH)
+            {
+                var s = ImportUiIcon($"{dir}/{name}.png");
+                if (s == null || !slicedH) return s;
+                var ti = (TextureImporter)AssetImporter.GetAtPath($"{dir}/{name}.png");
+                int b = Border(name);
+                var settings = new TextureImporterSettings();
+                ti.ReadTextureSettings(settings);
+                settings.spriteMeshType = SpriteMeshType.FullRect;   // sliced sprites need full rects
+                settings.spriteBorder = new Vector4(b, 0, b, 0);      // stretch horizontally only
+                ti.SetTextureSettings(settings);
+                ti.SaveAndReimport();
+                return AssetDatabase.LoadAssetAtPath<Sprite>($"{dir}/{name}.png");
+            }
+            art.uiSlab = Ui("ui_slab", true);
+            art.uiPill = Ui("ui_pill", true);
+            art.uiRound = Ui("ui_round", false);
+            art.uiStarClay = Ui("ui_star", false);
+            art.uiRestart = Ui("ui_restart", false);
+            art.uiFilm = Ui("ui_film", false);
+            art.wreathArcA = ImportLitSprite($"{dir}/wreath_arc_a.png", $"{dir}/wreath_arc_a_n.png", 200f);
+            art.wreathArcB = ImportLitSprite($"{dir}/wreath_arc_b.png", $"{dir}/wreath_arc_b_n.png", 200f);
+            art.wreathRadius = 3f;
         }
 
         static Sprite ImportUiIcon(string path)
