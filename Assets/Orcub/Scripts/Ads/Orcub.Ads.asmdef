@@ -1,7 +1,7 @@
 {
   "name": "Orcub.Ads",
-  "references": ["Orcub.Runtime"],
+  "references": ["Orcub.Runtime", "Orcub.Net", "Unity.Newtonsoft.Json"],
   "overrideReferences": true,
-  "precompiledReferences": ["GoogleMobileAds.dll", "GoogleMobileAds.Core.dll", "GoogleMobileAds.Common.dll", "GoogleMobileAds.Ump.dll"],
+  "precompiledReferences": ["GoogleMobileAds.dll", "GoogleMobileAds.Core.dll", "GoogleMobileAds.Common.dll", "GoogleMobileAds.Ump.dll", "Newtonsoft.Json.dll"],
   "autoReferenced": true
 }

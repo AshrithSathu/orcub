@@ -20,16 +20,21 @@ namespace Orcub.Net
     public sealed class ClientServices : MonoBehaviour
     {
         public static ClientServices Instance { get; private set; }
-        public const string BaseUrl = "https://api-production-08259b35.up.railway.app";
+        public const string ProductionUrl = "https://api-production-08259b35.up.railway.app";
+        public static string BaseUrl => Application.isEditor || Debug.isDebugBuild
+            ? PlayerPrefs.GetString("orcub.dev.api", "http://127.0.0.1:8081") : ProductionUrl;
         public AccountService Account { get; private set; }
         public string PlayerId => (string)credentials?["player_id"];
+        public bool Stopped => stopped;
         public bool Ready => credentials != null;
         JObject credentials, config, remote;
         EventQueue queue;
         bool sending, registering, firebaseReady, sessionOpen, stopped;
         string session;
         double sessionAt, nextFlush, nextSave;
-        int failures;
+        int failures, errorCount;
+        double nextError, nextLink;
+        bool linking, renewedInstall;
         string ConfigPath => Path.Combine(Application.persistentDataPath, "orcub-config.json");
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         static void Boot() { if (Instance == null) new GameObject("ClientServices").AddComponent<ClientServices>(); }
@@ -37,7 +42,8 @@ namespace Orcub.Net
         {
             Instance = this; DontDestroyOnLoad(gameObject);
             AccountGateway.Boot.Reset();
-            queue = new EventQueue(Path.Combine(Application.persistentDataPath, "orcub-events.json"));
+            string queuePath = Path.Combine(Application.persistentDataPath, "orcub-events.json");
+            queue = await Task.Run(() => new EventQueue(queuePath));
             try { var stored = InstallStore.Read(); if (!string.IsNullOrEmpty(stored)) credentials = JObject.Parse(stored); }
             catch (Exception) { Debug.LogWarning("Install credentials unavailable"); }
             try { if (File.Exists(ConfigPath)) config = JObject.Parse(File.ReadAllText(ConfigPath)); } catch (Exception) { }
@@ -46,6 +52,7 @@ namespace Orcub.Net
             ClientGateway.Paid = Paid;
             ClientGateway.Save = () => Account?.RequestSave();
             Application.logMessageReceived += OnLog;
+            AnalyticsConsent.Changed += ApplyConsent;
             StartSession();
             Account = new AccountService(this);
             _ = InitializeFirebase();
@@ -55,18 +62,20 @@ namespace Orcub.Net
         {
             try
             {
-                if (await FirebaseApp.CheckAndFixDependenciesAsync() != DependencyStatus.Available) return;
+                if (await FirebaseApp.CheckAndFixDependenciesAsync() != DependencyStatus.Available || stopped) return;
                 firebaseReady = true; AccountGateway.Boot.FirebaseReady = true;
-                Crashlytics.IsCrashlyticsCollectionEnabled = true;
+                ApplyConsent(AnalyticsConsent.Allowed);
                 Crashlytics.ReportUncaughtExceptionsAsFatal = true;
                 var rc = FirebaseRemoteConfig.DefaultInstance;
                 await rc.SetDefaultsAsync(new Dictionary<string, object> { ["tuning"] = JsonUtility.ToJson(new Tuning()), ["skill_model"] = JsonUtility.ToJson(PlayerModel.Load()), ["ad_policy"] = "{\"interstitial_min_interval_seconds\":150,\"interstitial_daily_cap\":6,\"rewarded_daily_cap\":20}", ["version"] = "bundled", ["experiments"] = "{}" });
                 try { await Account.Initialize(); }
                 catch (Exception) { AccountGateway.Boot.NetworkFailed = true; Track("error", new { code = "anonymous_auth_failed", context = "startup" }); }
+                if (stopped) return;
                 AccountGateway.Boot.AuthDone = true;
                 try
                 {
                     await rc.FetchAsync(TimeSpan.FromHours(1)); await rc.ActivateAsync();
+                    if (stopped) return;
                     remote = new JObject();
                     foreach (var key in new[] { "tuning", "skill_model", "ad_policy" })
                     {
@@ -96,8 +105,12 @@ namespace Orcub.Net
                     using var req = await Request("/v1/install", "POST", payload, install: false);
                     if (req.responseCode != 200 && req.responseCode != 201) { AccountGateway.Boot.NetworkFailed = true; nextFlush = Time.realtimeSinceStartupAsDouble + 30; return; }
                     var value = JObject.Parse(req.downloadHandler.text);
+                    if (stopped) return;
                     InstallStore.Write(value.ToString(Formatting.None)); credentials = value;
                 }
+                if (stopped) return;
+                await Account.Link();
+                if (stopped) return;
                 await FetchConfig();
                 AccountGateway.Boot.ConfigDone = true;
                 await Account.Link();
@@ -126,6 +139,7 @@ namespace Orcub.Net
             using var req = await Request("/v1/config?player_id=" + PlayerId, "GET", etag: PlayerPrefs.GetString("orcub.config.etag", ""));
             if (req.responseCode == 200)
             {
+                if (stopped) return;
                 var value = JObject.Parse(req.downloadHandler.text);
                 // Validate the adaptive pair before replacing the last good cache.
                 new Adaptive().Configure(value["tuning"].ToString(), value["skill_model"].ToString());
@@ -134,6 +148,12 @@ namespace Orcub.Net
                 PlayerPrefs.SetString("orcub.config.etag", req.GetResponseHeader("ETag") ?? ""); PlayerPrefs.Save();
                 ApplyCaps();
             }
+        }
+        void ApplyConsent(bool allowed)
+        {
+            if (!firebaseReady) return;
+            FirebaseAnalytics.SetAnalyticsCollectionEnabled(allowed);
+            Crashlytics.IsCrashlyticsCollectionEnabled = allowed;
         }
         void Start() => ApplyCaps();
         JToken Value(string key) => remote?[key] ?? config?[key];
@@ -144,14 +164,17 @@ namespace Orcub.Net
         }
         void ApplyCaps()
         {
-            var p = Value("ad_policy"); if (p == null) return;
+            var p = config?["ad_policy"] ?? remote?["ad_policy"]; if (p == null) return;
             ClientGateway.AdCaps?.Invoke((double?)p["interstitial_min_interval_seconds"] ?? 150, (int?)p["interstitial_daily_cap"] ?? 6, (int?)p["rewarded_daily_cap"] ?? 20);
         }
         public void Track(string kind, object data)
         {
+            if (stopped || queue == null) return;
+            if (kind == "level_start") ConsumableGateway.BeginAttempt?.Invoke(Guid.NewGuid().ToString());
+            if (!AnalyticsConsent.BackendAllowed(kind)) return;
             if (data is AttemptRecord record) data = JObject.Parse(JsonUtility.ToJson(record));
             queue.Add(kind, data);
-            if (!firebaseReady) return;
+            if (!firebaseReady || !AnalyticsConsent.Allowed) return;
             var fields = JObject.FromObject(data);
             var parameters = new List<Parameter>();
             foreach (var p in fields.Properties())
@@ -166,7 +189,7 @@ namespace Orcub.Net
         void Paid(string placement, long micros, string currency, string precision, string unit, string network)
         {
             Track("ad_paid", new { placement, network = "admob", value_micros = micros, currency, precision });
-            if (firebaseReady) FirebaseAnalytics.LogEvent("ad_impression", new Parameter("ad_platform", "AdMob"), new Parameter("ad_source", network),
+            if (firebaseReady && AnalyticsConsent.Allowed) FirebaseAnalytics.LogEvent("ad_impression", new Parameter("ad_platform", "AdMob"), new Parameter("ad_source", network),
                 new Parameter("ad_unit_name", unit), new Parameter("ad_format", placement.StartsWith("rewarded_") ? "Rewarded" : "Interstitial"),
                 new Parameter("value", micros / 1000000.0), new Parameter("currency", currency));
         }
@@ -183,24 +206,49 @@ namespace Orcub.Net
         }
         void OnLog(string message, string stack, LogType type)
         {
-            if (type == LogType.Exception || type == LogType.Error) queue.Add("error", new { code = "unity_error", context = "runtime" });
+            if ((type == LogType.Exception || type == LogType.Error) && Time.realtimeSinceStartupAsDouble >= nextError && errorCount < 20)
+            { nextError = Time.realtimeSinceStartupAsDouble + 60; errorCount++; Track("error", new { code = "unity_error", context = "runtime" }); }
+        }
+        async Task RetryLink()
+        {
+            linking = true;
+            try { await Account.Link(); } catch (Exception) { }
+            finally { linking = false; nextLink = Time.realtimeSinceStartupAsDouble + 30; }
         }
         void Update()
         {
+            if (!stopped && Ready && Account?.User != null && !Account.Linked && !linking && Time.realtimeSinceStartupAsDouble >= nextLink) _ = RetryLink();
             if (!stopped && Time.realtimeSinceStartupAsDouble >= nextSave) { nextSave = Time.realtimeSinceStartupAsDouble + 30; Account?.RequestSave(); }
             if (!stopped && Time.realtimeSinceStartupAsDouble >= nextFlush && !sending) _ = Flush();
         }
         public async Task Flush()
         {
-            if (sending || stopped) return; sending = true;
+            if (sending || stopped || queue == null) return; sending = true;
             try
             {
                 if (!Ready) { await Register(); return; }
                 if (queue.Count == 0) return;
-                var batch = queue.Batch();
+                var batch = System.Array.FindAll(queue.Batch(), e => AnalyticsConsent.BackendAllowed((string)e["kind"]));
+                if (batch.Length == 0) return;
                 using var req = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, batch));
-                if (req.responseCode >= 200 && req.responseCode < 300) { queue.Remove(batch); failures = 0; }
-                else if (req.responseCode == 400 || req.responseCode == 422) { queue.Remove(batch); failures = 0; Debug.LogWarning("Telemetry batch rejected by schema"); }
+                if (req.responseCode >= 200 && req.responseCode < 300) { queue.Remove(batch); failures = 0; renewedInstall = false; }
+                else if (req.responseCode == 400 || req.responseCode == 422)
+                {
+                    // Isolate the rejected event without discarding valid neighbours.
+                    foreach (var item in batch)
+                    {
+                        if (stopped) return;
+                        var single = new[] { item };
+                        using var check = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, single));
+                        if ((check.responseCode >= 200 && check.responseCode < 300) || check.responseCode == 400 || check.responseCode == 422) queue.Remove(single);
+                        else break;
+                    }
+                }
+                else if (req.responseCode == 401 && !renewedInstall)
+                {
+                    renewedInstall = true; credentials = null; InstallStore.Write("");
+                    await Register();
+                }
                 else
                 {
                     failures = Math.Min(failures + 1, 8);
@@ -211,19 +259,28 @@ namespace Orcub.Net
             catch (Exception) { failures = Math.Min(failures + 1, 8); nextFlush = Time.realtimeSinceStartupAsDouble + Math.Pow(2, failures); }
             finally { sending = false; nextFlush = Math.Max(nextFlush, Time.realtimeSinceStartupAsDouble + 5); }
         }
-        void OnApplicationPause(bool paused) { if (paused) { EndSession(); queue.Persist(); _ = Flush(); Account?.RequestSave(); } else StartSession(); }
-        void OnApplicationQuit() { EndSession(); queue.Persist(); }
-        void OnDestroy() { Application.logMessageReceived -= OnLog; if (Instance == this) { Instance = null; ClientGateway.Event = null; ClientGateway.Configure = null; ClientGateway.Paid = null; ClientGateway.Save = null; } }
+        void OnApplicationPause(bool paused) { if (stopped || queue == null) return; if (paused) { EndSession(); queue.Persist(); _ = Flush(); Account?.RequestSave(); } else StartSession(); }
+        void OnApplicationQuit() { if (stopped || queue == null) return; EndSession(); queue.Persist(); }
+        void OnDestroy() { AnalyticsConsent.Changed -= ApplyConsent; Application.logMessageReceived -= OnLog; if (Instance == this) { Instance = null; ClientGateway.Event = null; ClientGateway.Configure = null; ClientGateway.Paid = null; ClientGateway.Save = null; } }
         public void SetPlayer(string id) { credentials["player_id"] = id; InstallStore.Write(credentials.ToString(Formatting.None)); }
-        public void ResetLocal()
+        public async Task ResetLocalAsync()
         {
-            stopped = true; queue.Clear(); InstallStore.Write(""); credentials = null;
-            PlayerPrefs.DeleteAll(); PlayerPrefs.Save();
-            foreach (var file in new[] { "orcub-attempts.json", "orcub-config.json" }) { var p = Path.Combine(Application.persistentDataPath, file); if (File.Exists(p)) File.Delete(p); }
+            stopped = true;
+            // Stopped continuations discard responses; the old writer drains before Boot.
+            queue.Clear(); await queue.Stop();
+            string pendingUid = PlayerPrefs.GetString("orcub.delete.firebase_uid", "");
+            int revoke = PlayerPrefs.GetInt("orcub.delete.google_revoke", 0);
+            ScopedPreferences.Clear();
+            if (pendingUid.Length > 0) PlayerPrefs.SetString("orcub.delete.firebase_uid", pendingUid);
+            if (revoke != 0) PlayerPrefs.SetInt("orcub.delete.google_revoke", revoke);
+            PlayerPrefs.Save(); InstallStore.Write(""); credentials = null;
+            foreach (var file in new[] { "orcub-attempts.json", "orcub-config.json", "orcub-events.json" })
+            { var p = Path.Combine(Application.persistentDataPath, file); if (File.Exists(p)) File.Delete(p); }
+            AnalyticsConsent.Resolve(false);
+            Destroy(gameObject); Instance = null; Boot();
             UnityEngine.SceneManagement.SceneManager.LoadScene("Game");
-            Destroy(gameObject);
-            Instance = null; Boot();
         }
+        public void GoogleDisconnected(string result) => Account?.GoogleDisconnected(result);
         public void GoogleResult(string token) => Account.GoogleResult(token);
     }
 }

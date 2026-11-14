@@ -19,7 +19,8 @@ namespace Orcub.Tests
             public readonly List<string> Calls = new List<string>();
             readonly Dictionary<string,string> cache = new Dictionary<string,string>();
             public readonly StoreTransaction Transaction = new StoreTransaction { Id = "123", ProductId = StoreService.ProductIds[0], Jws = "signed.jws.transaction" };
-            public bool Reject, PendingPurchase, HasUnfinished;
+            public bool Reject, PendingPurchase, HasUnfinished, MixedRestore;
+            public readonly List<string[]> RestoreBatches = new List<string[]>();
             public int Debits, Finished;
             public long RejectStatus;
             readonly HashSet<string> spends = new HashSet<string>();
@@ -37,7 +38,15 @@ namespace Orcub.Tests
                     if (spends.Add((string)request["idempotency_key"])) Debits++;
                     return Task.FromResult(new JObject { ["wallet"] = State, ["effect"] = new JObject { ["extra_moves"] = 5 } });
                 }
-                if (path == "/v1/iap/restore") return Task.FromResult(new JObject { ["wallet"] = State, ["processed"] = 1 });
+                if (path == "/v1/iap/restore")
+                {
+                    var batch = ((JArray)request["signed_transactions"]).ToObject<string[]>(); RestoreBatches.Add(batch);
+                    var results = new JArray();
+                    for (int i = 0; i < batch.Length; i++)
+                        results.Add(new JObject { ["index"] = i, ["ok"] = batch[i] == Transaction.Jws, ["transaction_id"] = batch[i] == Transaction.Jws ? Transaction.Id : null });
+                    return Task.FromResult(new JObject { ["wallet"] = State, ["results"] = results });
+                }
+                if (path == "/v1/offers/shown") return Task.FromResult(new JObject { ["expires_at"] = DateTimeOffset.UtcNow.AddHours(48).ToString("o"), ["repeat_after"] = DateTimeOffset.UtcNow.AddHours(24).ToString("o") });
                 if (path.StartsWith("/v1/wallet?")) return Task.FromResult(State);
                 return Task.FromResult(new JObject { ["offers"] = new JArray(), ["economy"] = new JObject() });
             }
@@ -47,7 +56,7 @@ namespace Orcub.Tests
             public Task<IReadOnlyList<StoreProduct>> LoadProducts(string[] ids) => Task.FromResult<IReadOnlyList<StoreProduct>>(new[] { new StoreProduct { Id = Transaction.ProductId, LocalizedPrice = "₹ 199" } });
             public Task<StoreTransaction> Purchase(string id, string appAccountToken) { Assert.AreEqual(PlayerId, appAccountToken); return Task.FromResult(PendingPurchase ? null : Transaction); }
             public Task<IReadOnlyList<StoreTransaction>> Unfinished() => Task.FromResult<IReadOnlyList<StoreTransaction>>(HasUnfinished ? new[] { Transaction } : Array.Empty<StoreTransaction>());
-            public Task<IReadOnlyList<StoreTransaction>> Restore() => Task.FromResult<IReadOnlyList<StoreTransaction>>(new[] { Transaction });
+            public Task<IReadOnlyList<StoreTransaction>> Restore() => Task.FromResult<IReadOnlyList<StoreTransaction>>(MixedRestore ? new[] { Transaction, new StoreTransaction { Id = "456", ProductId = "bad", Jws = "bad.jws" } } : new[] { Transaction });
             public Task Finish(string id) { Calls.Add("finish"); Finished++; return Task.CompletedTask; }
             public void Update() => TransactionUpdated?.Invoke(Transaction);
         }
@@ -87,6 +96,14 @@ namespace Orcub.Tests
             var f = new Fake(); var s = new StoreService(f,f,f); await s.Restore();
             Assert.Less(f.Calls.IndexOf("/v1/iap/restore"), f.Calls.IndexOf("finish")); Assert.IsTrue(s.Wallet.RemoveAds);
         }
+        [Test] public async Task MixedRestoreFinishesOnlySuccessAndRetriesOnlyFailure()
+        {
+            var f = new Fake { MixedRestore = true }; var s = new StoreService(f,f,f);
+            await s.Restore(); Assert.AreEqual(1,f.Finished);
+            await s.Restore(); Assert.AreEqual(1,f.Finished);
+            Assert.AreEqual(2,f.RestoreBatches[0].Length);
+            CollectionAssert.AreEqual(new[] { "bad.jws" },f.RestoreBatches[1]);
+        }
         [Test]
         public async Task ServerRejectNeverGrantsOrFinishes()
         {
@@ -100,7 +117,7 @@ namespace Orcub.Tests
         public void OfferPresentationHonoursExpiryAndPersistentCooldown()
         {
             var f = new Fake(); var s = new StoreService(f,f,f); var now = DateTimeOffset.UtcNow;
-            var offer = new JObject { ["id"] = "starter_pack", ["expires_at"] = now.AddHours(48).ToString("o"), ["repeat_after"] = now.AddHours(24).ToString("o") };
+            var offer = new JObject { ["id"] = "starter_pack", ["expires_at"] = null, ["repeat_after"] = null };
             Assert.IsTrue(s.CanPresentOffer(offer,now)); s.MarkOfferPresented(offer);
             Assert.IsFalse(new StoreService(f,f,f).CanPresentOffer(offer,now));
             Assert.IsTrue(s.CanPresentOffer(offer,now.AddHours(25))); Assert.IsFalse(s.CanPresentOffer(offer,now.AddHours(49)));
@@ -122,6 +139,14 @@ namespace Orcub.Tests
             Assert.AreEqual(1000,skill.Rating); Assert.AreEqual(2,streak.Count(5));
             Assert.AreEqual(estimate.Rating,SkillModel.Estimate(skill,log,new Tuning()).Rating);
             PlayerPrefs.DeleteKey(prefix+"state"); PlayerPrefs.DeleteKey(prefix+"5");
+        }
+        [Test] public void RemoveAdsSurvivesGlobalRemoteCapOverrides()
+        {
+            var config = new AdsConfig { levelsBetweenInterstitials = 0 };
+            var policy = new AdPolicy(config,0,"orcub.test.rc."+Guid.NewGuid()) { RemoveAds = true };
+            config.interstitialDailyCap = 100; config.maxInterstitialsPerSession = 100;
+            config.firstInterstitialLevel = 0; config.interstitialIntervalSeconds = 0;
+            Assert.False(policy.CanShowInterstitial(20,true,10000)); Assert.True(policy.CanShowRewarded);
         }
         [Test]
         public void AdCapsPersistAcrossPolicyInstancesAndRemoveAdsKeepsRewarded()

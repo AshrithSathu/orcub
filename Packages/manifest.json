@@ -64,7 +64,8 @@
     "com.google.firebase.crashlytics": "file:firebase-crashlytics-13.17.1.tgz",
     "com.google.firebase.remote-config": "file:firebase-remote-config-13.17.1.tgz",
     "com.unity.nuget.newtonsoft-json": "3.2.2",
-    "com.google.firebase.app": "file:firebase-app-13.17.1.tgz"
+    "com.google.firebase.app": "file:firebase-app-13.17.1.tgz",
+    "com.unity.mobile.notifications": "2.5.0"
   },
   "scopedRegistries": [
     {

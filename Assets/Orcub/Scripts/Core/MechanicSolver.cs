@@ -20,6 +20,19 @@ namespace Orcub.Core
             public float Branching, Rotation;
         }
 
+        public static string MemoKey(PuzzleModel m)
+        {
+            var key = new StringBuilder().Append(m.Moves).Append(':');
+            foreach (var r in m.Rings) key.Append(r.Removed ? 'R' : r.Frozen ? 'F' : '.');
+            foreach (var l in m.Links)
+            {
+                key.Append(l.Active ? 'A' : '.');
+                if (l.SpringMoves > 0) key.Append('s').Append(l.ReleasedAt - m.Moves).Append(';');
+                if (l.Clay) key.Append('c').Append(l.Passes).Append(';');
+            }
+            return key.ToString();
+        }
+
         public static bool HasMechanics(LevelDef def)
         {
             foreach (var r in def.Rings)
@@ -51,10 +64,7 @@ namespace Orcub.Core
                     path.RemoveRange(pathStart, path.Count - pathStart);
                     return 0;
                 }
-                var key = new StringBuilder().Append(m.Moves).Append(':');
-                foreach (var r in m.Rings) key.Append(r.Removed ? 'R' : r.Frozen ? 'F' : '.');
-                foreach (var l in m.Links) key.Append(l.Active ? 'A' : '.');
-                string state = key.ToString();
+                string state = MemoKey(m);
                 if (memo.TryGetValue(state, out int cached))
                 { path.RemoveRange(pathStart, path.Count - pathStart); return cached; }
                 stats.States++;

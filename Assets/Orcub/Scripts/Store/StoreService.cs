@@ -67,7 +67,33 @@ namespace Orcub.Store
             Snapshot = (JObject)value.DeepClone(); Balance = (long)value["gold"]; RemoveAds = (bool)value["remove_ads"];
             IsCached = cached; cache.Write("wallet." + backend.PlayerId, value.ToString()); Changed?.Invoke();
         }
-        public async Task Refresh() => Apply(await backend.Request("/v1/wallet?player_id=" + backend.PlayerId, "GET"));
+        public async Task Refresh()
+        {
+            await gate.WaitAsync();
+            try { Apply(await backend.Request("/v1/wallet?player_id=" + backend.PlayerId, "GET")); }
+            finally { gate.Release(); }
+        }
+        internal async Task<JObject> Submit(string path, object body)
+        {
+            await gate.WaitAsync();
+            try
+            {
+                var response = await backend.Request(path, "POST", body);
+                Apply((JObject)response["wallet"]); return response;
+            }
+            finally { gate.Release(); }
+        }
+        internal async Task Consume(JObject item, string owner)
+        {
+            await gate.WaitAsync();
+            try
+            {
+                if (backend.PlayerId != owner) throw new InvalidOperationException("account_changed");
+                var response = await backend.Request("/v1/wallet/consume", "POST", new { player_id = owner, kind = (string)item["kind"], count = (int)item["count"], attempt_ref = (string)item["attempt_ref"], idempotency_key = (string)item["idempotency_key"] });
+                Apply((JObject)response["wallet"]);
+            }
+            finally { gate.Release(); }
+        }
         // The returned effect is null on replay, including across launches. Persist before exposing it.
         public async Task<JObject> Spend(SpendSink sink, string idempotencyKey)
         {
@@ -122,11 +148,24 @@ namespace Orcub.Store
         async void OnTransaction(StoreTransaction transaction) { await Process(transaction); }
         public bool CanPresentOffer(JObject offer, DateTimeOffset now)
         {
-            if (!DateTimeOffset.TryParse((string)offer["expires_at"], out var expiry) || now >= expiry) return false;
+            if (DateTimeOffset.TryParse((string)offer["expires_at"], out var expiry) && now >= expiry) return false;
+            if (DateTimeOffset.TryParse((string)offer["repeat_after"], out var repeat) && now < repeat) return false;
             var key = "offer." + backend.PlayerId + "." + (string)offer["id"] + "." + expiry.ToUnixTimeSeconds();
             return !DateTimeOffset.TryParse(cache.Read(key), out var next) || now >= next;
         }
-        public void MarkOfferPresented(JObject offer)
+        public async Task AcknowledgeOfferPresented(JObject offer)
+        {
+            var response = await backend.Request("/v1/offers/shown", "POST", new { player_id = backend.PlayerId });
+            offer["expires_at"] = response["expires_at"]; offer["repeat_after"] = response["repeat_after"];
+            CacheOfferPresented(offer);
+        }
+        public async void MarkOfferPresented(JObject offer)
+        {
+            CacheOfferPresented(offer);
+            try { await AcknowledgeOfferPresented(offer); }
+            catch (Exception) { Failed?.Invoke("offer_acknowledgement"); }
+        }
+        void CacheOfferPresented(JObject offer)
         {
             if (!DateTimeOffset.TryParse((string)offer["expires_at"], out var expiry) ||
                 !DateTimeOffset.TryParse((string)offer["repeat_after"], out var next)) return;
@@ -167,9 +206,8 @@ namespace Orcub.Store
             try
             {
                 if (completed.Contains(transaction.Id)) return;
-                var response = await backend.Request("/v1/iap/apple", "POST", new { player_id = backend.PlayerId, signed_transaction = transaction.Jws });
+                var response = await Wallet.Submit("/v1/iap/apple", new { player_id = backend.PlayerId, signed_transaction = transaction.Jws });
                 if ((string)response["transaction_id"] != transaction.Id) throw new InvalidOperationException("transaction_mismatch");
-                Wallet.Apply((JObject)response["wallet"]);
                 await Wallet.Refresh();
                 await kit.Finish(transaction.Id); completed.Add(transaction.Id);
                 backend.Track("iap_purchase", new { metric_count = 1, metric_success = true }); Purchased?.Invoke(transaction.ProductId);
@@ -187,10 +225,26 @@ namespace Orcub.Store
             {
                 await backend.PrepareAccount();
                 var transactions = await kit.Restore();
+                string retryKey = "restore.retry." + backend.PlayerId;
+                string retryJson = cache.Read(retryKey);
+                if (!string.IsNullOrEmpty(retryJson))
+                {
+                    var retryIds = new HashSet<string>(JArray.Parse(retryJson).Values<string>());
+                    transactions = transactions.Where(t => retryIds.Contains(t.Id)).ToArray();
+                }
                 if (transactions.Count > 100) throw new InvalidOperationException("restore_limit");
-                var response = await backend.Request("/v1/iap/restore", "POST", new { player_id = backend.PlayerId, signed_transactions = transactions.Select(t => t.Jws).ToArray() });
-                Wallet.Apply((JObject)response["wallet"]); await Wallet.Refresh();
-                foreach (var transaction in transactions) await kit.Finish(transaction.Id);
+                var response = await Wallet.Submit("/v1/iap/restore", new { player_id = backend.PlayerId, signed_transactions = transactions.Select(t => t.Jws).ToArray() });
+                await Wallet.Refresh();
+                if (!(response["results"] is JArray results)) throw new InvalidOperationException("restore_results_missing");
+                var failed = new JArray();
+                foreach (var item in results.OfType<JObject>())
+                {
+                    int index = (int)item["index"];
+                    if (index < 0 || index >= transactions.Count) throw new InvalidOperationException("restore_index");
+                    if ((bool)item["ok"] && (string)item["transaction_id"] == transactions[index].Id) await kit.Finish(transactions[index].Id);
+                    else { failed.Add(transactions[index].Id); Pending?.Invoke(transactions[index].ProductId); }
+                }
+                cache.Write(retryKey, failed.Count == 0 ? "" : failed.ToString());
             }
             catch (Exception) { Failed?.Invoke("restore"); }
             finally { gate.Release(); }

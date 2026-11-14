@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using Orcub.Net;
@@ -13,17 +14,18 @@ namespace Orcub.Tests
         string directory, path;
         [SetUp] public void Setup() { directory = Path.Combine(Path.GetTempPath(), "orcub-tests-" + Guid.NewGuid()); Directory.CreateDirectory(directory); path = Path.Combine(directory, "events.json"); }
         [TearDown] public void Cleanup() => Directory.Delete(directory, true);
-        [Test] public void QueueSurvivesRestartAndRetryWithSameIds()
+        [Test] public async Task QueueSurvivesRestartAndRetryWithSameIds()
         {
             var q = new EventQueue(path); q.Add("session_start", new { session_id = Guid.NewGuid().ToString() });
-            var first = q.Batch(); var restarted = new EventQueue(path);
+            await q.Drain(); var first = q.Batch(); var restarted = new EventQueue(path);
             Assert.AreEqual(first[0].ToString(), restarted.Batch()[0].ToString());
             restarted.Add("error", new { code = "test", context = "test" }); restarted.Remove(first);
-            Assert.AreEqual(1, new EventQueue(path).Count);
+            await restarted.Drain(); Assert.AreEqual(1, new EventQueue(path).Count);
         }
-        [Test] public void GzipUsesExactContractEnvelope()
+        [Test] public async Task GzipUsesExactContractEnvelope()
         {
             var q = new EventQueue(path); q.Add("ad_paid", new { placement = "rewarded_continue", network = "admob", value_micros = 1234, currency = "USD", precision = "estimated" });
+            await q.Drain();
             using var source = new MemoryStream(EventQueue.Serialize("player", q.Batch()));
             using var gzip = new GZipStream(source, CompressionMode.Decompress); using var reader = new StreamReader(gzip);
             var json = JObject.Parse(reader.ReadToEnd());

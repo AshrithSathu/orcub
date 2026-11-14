@@ -1,3 +1,5 @@
+Review b supersedes the integration details below: see [REVIEW_B.md](REVIEW_B.md) for wallet authority, consent, deletion recovery, asynchronous persistence and required Game-owner hooks.
+
 # Orcub connected client
 
 `ClientServices` boots before the scene, without UI. `BaseUrl` is the single production API setting. No admin token ships in the client. Gameplay publishes SDK-free events through `ClientGateway`.

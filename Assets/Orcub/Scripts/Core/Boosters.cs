@@ -1,31 +1,35 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
 namespace Orcub.Core
 {
+    // Store binds these delegates; no SDK dependency enters the board assembly.
+    public static class ConsumableGateway
+    {
+        public static Func<string, int> Count;
+        public static Func<string, bool> Spend;
+        public static Action Refill;
+        public static Func<int> SecondsToNext;
+        public static Action<string> BeginAttempt;
+    }
+
     public enum BoosterKind { Hint, Undo, Unclamp }
 
     public static class BoosterInventory
     {
         public const int StartCount = 3;
-        static string Key(BoosterKind k) => "orcub.booster." + k;
 
-        public static int Count(BoosterKind k) => PlayerPrefs.GetInt(Key(k), StartCount);
+        public static int Count(BoosterKind k) => ConsumableGateway.Count?.Invoke("booster_" + k.ToString().ToLowerInvariant()) ?? 0;
 
         public static bool TrySpend(BoosterKind k)
         {
-            int count = Count(k);
-            if (count <= 0) return false;
-            PlayerPrefs.SetInt(Key(k), count - 1);
-            PlayerPrefs.Save();
-            return true;
+            return ConsumableGateway.Spend?.Invoke("booster_" + k.ToString().ToLowerInvariant()) ?? false;
         }
 
         public static void Add(BoosterKind k, int n)
         {
-            if (n <= 0) return;
-            PlayerPrefs.SetInt(Key(k), Count(k) + n);
-            PlayerPrefs.Save();
+            // Inventory grants come exclusively from wallet responses.
         }
     }
 

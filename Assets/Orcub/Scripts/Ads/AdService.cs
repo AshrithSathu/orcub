@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using Orcub.Game;
+using Orcub.Net;
 using GoogleMobileAds.Api;
 using GoogleMobileAds.Ump.Api;
 using UnityEngine;
@@ -25,6 +26,13 @@ namespace Orcub.Ads
 #endif
         bool Simulated => Application.isEditor;
         bool Supported => Application.isEditor || Application.platform == RuntimePlatform.IPhonePlayer;
+        public void ApplyBackendPolicy(Newtonsoft.Json.Linq.JToken p, bool entitlement)
+        {
+            policy.RemoveAds = entitlement;
+            config.firstInterstitialLevel = (int?)p?["interstitial_min_level"] ?? 8;
+            config.levelsBetweenInterstitials = (int?)p?["interstitial_min_levels_apart"] ?? 3;
+            config.maxInterstitialsPerSession = (bool?)p?["interstitial_enabled"] == false ? 0 : ((int?)p?["interstitial_session_cap"] ?? 6);
+        }
         public bool RemoveAds { get => policy.RemoveAds; set => policy.RemoveAds = value; }
         public bool RewardedReady => Supported && config.adsEnabled && policy.CanShowRewarded && !showing && (Simulated || (initialized && ConsentInformation.CanRequestAds() && rewarded != null && rewarded.CanShowAd()));
         public bool PrivacyOptionsRequired => !Simulated && ConsentInformation.PrivacyOptionsRequirementStatus == PrivacyOptionsRequirementStatus.Required;
@@ -109,9 +117,17 @@ namespace Orcub.Ads
             // the next foreground retries the privacy flow instead of waiting indefinitely.
             if (OrcubTrackingStatus() == 0) privacyStarted = false;
 #endif
+            UpdateAnalyticsConsent();
             InitializeIfAllowed();
         }
         int privacyGeneration;
+        void UpdateAnalyticsConsent()
+        {
+            string purposes = PlayerPrefs.GetString("IABTCF_PurposeConsents", "");
+            bool granted = ConsentInformation.ConsentStatus == ConsentStatus.NotRequired ||
+                (ConsentInformation.ConsentStatus == ConsentStatus.Obtained && purposes.Length >= 10 && purposes[0] == '1' && purposes[6] == '1' && purposes[8] == '1' && purposes[9] == '1');
+            AnalyticsConsent.Resolve(granted);
+        }
         void InitializeIfAllowed()
         {
             if (initialized || !config.adsEnabled || !ConsentInformation.CanRequestAds()) return;
@@ -142,10 +158,10 @@ namespace Orcub.Ads
             yield return new WaitForSecondsRealtime(config.reloadDelaySeconds);
             load();
         }
+        public void RewardedOfferShown(string placement) => TrackAd("ad_offer", placement.StartsWith("rewarded_") ? placement : "rewarded_" + placement);
         public void ShowRewarded(string placement, Action onReward, Action onClosedWithoutReward)
         {
             placement = "rewarded_" + placement;
-            TrackAd("ad_offer", placement);
             if (!RewardedReady) { FailAd(placement, "not_ready"); onClosedWithoutReward?.Invoke(); return; }
             showing = true;
             policy.RecordRewarded(Now);
@@ -191,7 +207,6 @@ namespace Orcub.Ads
             pendingWin = false;
             if (!eligible || showing || (!Simulated && (!ConsentInformation.CanRequestAds() || interstitial == null || !interstitial.CanShowAd())))
             { onFinished?.Invoke(); return; }
-            TrackAd("ad_offer", placement);
             showing = true;
             if (Simulated) { policy.RecordInterstitial(Now); TrackAd("ad_shown", placement); StartCoroutine(Simulate(onFinished, false)); return; }
             var ad = interstitial; interstitial = null;
@@ -221,6 +236,7 @@ namespace Orcub.Ads
             if (!PrivacyOptionsRequired || showing) return;
             ConsentForm.ShowPrivacyOptionsForm(error => callbacks.Enqueue(() =>
             {
+                UpdateAnalyticsConsent();
                 rewarded?.Destroy(); rewarded = null;
                 interstitial?.Destroy(); interstitial = null;
                 if (error != null) Debug.LogWarning("Ads privacy options: " + error.Message);

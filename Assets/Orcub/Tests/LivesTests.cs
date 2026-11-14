@@ -8,6 +8,11 @@ namespace Orcub.Tests
         [Test]
         public void SpendingStopsAtZero_AndRefillRestoresFive()
         {
+            int count = 5;
+            ConsumableGateway.Count = _ => count;
+            ConsumableGateway.Spend = _ => { if (count == 0) return false; count--; return true; };
+            ConsumableGateway.Refill = () => count = 5;
+            ConsumableGateway.SecondsToNext = () => count == 5 ? 0 : 1800;
             Lives.Refill();
             Assert.AreEqual(Lives.Max, Lives.Count);
             Assert.AreEqual(0, Lives.SecondsToNext, "full lives: no timer");
@@ -19,6 +24,7 @@ namespace Orcub.Tests
             Assert.AreEqual(Lives.Max, Lives.Count);
         }
 
+        [TearDown] public void Reset() { ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; }
         [Test]
         public void TimerFormat() => Assert.AreEqual("24:31", Lives.FormatTimer(24 * 60 + 31));
     }

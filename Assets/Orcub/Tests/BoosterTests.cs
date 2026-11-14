@@ -168,19 +168,20 @@ namespace Orcub.Tests
         [TestCase(BoosterKind.Unclamp)]
         public void Inventory_DefaultsSpendsAndRefillsIndependently(BoosterKind kind)
         {
-            foreach (BoosterKind k in System.Enum.GetValues(typeof(BoosterKind)))
-                ResetKey("orcub.booster." + k);
-            Assert.AreEqual(BoosterInventory.StartCount, BoosterInventory.Count(kind));
-            for (int i = 0; i < BoosterInventory.StartCount; i++)
-                Assert.IsTrue(BoosterInventory.TrySpend(kind));
-            Assert.IsFalse(BoosterInventory.TrySpend(kind));
-            Assert.AreEqual(0, BoosterInventory.Count(kind));
-            BoosterInventory.Add(kind, 5);
-            Assert.AreEqual(5, BoosterInventory.Count(kind));
-            BoosterInventory.Add(kind, -1);
-            Assert.AreEqual(5, BoosterInventory.Count(kind));
-            foreach (BoosterKind k in System.Enum.GetValues(typeof(BoosterKind)))
-                if (k != kind) Assert.AreEqual(BoosterInventory.StartCount, BoosterInventory.Count(k));
+            var counts = new Dictionary<string,int> { ["booster_hint"] = 3, ["booster_undo"] = 3, ["booster_unclamp"] = 3 };
+            ConsumableGateway.Count = k => counts[k];
+            ConsumableGateway.Spend = k => { if (counts[k] <= 0) return false; counts[k]--; return true; };
+            try
+            {
+                for (int i = 0; i < 3; i++) Assert.True(BoosterInventory.TrySpend(kind));
+                Assert.False(BoosterInventory.TrySpend(kind));
+                BoosterInventory.Add(kind, 5);
+                Assert.AreEqual(0, BoosterInventory.Count(kind), "Local grants cannot overwrite the wallet");
+                foreach (BoosterKind k in System.Enum.GetValues(typeof(BoosterKind)))
+                    if (k != kind) Assert.AreEqual(3, BoosterInventory.Count(k));
+            }
+            finally { ConsumableGateway.Count = null; ConsumableGateway.Spend = null; }
+
         }
 
         void ResetMeta()
