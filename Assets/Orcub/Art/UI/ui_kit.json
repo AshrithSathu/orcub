@@ -40,5 +40,30 @@
     "file": "ui_film.png",
     "ppu": 200,
     "border": 0
+  },
+  "ui_pause": {
+    "file": "ui_pause.png",
+    "ppu": 200,
+    "border": 0
+  },
+  "ui_heart": {
+    "file": "ui_heart.png",
+    "ppu": 200,
+    "border": 0
+  },
+  "ui_cog": {
+    "file": "ui_cog.png",
+    "ppu": 200,
+    "border": 0
+  },
+  "ui_sound": {
+    "file": "ui_sound.png",
+    "ppu": 200,
+    "border": 0
+  },
+  "ui_haptics": {
+    "file": "ui_haptics.png",
+    "ppu": 200,
+    "border": 0
   }
 }

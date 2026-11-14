@@ -238,6 +238,62 @@ def add_drop_shadow(path, blur_px=10, offset=(6, -10), strength=0.42):
     bpy.data.images.remove(img)
 
 
+def pause_glyph():
+    return fuse("pause", [rounded_box("barL", (0.26, 0.9, 0.22), (-0.2, 0, 0), 0.11),
+                          rounded_box("barR", (0.26, 0.9, 0.22), (0.2, 0, 0), 0.11)], voxel=0.008, smooth_repeat=2)
+
+
+def heart_shape():
+    """Puffy clay cushion: two round lobes + a rotated rounded square (the classic heart construction),
+    fused into one blob and squashed in Z so it reads as soft clay, not a flat cut-out."""
+    # square side 1.0 rotated 45 deg, centre c; lobes (r = 0.5) sit on its two upper edges' midpoints
+    c = -0.2
+    k = 0.5 / math.sqrt(2)
+    lobes = [ellipsoid("lobeL", (0.5, 0.5, 0.5), (-k, c + k, 0)), ellipsoid("lobeR", (0.5, 0.5, 0.5), (k, c + k, 0))]
+    point = rounded_box("point", (1.0, 1.0, 0.94), (0, c, 0), 0.16)
+    point.rotation_euler = (0, 0, math.radians(45))
+    ob = fuse("heart", lobes + [point], voxel=0.01, smooth_repeat=8)
+    ob.scale = (1.0, 1.0, 0.55)
+    bpy.ops.object.select_all(action="DESELECT")
+    ob.select_set(True)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    return ob
+
+
+def cog_shape():
+    parts = [swept_band("cog_band", 0.6, 0, 360, 0.5, 0.3, 0.13)]
+    for k in range(9):
+        a = math.radians(k * 40)
+        t = rounded_box("tooth", (0.3, 0.27, 0.26), (0.95 * math.cos(a), 0.95 * math.sin(a), -0.01), 0.07)
+        t.rotation_euler = (0, 0, a)
+        parts.append(t)
+    return fuse("cog", parts, voxel=0.009, smooth_repeat=5)
+
+
+def sound_glyph():
+    body = rounded_box("box", (0.3, 0.42, 0.2), (-0.42, 0, 0), 0.07)
+    cone = extrude_outline("cone", [(-0.3, 0.2), (0.02, 0.44), (0.02, -0.44), (-0.3, -0.2)], 0.2, bevel=0.06)
+    waves = [swept_band("w1", 0.36, -42, 42, 0.11, 0.18, 0.05), swept_band("w2", 0.62, -45, 45, 0.11, 0.18, 0.05)]
+    for w in waves:
+        w.location.x = 0.0
+    return fuse("sound", [body, cone] + waves, voxel=0.008, smooth_repeat=2)
+
+
+def haptics_glyph():
+    w, h, t = 0.5, 0.86, 0.11
+    frame = [rounded_box("t", (w, t, 0.2), (0, h / 2 - t / 2, 0), 0.05), rounded_box("b", (w, t, 0.2), (0, -h / 2 + t / 2, 0), 0.05),
+             rounded_box("l", (t, h, 0.2), (-w / 2 + t / 2, 0, 0), 0.05), rounded_box("r", (t, h, 0.2), (w / 2 - t / 2, 0, 0), 0.05)]
+    arcs = []
+    for sx in (-1, 1):
+        for r in (0.46, 0.64):
+            a = swept_band("hw", r, -30, 30, 0.09, 0.16, 0.04)
+            if sx < 0:
+                a.rotation_euler = (0, 0, math.pi)
+            arcs.append(a)
+    return fuse("haptics", frame + arcs, voxel=0.008, smooth_repeat=2)
+
+
 def part_b():
     ui_scene()
     m = 0.18  # margin for the soft shadow
@@ -248,8 +304,12 @@ def part_b():
     roundb = capsule("round", 1.0, 1.0, 0.46)
     render_ui(roundb, "ui_round", 0.5 + m, 0.5 + m)
     render_ui(star_shape(), "ui_star", 1.0 + m, 1.0 + m)
-    render_ui(restart_glyph(), "ui_restart", 0.8, 0.8)
     render_ui(film_glyph(), "ui_film", 0.85 + m, 0.6 + m)
+    render_ui(pause_glyph(), "ui_pause", 0.5 + m, 0.55 + m)
+    render_ui(heart_shape(), "ui_heart", 1.0 + m, 1.0 + m)
+    render_ui(cog_shape(), "ui_cog", 1.15 + m, 1.15 + m)
+    render_ui(sound_glyph(), "ui_sound", 0.8 + m, 0.6 + m)
+    render_ui(haptics_glyph(), "ui_haptics", 0.85 + m, 0.6 + m)
 
 
 os.makedirs(UI_OUT, exist_ok=True)

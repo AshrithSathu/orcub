@@ -222,9 +222,6 @@ namespace Orcub.EditorTools
             ImportLogo(art);
             ImportIcon();
             art.uiFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/Orcub/Fonts/Fredoka-Bold.ttf");
-            art.uiStar = ImportUiIcon("Assets/Orcub/Art/UI/star.png");
-            art.uiHeart = ImportUiIcon("Assets/Orcub/Art/UI/heart.png");
-            art.uiCog = ImportUiIcon("Assets/Orcub/Art/UI/cog.png");
             ImportUiKit(art);
             // Soft-clay palette: saturated enough to read on navy, chalky enough to feel like clay.
             art.ringPalette = new[]
@@ -380,8 +377,12 @@ namespace Orcub.EditorTools
             art.uiPill = Ui("ui_pill", true);
             art.uiRound = Ui("ui_round", false);
             art.uiStarClay = Ui("ui_star", false);
-            art.uiRestart = Ui("ui_restart", false);
             art.uiFilm = Ui("ui_film", false);
+            art.uiPause = Ui("ui_pause", false);
+            art.uiHeartClay = Ui("ui_heart", false);
+            art.uiCogClay = Ui("ui_cog", false);
+            art.uiSound = Ui("ui_sound", false);
+            art.uiHaptics = Ui("ui_haptics", false);
             art.wreathArcA = ImportLitSprite($"{dir}/wreath_arc_a.png", $"{dir}/wreath_arc_a_n.png", 200f);
             art.wreathArcB = ImportLitSprite($"{dir}/wreath_arc_b.png", $"{dir}/wreath_arc_b_n.png", 200f);
             art.wreathRadius = 3f;

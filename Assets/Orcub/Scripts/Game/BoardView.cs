@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Orcub.Core;
 using UnityEngine;
@@ -113,7 +114,8 @@ namespace Orcub.Game
             _crumbs = ClayCrumbs.Create(transform, art.spriteMaterial);
             _hud = LevelHud.Create(transform, art, devTools);
             _wreath = WreathView.Create(transform, art, cam);
-            _hud.Restart += () => LoadLevel(_levelIndex);
+            _hud.Pause += OpenPause;
+            GameSettings.Apply();
             _hud.Prev += () => LoadLevel(_levelIndex - 1);
             _hud.Next += () => LoadLevel(_levelIndex + 1);
             Build();
@@ -489,7 +491,57 @@ namespace Orcub.Game
                     _hud.SetMoves(MovesLeft, bump: true);
                     Haptics.Play(Haptics.Impact.Medium, 0.8f);
                 }),
-                onRetry: () => LoadLevel(_levelIndex));
+                onRetry: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain));
+        }
+
+        // ------------------------------------------------------------------ pause, lives
+
+        void OpenPause()
+        {
+            if (_levelOver || _hud == null || _hud.PopupOpen) return;
+            _wreath?.Show();
+            _hud.ShowPause(
+                onRestart: () => _hud.ShowRestartConfirm(
+                    onRestart: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: OpenPause),
+                    onCancel: OpenPauseAgain),
+                onResume: () => _wreath?.Hide());
+        }
+
+        void OpenPauseAgain()
+        {
+            _hud.ShowPause(
+                onRestart: () => _hud.ShowRestartConfirm(
+                    onRestart: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: OpenPauseAgain),
+                    onCancel: OpenPauseAgain),
+                onResume: () => _wreath?.Hide());
+        }
+
+        void CheckOutOfMovesAgain()
+        {
+            _levelOver = false;
+            CheckOutOfMoves();
+        }
+
+        /// <summary>
+        /// Spend a life and run <paramref name="action"/>. With no lives left, show the out-of-lives card instead:
+        /// "Refill with ad" refills and then runs the action; "Back" returns to the card that asked (<paramref name="reopen"/>).
+        /// </summary>
+        void SpendLifeThen(Action action, Action reopen)
+        {
+            if (Lives.TrySpend())
+            {
+                action();
+                return;
+            }
+            _wreath?.Show();
+            _hud.ShowOutOfLives(
+                onRefillAd: () => _hud.ShowAdPlaceholder(1.4f, () =>
+                {
+                    Lives.Refill();
+                    if (Lives.TrySpend()) action();
+                }),
+                onRefillCogs: null,   // enabled once Brass Cogs exist (step 4)
+                onBack: reopen);
         }
 
         void OnSolved()

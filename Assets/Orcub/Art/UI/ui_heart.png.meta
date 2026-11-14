@@ -1,13 +1,10 @@
 fileFormatVersion: 2
-guid: 44cf41010587c45c4b859a1cd5139211
+guid: c8de5a6e470864fba87183382e0da081
 TextureImporter:
   internalIDToNameTable:
   - first:
-      213: -4182922769758902724
-    second: ui_restart_0
-  - first:
-      213: -5365483337543836475
-    second: ui_restart_1
+      213: 7322450618867673665
+    second: ui_heart_0
   externalObjects: {}
   serializedVersion: 13
   mipmaps:
@@ -131,13 +128,13 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: ui_restart_0
+      name: ui_heart_0
       rect:
         serializedVersion: 2
-        x: 0
-        y: 94
-        width: 7
-        height: 42
+        x: 58
+        y: 44
+        width: 368
+        height: 326
       alignment: 0
       pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
@@ -146,30 +143,8 @@ TextureImporter:
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: c36a0a927e543f5c0800000000000000
-      internalID: -4182922769758902724
-      vertices: []
-      indices: 
-      edges: []
-      weights: []
-    - serializedVersion: 2
-      name: ui_restart_1
-      rect:
-        serializedVersion: 2
-        x: 18
-        y: 2
-        width: 302
-        height: 296
-      alignment: 0
-      pivot: {x: 0, y: 0}
-      border: {x: 0, y: 0, z: 0, w: 0}
-      customData: 
-      outline: []
-      physicsShape: []
-      tessellationDetail: -1
-      bones: []
-      spriteID: 5cc1c610559f985b0800000000000000
-      internalID: -5365483337543836475
+      spriteID: 14a62f6ba029e9560800000000000000
+      internalID: 7322450618867673665
       vertices: []
       indices: 
       edges: []
@@ -188,8 +163,7 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      ui_restart_0: -4182922769758902724
-      ui_restart_1: -5365483337543836475
+      ui_heart_0: 7322450618867673665
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 

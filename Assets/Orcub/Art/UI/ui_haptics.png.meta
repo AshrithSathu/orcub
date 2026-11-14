@@ -1,10 +1,10 @@
 fileFormatVersion: 2
-guid: 079d246feb48d4c1d964fdde418d1c40
+guid: df2600b7e8ecb4e0597a31919cb4a5fa
 TextureImporter:
   internalIDToNameTable:
   - first:
-      213: 7423027989442695573
-    second: cog_0
+      213: -9096939210471895344
+    second: ui_haptics_0
   externalObjects: {}
   serializedVersion: 13
   mipmaps:
@@ -128,13 +128,13 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: cog_0
+      name: ui_haptics_0
       rect:
         serializedVersion: 2
-        x: 0
-        y: 0
-        width: 256
-        height: 256
+        x: 61
+        y: 46
+        width: 302
+        height: 200
       alignment: 0
       pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
@@ -143,8 +143,8 @@ TextureImporter:
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: 5919384a0a4e30760800000000000000
-      internalID: 7423027989442695573
+      spriteID: 0de00885cfd21c180800000000000000
+      internalID: -9096939210471895344
       vertices: []
       indices: 
       edges: []
@@ -163,7 +163,7 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      cog_0: 7423027989442695573
+      ui_haptics_0: -9096939210471895344
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 

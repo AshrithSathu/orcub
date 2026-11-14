@@ -48,18 +48,18 @@ namespace Orcub.Game
 
         [Header("UI")]
         public Font uiFont;
-        [Tooltip("Pre-lit clay icons for the UI (rendered in Blender with light baked in).")]
-        public Sprite uiStar;
-        public Sprite uiHeart;
-        public Sprite uiCog;
 
         [Header("UI kit (approved: #1 top bar / buttons / stars, #4 gear-wreath cards)")]
         public Sprite uiSlab;       // cream clay slab, sliced horizontally
         public Sprite uiPill;       // puffy clay pill, sliced horizontally, tinted per button
         public Sprite uiRound;      // round puffy clay button
         public Sprite uiStarClay;   // neutral clay star: tinted gold (earned) or tan (unearned)
-        public Sprite uiRestart;    // circular-arrow glyph
         public Sprite uiFilm;       // film/play glyph (watch ad)
+        public Sprite uiPause;      // two rounded bars
+        public Sprite uiHeartClay;  // puffy clay heart (lives)
+        public Sprite uiCogClay;    // clay cog (currency)
+        public Sprite uiSound;      // speaker glyph
+        public Sprite uiHaptics;    // phone + vibration glyph
         public Sprite wreathArcA;   // world sprites with normal maps: the gear-wreath card frame
         public Sprite wreathArcB;
         public float wreathRadius = 3f;

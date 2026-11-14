@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
+using Orcub.Core;
 
 namespace Orcub.Game
 {
@@ -20,7 +21,7 @@ namespace Orcub.Game
     {
         public const float TopBandFraction = 0.11f;
 
-        public event Action Restart, Prev, Next;
+        public event Action Pause, Prev, Next;
 
         static readonly Color Ink = new Color(0.23f, 0.09f, 0.15f);        // plum text on clay
         static readonly Color Cream = new Color(1f, 0.95f, 0.88f);         // text on felt
@@ -29,13 +30,17 @@ namespace Orcub.Game
         static readonly Color StarGold = new Color(0.97f, 0.78f, 0.30f);
         static readonly Color StarTan = new Color(0.74f, 0.62f, 0.52f);
         static readonly Color SlabTint = new Color(0.98f, 0.92f, 0.82f);
+        static readonly Color HeartRed = new Color(0.95f, 0.43f, 0.37f);
+        static readonly Color Brass = new Color(0.89f, 0.70f, 0.38f);
+        static readonly Color SwitchOff = new Color(0.55f, 0.42f, 0.48f);
 
         OrcubArt _art;
         bool _devTools;
         Font _font;
         CanvasGroup _group;
         RectTransform _canvasRect, _safe, _slab;
-        Text _level, _moves, _movesLabel, _info;
+        Text _level, _moves, _movesLabel, _info, _lives;
+        float _livesRefresh;
         readonly List<RectTransform> _hitAreas = new List<RectTransform>();
         Rect _lastSafe;
         float _targetAlpha = 1f;
@@ -103,7 +108,8 @@ namespace Orcub.Game
         }
 
         /// <summary>Puffy clay pill button: sliced pill sprite, label, optional glyph, squash on press.</summary>
-        RectTransform Pill(Transform parent, string label, Color tint, int fontSize, Action onClick, Sprite glyph = null)
+        RectTransform Pill(Transform parent, string label, Color tint, int fontSize, Action onClick, Sprite glyph = null,
+            Color? glyphTint = null)
         {
             var rt = Rect(label, parent);
             var img = rt.gameObject.AddComponent<Image>();
@@ -119,7 +125,7 @@ namespace Orcub.Game
             if (glyph != null)
             {
                 Anchor(text.rectTransform, 0.30f, 0.06f, 0.95f, 0.94f);
-                var g = Img(rt, glyph, Ink);
+                var g = Img(rt, glyph, glyphTint ?? Ink);
                 Anchor(g.rectTransform, 0.10f, 0.24f, 0.30f, 0.80f);
             }
             else Anchor(text.rectTransform, 0f, 0.06f, 1f, 0.94f);
@@ -174,33 +180,44 @@ namespace Orcub.Game
             _slab = Img(band, _art.uiSlab, SlabTint, sliced: true).rectTransform;
             Anchor(_slab, 0.04f, 0.14f, 0.96f, 0.92f);
 
-            _level = Label(_slab, "Level 1", 54, Ink);
-            Anchor(_level.rectTransform, 0.05f, 0.08f, 0.43f, 0.92f);
-            var divider = Img(_slab, null, new Color(Ink.r, Ink.g, Ink.b, 0.22f));
-            Anchor(divider.rectTransform, 0.45f, 0.28f, 0.455f, 0.72f);
-            _moves = Label(_slab, "0", 60, Ink, TextAnchor.MiddleRight);
-            Anchor(_moves.rectTransform, 0.47f, 0.08f, 0.61f, 0.92f);
-            _movesLabel = Label(_slab, "moves", 40, Ink, TextAnchor.MiddleLeft);
-            Anchor(_movesLabel.rectTransform, 0.63f, 0.08f, 0.8f, 0.86f);
+            // round coral pause button at the slab's left end (approved top bar option 3)
+            var pause = Rect("Pause", _slab);
+            Anchor(pause, 0.055f, 0.14f, 0.055f, 0.86f);
+            pause.pivot = new Vector2(0f, 0.5f);
+            var pImg = pause.gameObject.AddComponent<Image>();
+            pImg.sprite = _art.uiRound;
+            pImg.color = Coral;
+            pImg.preserveAspect = true;
+            pause.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+            var pBtn = pause.gameObject.AddComponent<Button>();
+            pBtn.transition = Selectable.Transition.None;
+            pBtn.onClick.AddListener(() => { Haptics.Play(Haptics.Impact.Light, 0.6f); Pause?.Invoke(); });
+            pause.gameObject.AddComponent<PressSquash>();
+            var pGlyph = Img(pause, _art.uiPause, Cream);
+            Anchor(pGlyph.rectTransform, 0.27f, 0.25f, 0.73f, 0.75f);
+            _hitAreas.Add(pause);
 
-            // round mint restart button at the slab's right end
-            var restart = Rect("Restart", _slab);
-            // grows leftwards from the slab's right end, sized by the slab height: never overflows
-            Anchor(restart, 0.945f, 0.16f, 0.945f, 0.84f);
-            var rImg = restart.gameObject.AddComponent<Image>();
-            rImg.sprite = _art.uiRound;
-            rImg.color = Mint;
-            rImg.preserveAspect = true;
-            var fit = restart.gameObject.AddComponent<AspectRatioFitter>();
-            fit.aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
-            restart.pivot = new Vector2(1f, 0.5f);
-            var rBtn = restart.gameObject.AddComponent<Button>();
-            rBtn.transition = Selectable.Transition.None;
-            rBtn.onClick.AddListener(() => { Haptics.Play(Haptics.Impact.Light, 0.6f); Restart?.Invoke(); });
-            restart.gameObject.AddComponent<PressSquash>();
-            var glyph = Img(restart, _art.uiRestart, Cream);
-            Anchor(glyph.rectTransform, 0.2f, 0.2f, 0.8f, 0.8f);
-            _hitAreas.Add(restart);
+            _level = Label(_slab, "Level 1", 52, Ink);
+            Anchor(_level.rectTransform, 0.2f, 0.08f, 0.5f, 0.92f);
+            var divider = Img(_slab, null, new Color(Ink.r, Ink.g, Ink.b, 0.22f));
+            Anchor(divider.rectTransform, 0.515f, 0.28f, 0.52f, 0.72f);
+            _moves = Label(_slab, "0", 58, Ink, TextAnchor.MiddleRight);
+            Anchor(_moves.rectTransform, 0.53f, 0.08f, 0.63f, 0.92f);
+            _movesLabel = Label(_slab, "moves", 38, Ink, TextAnchor.MiddleLeft);
+            Anchor(_movesLabel.rectTransform, 0.645f, 0.08f, 0.8f, 0.86f);
+
+            // lives: clay heart with the count, at the slab's right end
+            var heart = Rect("Lives", _slab);
+            Anchor(heart, 0.95f, 0.04f, 0.95f, 0.96f);
+            heart.pivot = new Vector2(1f, 0.5f);
+            var hImg = heart.gameObject.AddComponent<Image>();
+            hImg.sprite = _art.uiHeartClay;
+            hImg.color = HeartRed;
+            hImg.preserveAspect = true;
+            hImg.raycastTarget = false;
+            heart.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+            _lives = Label(heart, Lives.Count.ToString(), 44, Cream);
+            Anchor(_lives.rectTransform, 0f, 0.1f, 1f, 0.9f);
 
             if (_devTools)
             {
@@ -256,6 +273,13 @@ namespace Orcub.Game
             float breathe = low ? 0.06f * (0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 6f)) : 0f;
             _moves.transform.localScale = Vector3.one * (1f + _movesBump * 0.25f + breathe);
             _moves.color = low ? Color.Lerp(Ink, Coral, 0.9f) : Ink;
+
+            _livesRefresh -= Time.unscaledDeltaTime;
+            if (_livesRefresh <= 0f)
+            {
+                _livesRefresh = 1f;
+                _lives.text = Lives.Count.ToString();
+            }
 
             if (_card != null)
             {
@@ -397,6 +421,124 @@ namespace Orcub.Game
             }
             var retry = TextLink(card, "Retry", () => { ClosePopup(); onRetry(); });
             Anchor(retry, 0.32f, canWatchAd ? 0.22f : 0.42f, 0.68f, canWatchAd ? 0.33f : 0.54f);
+        }
+
+        /// <summary>Clay toggle: icon + label + pill track with a sliding cream knob.</summary>
+        void Toggle(Transform parent, Sprite icon, string label, bool on, Action<bool> changed, float y0, float y1)
+        {
+            var row = Rect(label, parent);
+            Anchor(row, 0.08f, y0, 0.92f, y1);
+            var ic = Img(row, icon, Cream);
+            Anchor(ic.rectTransform, 0f, 0.12f, 0.16f, 0.88f);
+            var text = Label(row, label, 46, Cream, TextAnchor.MiddleLeft);
+            Anchor(text.rectTransform, 0.2f, 0f, 0.62f, 1f);
+
+            var track = Rect("Switch", row);
+            Anchor(track, 0.66f, 0.1f, 1f, 0.9f);
+            var tImg = track.gameObject.AddComponent<Image>();
+            tImg.sprite = _art.uiPill;
+            tImg.type = Image.Type.Sliced;
+            track.gameObject.AddComponent<RoundCaps>();
+            var knob = Rect("Knob", track);
+            var kImg = knob.gameObject.AddComponent<Image>();
+            kImg.sprite = _art.uiRound;
+            kImg.color = new Color(1f, 0.97f, 0.92f);
+            kImg.preserveAspect = true;
+            kImg.raycastTarget = false;
+            knob.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+
+            bool state = on;
+            void Show()
+            {
+                tImg.color = state ? Mint : SwitchOff;
+                float x = state ? 0.97f : 0.03f;
+                knob.anchorMin = new Vector2(x, 0.04f);
+                knob.anchorMax = new Vector2(x, 0.96f);
+                knob.pivot = new Vector2(state ? 1f : 0f, 0.5f);
+                knob.offsetMin = knob.offsetMax = Vector2.zero;
+            }
+            Show();
+            var btn = track.gameObject.AddComponent<Button>();
+            btn.transition = Selectable.Transition.None;
+            btn.onClick.AddListener(() =>
+            {
+                state = !state;
+                Show();
+                changed(state);
+                Haptics.Play(Haptics.Impact.Light, 0.6f);   // fires only if haptics are (now) on
+            });
+        }
+
+        /// <summary>Pause / settings: sound + haptics switches, Restart (costs a life), Resume.</summary>
+        public void ShowPause(Action onRestart, Action onResume)
+        {
+            var card = OpenCard();
+            var title = Label(card, "Paused", 80, Cream);
+            Anchor(title.rectTransform, 0f, 0.8f, 1f, 0.95f);
+            Shadow(title);
+            Toggle(card, _art.uiSound, "Sound", GameSettings.SoundOn, on => GameSettings.SoundOn = on, 0.63f, 0.75f);
+            Toggle(card, _art.uiHaptics, "Haptics", GameSettings.HapticsOn, on => GameSettings.HapticsOn = on, 0.49f, 0.61f);
+            var restart = Pill(card, "−1   Restart", Coral, 50, () => { ClosePopup(); onRestart(); }, _art.uiHeartClay, Cream);
+            Anchor(restart, 0.1f, 0.31f, 0.9f, 0.45f);
+            var resume = Pill(card, "Resume", Mint, 62, () => { ClosePopup(); onResume(); });
+            Anchor(resume, 0.14f, 0.13f, 0.86f, 0.29f);
+        }
+
+        /// <summary>"Restart level? Uses 1 life" confirmation.</summary>
+        public void ShowRestartConfirm(Action onRestart, Action onCancel)
+        {
+            var card = OpenCard();
+            var title = Label(card, "Restart level?", 72, Cream);
+            Anchor(title.rectTransform, 0f, 0.68f, 1f, 0.84f);
+            Shadow(title);
+            var cost = Rect("Cost", card);
+            Anchor(cost, 0.2f, 0.54f, 0.8f, 0.65f);
+            var h = Img(cost, _art.uiHeartClay, HeartRed);
+            Anchor(h.rectTransform, 0f, 0f, 0.24f, 1f);
+            var t = Label(cost, "Uses 1 life", 48, Cream, TextAnchor.MiddleLeft);
+            Anchor(t.rectTransform, 0.28f, 0f, 1f, 1f);
+            var restart = Pill(card, "Restart", Coral, 62, () => { ClosePopup(); onRestart(); });
+            Anchor(restart, 0.14f, 0.32f, 0.86f, 0.49f);
+            var cancel = TextLink(card, "Cancel", () => { ClosePopup(); onCancel(); });
+            Anchor(cancel, 0.32f, 0.17f, 0.68f, 0.28f);
+        }
+
+        /// <summary>Out of lives: big heart, live countdown, refill with ad, refill with cogs (disabled until cogs exist).</summary>
+        public void ShowOutOfLives(Action onRefillAd, Action onRefillCogs, Action onBack)
+        {
+            var card = OpenCard();
+            var title = Label(card, "Out of lives", 74, Cream);
+            Anchor(title.rectTransform, 0f, 0.82f, 1f, 0.95f);
+            Shadow(title);
+            var heart = Img(card, _art.uiHeartClay, HeartRed);
+            Anchor(heart.rectTransform, 0.36f, 0.62f, 0.64f, 0.82f);
+            var timer = Label(card, "", 44, Cream);
+            Anchor(timer.rectTransform, 0f, 0.53f, 1f, 0.62f);
+            StartCoroutine(Countdown(timer));
+            var ad = Pill(card, "Refill with ad", Coral, 46, () => { ClosePopup(); onRefillAd(); }, _art.uiFilm);
+            Anchor(ad, 0.08f, 0.39f, 0.92f, 0.52f);
+            var cogs = Pill(card, "Refill for 12 cogs", Mint, 44, () => { if (onRefillCogs != null) { ClosePopup(); onRefillCogs(); } },
+                _art.uiCogClay, Brass);
+            Anchor(cogs, 0.08f, 0.25f, 0.92f, 0.38f);
+            if (onRefillCogs == null)
+            {
+                // cogs arrive with the currency step: show the option, but dimmed and inactive
+                var g = cogs.gameObject.AddComponent<CanvasGroup>();
+                g.alpha = 0.45f;
+                g.interactable = false;
+            }
+            var back = TextLink(card, "Back", () => { ClosePopup(); onBack(); });
+            Anchor(back, 0.34f, 0.14f, 0.66f, 0.24f);
+        }
+
+        IEnumerator Countdown(Text label)
+        {
+            while (label != null)
+            {
+                int s = Lives.SecondsToNext;
+                label.text = s > 0 ? $"Next life in {Lives.FormatTimer(s)}" : "A life is ready!";
+                yield return new WaitForSecondsRealtime(0.5f);
+            }
         }
 
         /// <summary>Placeholder for a rewarded video until the ads SDK is wired in.</summary>

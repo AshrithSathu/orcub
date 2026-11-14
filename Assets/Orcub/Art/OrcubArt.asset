@@ -54,15 +54,16 @@ MonoBehaviour:
   logoOCenter: {x: 0.98444283, y: 0.86976767}
   logoOHeight: 1.8857627
   uiFont: {fileID: 12800000, guid: f4b5007a6f3ee4b2aa8c3435e6fe3527, type: 3}
-  uiStar: {fileID: 21300000, guid: f63b7c24d1b8b4c4aa48ddd5d79e6a70, type: 3}
-  uiHeart: {fileID: 21300000, guid: e526994ba637244849bc95d3a5fda6db, type: 3}
-  uiCog: {fileID: 21300000, guid: 079d246feb48d4c1d964fdde418d1c40, type: 3}
   uiSlab: {fileID: 21300000, guid: 26f93195573524bd8aef93cf0d1b207b, type: 3}
   uiPill: {fileID: 21300000, guid: e68466681afe34bf698e042fea7dffec, type: 3}
   uiRound: {fileID: 21300000, guid: 745a9242efcf04745908570d50cf1fca, type: 3}
   uiStarClay: {fileID: 21300000, guid: f77d345dba28c41059b36ab79dec2f4b, type: 3}
-  uiRestart: {fileID: 21300000, guid: 44cf41010587c45c4b859a1cd5139211, type: 3}
   uiFilm: {fileID: 21300000, guid: 5fb8685457c244d209067193fe733b27, type: 3}
+  uiPause: {fileID: 21300000, guid: a15ef90b8767e41e08759a312730bd68, type: 3}
+  uiHeartClay: {fileID: 21300000, guid: c8de5a6e470864fba87183382e0da081, type: 3}
+  uiCogClay: {fileID: 21300000, guid: 39b46951e70014879a95c57375bc437e, type: 3}
+  uiSound: {fileID: 21300000, guid: 5eefc2526301c4933984f834a28b6263, type: 3}
+  uiHaptics: {fileID: 21300000, guid: df2600b7e8ecb4e0597a31919cb4a5fa, type: 3}
   wreathArcA: {fileID: 21300000, guid: d2941f9db6cf54ca589a7b8bbc99dce3, type: 3}
   wreathArcB: {fileID: 21300000, guid: 197f53fe9f51b4c26bff25b321f584cd, type: 3}
   wreathRadius: 3
