@@ -9,7 +9,7 @@ namespace Orcub.Daily
     {
         public long Status { get; }
         public string Code { get; }
-        public bool Permanent => Status >= 400 && Status < 500 && Status != 409 && Status != 408 && Status != 429;
+        public bool Permanent => Status==400 || Status==410 || Status==422;
         public DailyGrantException(long status, string code) : base("Daily grant HTTP " + status + ": " + code)
         { Status = status; Code = code; }
     }
@@ -20,11 +20,11 @@ namespace Orcub.Daily
         {
             var client = ClientServices.Instance;
             if (client == null || !client.Ready) throw new InvalidOperationException("Account not ready");
-            using var response = await client.Request("/v1/wallet/grant", "POST", new
+            using var response = await InstallRetry.Run(()=>client.Request("/v1/wallet/grant", "POST", new
             {
                 player_id = client.PlayerId, reason, idempotency_key = idempotencyKey,
                 ref_id = DailyContext.GrantKey(reason, utcDay), utc_day = utcDay
-            });
+            }),r=>r.responseCode,r=>r.Dispose(),client.RenewInstall);
             if (response.responseCode != 200)
             {
                 string code = "";

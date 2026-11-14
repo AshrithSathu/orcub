@@ -73,3 +73,9 @@ device. Daily telemetry uses existing retained numeric/bool metric_* payloads
 booster_unlock_claims stores one tutorial grant receipt per player and booster kind, with creation timestamp. It enforces lifetime caps across replay and merge, survives telemetry retention, is included in account exports and cascades on account deletion. It contains no payment or additional personal identifiers.
 
 Review D: level_start and level_end are strictly necessary first-party gameplay proofs for continue/level rewards, including level 1 and tutorials. They contain random player/event IDs and gameplay fields, no advertising identifier, email, or Google token. They are sent even when optional analytics is denied. Optional session/tutorial/ad events collected before consent stay in the bounded local queue and are transmitted only after consent permits it; cached consent applies offline and survives sign-out. Firebase Analytics and Crashlytics remain disabled without permission. Development installs use editor/ios-dev and are excluded from admin event analytics and player-value event inputs. Deletion tombstones retain only hashed subjects to authenticate idempotent retries; they contain no progress or raw credentials.
+
+Review f: daily_puzzle_end is consent-independent, first-party gameplay proof for
+daily rewards. It contains no advertising identifiers. Optional events are
+purged on explicit denial and are not captured during denial. Deletion tombstones
+expire after 30 days; rewarded nonces and unlimited windows are included in access
+exports and pruned after 30 days by retention.

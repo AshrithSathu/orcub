@@ -15,6 +15,7 @@ namespace Orcub.Store
         Task reconciliation;
         DateTime retryAt;
         string owner;
+        public bool HasPending { get { Load(); return pending.Count>0; } }
         public string AttemptReference { get; set; } = Guid.NewGuid().ToString();
         public WalletConsumption(IStoreBackend backend, IStoreCache cache, Wallet wallet)
         { this.backend = backend; this.cache = cache; this.wallet = wallet; }
@@ -64,6 +65,7 @@ namespace Orcub.Store
         }
         public bool ApplyAdRefill(string nonce)
         {
+            lifeFrame=-1;
             Load(); var grants=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)??"[]");
             if (grants.OfType<JObject>().Any(x=>(string)x["nonce"]==nonce)) return false;
             if (grants.OfType<JObject>().Count(x=>TryTime(x["at"],out var time) && time.UtcDateTime.Date==DateTime.UtcNow.Date)>=20) return false;
@@ -82,17 +84,26 @@ namespace Orcub.Store
             count = (int)Math.Min(5, count + ticks);
             stamp = count >= 5 ? now : stamp.AddSeconds(ticks * 1800);
         }
+        int lifeFrame=-1, lifePending=-1, lifeCached;
+        long lifeSecond;
+        JObject lifeSnapshot;
+        DateTimeOffset lifeStamp;
         int LifeCount(DateTimeOffset now, out DateTimeOffset stamp)
+        {
+            if(lifeFrame==Time.frameCount && lifeSecond==now.ToUnixTimeSeconds() && lifeSnapshot==Snapshot && lifePending==pending.Count) { stamp=lifeStamp; return lifeCached; }
+            lifeCached=ComputeLifeCount(now,out lifeStamp); lifeFrame=Time.frameCount; lifeSecond=now.ToUnixTimeSeconds(); lifeSnapshot=Snapshot; lifePending=pending.Count; stamp=lifeStamp; return lifeCached;
+        }
+        int ComputeLifeCount(DateTimeOffset now, out DateTimeOffset stamp)
         {
             var s = Snapshot;
             var applied=s["applied_keys"] as JArray;
-            if (applied!=null) { foreach(var item in pending.OfType<JObject>().Where(x=>applied.Values<string>().Any(k=>k==(string)x["idempotency_key"] || k.EndsWith(":"+(string)x["idempotency_key"]))).ToArray()) pending.Remove(item); Save(); }
+            if (applied!=null) { var keys=new System.Collections.Generic.HashSet<string>(applied.Values<string>().Select(k=>k.Split(':').Last())); var removed=pending.OfType<JObject>().Where(x=>keys.Contains((string)x["idempotency_key"])).ToArray(); foreach(var item in removed) pending.Remove(item); if(removed.Length>0) Save(); }
             stamp = TryTime(s["lives_updated_at"], out var parsed) ? parsed : now;
             if (TryTime(s["unlimited_until"], out var until) && now < until) return 5;
             int count = (int?)s["lives"] ?? 5;
             var confirmed=s["rewarded_nonces"] as JArray ?? new JArray();
             var grants=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)??"[]");
-            var latest=grants.OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && at>now.AddDays(-1));
+            var latest=grants.OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && at>now.AddMinutes(-10));
             if (latest!=null && !confirmed.Values<string>().Contains((string)latest["nonce"]) && TryTime(latest["at"],out var refillAt)) { count=5; stamp=refillAt; }
             foreach (var item in pending.OfType<JObject>().Where(x => (string)x["kind"] == "life"))
             {
@@ -125,8 +136,8 @@ namespace Orcub.Store
             Load();
             if (kind == "life" && TryTime(Snapshot["unlimited_until"],out var until) && DateTimeOffset.UtcNow<until) return true;
             if (Count(kind, DateTimeOffset.UtcNow) <= 0) return false;
-            var grant=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)).OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddDays(-1) && !(Snapshot["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]));
-            pending.Add(new JObject { ["rewarded_nonce"]=grant?["nonce"]?.DeepClone(), ["kind"] = kind, ["count"] = 1, ["attempt_ref"] = AttemptReference,
+            var grant=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)).OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddMinutes(-10) && !(Snapshot["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]));
+            pending.Add(new JObject { ["rewarded_nonce"]=kind=="life" && !((string)grant?["nonce"]??"").StartsWith("editor:") ? grant?["nonce"]?.DeepClone() : null, ["kind"] = kind, ["count"] = 1, ["attempt_ref"] = AttemptReference,
                 ["idempotency_key"] = Guid.NewGuid().ToString(), ["created_at"] = DateTimeOffset.UtcNow.ToString("o") });
             Save(); _ = Reconcile(); return true;
         }
@@ -140,14 +151,14 @@ namespace Orcub.Store
         {
             // Yield so TrySpend always exposes the local decrement before any acknowledgement.
             await Task.Yield();
-            Load(); var account = backend.PlayerId; var queue = pending; var keyOwner = owner;
+            Load(); bool refreshAfter=false; var account = backend.PlayerId; var queue = pending; var keyOwner = owner;
             if (string.IsNullOrEmpty(account) || DateTime.UtcNow < retryAt) return;
             try
             {
                 var grants=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner));
-                if(queue.Count==0 && grants.OfType<JObject>().Any(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddDays(-1) && !(wallet.Snapshot?["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]))) {
+                if(queue.Count==0 && grants.OfType<JObject>().Any(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddMinutes(-10) && !(wallet.Snapshot?["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]))) {
                     await wallet.Refresh();
-                    if(grants.OfType<JObject>().Any(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddDays(-1) && !(wallet.Snapshot?["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]))) return;
+                    if(grants.OfType<JObject>().Any(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddMinutes(-10) && !(wallet.Snapshot?["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]))) return;
                 }
                 foreach (var item in queue.OfType<JObject>().ToArray())
                 {
@@ -158,18 +169,20 @@ namespace Orcub.Store
                             queue.Remove(item); cache.Write("consume." + keyOwner, queue.ToString());
                         });
                     }
-                    catch (StoreHttpException e) when (e.Status == 409 && e.Message.Contains("insufficient"))
+                    catch (StoreHttpException e) when (e.Status==400 || e.Status==422 || e.Status==409)
                     {
                         if (backend.PlayerId != account) return;
                         // Server wins conflicts. Keep the gameplay benefit; never claw it back.
                         queue.Remove(item); cache.Write("consume." + keyOwner, queue.ToString());
-                        backend.Track("error",new { code="insufficient_inventory",context="consume" });
-                        try { await wallet.Refresh(); } catch (Exception) { }
+                        backend.Track("error",new { code="consume_rejected",context="consume" });
+                        refreshAfter=true;
+
                     }
                 }
             }
             catch (StoreHttpException e) { if(e.Status==429) retryAt = DateTime.UtcNow.AddSeconds(Math.Max(15,e.RetryAfter)); }
             catch (Exception) { /* Runtime schedules the next retry after 15 seconds. */ }
+            if(refreshAfter && backend.PlayerId==account) { try { await wallet.Refresh(); } catch(Exception) { } }
         }
     }
 }

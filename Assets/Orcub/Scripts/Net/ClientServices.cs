@@ -151,6 +151,7 @@ namespace Orcub.Net
         }
         void ApplyConsent(bool allowed)
         {
+            if(!allowed && AnalyticsConsent.Resolved) queue?.PurgeOptional();
             if (!firebaseReady) return;
             FirebaseAnalytics.SetAnalyticsCollectionEnabled(allowed);
             Crashlytics.IsCrashlyticsCollectionEnabled = allowed;
@@ -167,14 +168,18 @@ namespace Orcub.Net
             var p = config?["ad_policy"] ?? remote?["ad_policy"]; if (p == null) return;
             ClientGateway.AdCaps?.Invoke((double?)p["interstitial_min_interval_seconds"] ?? 150, (int?)p["interstitial_daily_cap"] ?? 6, (int?)p["rewarded_daily_cap"] ?? 20);
         }
+        public string LastLevelEndEventId { get; private set; }
         public void Track(string kind, object data)
         {
             if (stopped || queue == null) return;
+            if(AnalyticsConsent.Resolved && !AnalyticsConsent.Allowed && !AnalyticsConsent.Essential(kind)) return;
             if (kind == "level_start") { ConsumableGateway.BeginAttempt?.Invoke(Guid.NewGuid().ToString()); ConsumableGateway.LevelStarted?.Invoke(); }
             if(kind=="level_end") ConsumableGateway.LevelEnded?.Invoke();
             // Hold optional pre-consent events durably; Flush selects eligible events.
             if (data is AttemptRecord record) data = JObject.Parse(JsonUtility.ToJson(record));
-            queue.Add(kind, data, Application.isEditor || Debug.isDebugBuild);
+            if(kind=="level_start" || kind=="level_end") { var payload=JObject.FromObject(data); int index=(int?)payload["LevelIndex"]??0; payload["gen_version"]=index<200 ? 0 : InfiniteGenerator.Version; payload["curated"]=index<200; data=payload; }
+            queue.AddCaptured(kind, data, Application.isEditor || Debug.isDebugBuild, AnalyticsConsent.Resolved ? (AnalyticsConsent.Allowed ? 1 : 0) : -1);
+            if(kind=="level_end") LastLevelEndEventId=queue.LastAddedId;
             if (!firebaseReady || !AnalyticsConsent.Allowed) return;
             var fields = JObject.FromObject(data);
             var parameters = new List<Parameter>();
@@ -274,6 +279,7 @@ namespace Orcub.Net
             stopped = true;
             // Stopped continuations discard responses; the old writer drains before Boot.
             queue.Clear(); await queue.Stop();
+            foreach(var corrupt in Directory.GetFiles(Application.persistentDataPath,"orcub-*.corrupt.*")) File.Delete(corrupt);
             string pendingUid = PlayerPrefs.GetString("orcub.delete.firebase_uid", "");
             string revoke = PlayerPrefs.GetString("orcub.delete.google_revoke_uid", "");
             ScopedPreferences.Clear();

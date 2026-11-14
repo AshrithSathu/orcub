@@ -32,6 +32,7 @@ namespace Orcub.Store
             ConsumableGateway.PrepareAdRefill=PrepareAdRefill;
             ConsumableGateway.AdRefillEarned=AdRefillEarned;
             ConsumableGateway.FlushSpends=consumption.Reconcile;
+            ConsumableGateway.HasPendingSpends=()=>consumption.HasPending;
             ConsumableGateway.MigrateSpends=consumption.Migrate;
             ConsumableGateway.RefillFromAd = RefillLivesFromAd;
             ConsumableGateway.RefillWithGold = RefillWithGold;
@@ -103,7 +104,17 @@ namespace Orcub.Store
         }
         public void Track(string kind, object data) => ClientServices.Instance.Track(kind, data);
         public string Read(string key) => PlayerPrefs.GetString("orcub.store." + key, "");
-        public void Write(string key, string value) { PlayerPrefs.SetString("orcub.store." + key, value); PlayerPrefs.Save(); }
+        public void Write(string key, string value) { if(PlayerPrefs.GetString("orcub.store."+key, "") == value) return; PlayerPrefs.SetString("orcub.store." + key, value); prefsDirty=true; }
+        bool prefsDirty; double nextPrefsSave;
+        void LateUpdate() { if(prefsDirty && Time.realtimeSinceStartupAsDouble>=nextPrefsSave) { PlayerPrefs.Save(); prefsDirty=false; nextPrefsSave=Time.realtimeSinceStartupAsDouble+2; } }
+        void OnApplicationPause(bool paused) { if(paused && prefsDirty) { PlayerPrefs.Save(); prefsDirty=false; } }
+        public static async Task<int> ClaimLevelReward(int levelIndex, string eventId)
+        {
+            if(instance==null || !Guid.TryParse(eventId,out _)) throw new InvalidOperationException("reward_not_ready");
+            await ClientServices.Instance.Flush();
+            var response=await Service.Wallet.Submit("/v1/wallet/grant",new { player_id=instance.PlayerId,reason="level_reward",ref_id=eventId,idempotency_key=eventId });
+            return (int?)response["granted"] ?? 0;
+        }
         double nextForeground;
         async void OnApplicationFocus(bool focused)
         {
@@ -112,6 +123,6 @@ namespace Orcub.Store
             try { await consumption.Reconcile(); await PrepareAccount(); await Service.Initialize(); } catch (Exception) { }
             await consumption.Reconcile();
         }
-        void OnDestroy() { Consumption = null; ConsumableGateway.PrepareAdRefill=null; ConsumableGateway.AdRefillEarned=null; ConsumableGateway.FlushSpends=null; ConsumableGateway.MigrateSpends=null; ConsumableGateway.RefillFromAd=null; ConsumableGateway.RefillWithGold=null; instance=null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
+        void OnDestroy() { Consumption = null; ConsumableGateway.HasPendingSpends=null; ConsumableGateway.PrepareAdRefill=null; ConsumableGateway.AdRefillEarned=null; ConsumableGateway.FlushSpends=null; ConsumableGateway.MigrateSpends=null; ConsumableGateway.RefillFromAd=null; ConsumableGateway.RefillWithGold=null; instance=null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
     }
 }

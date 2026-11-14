@@ -691,28 +691,34 @@ async fn account_delete(
         )))
     };
     let deleted: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM deletion_tombstones WHERE subject_hash=$1)",
+        "SELECT EXISTS(SELECT 1 FROM deletion_tombstones WHERE subject_hash=$1 AND deleted_at>now()-interval '30 days')",
     )
     .bind(&subject)
     .fetch_one(&s.pool)
     .await?;
+    let resolved = account_player(&s, &h, q.player_id).await;
     if !deleted {
-        let id = account_player(&s, &h, q.player_id).await?;
+        resolved?;
+    }
+    {
         let mut tx = s.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO deletion_tombstones(subject_hash) VALUES($1) ON CONFLICT DO NOTHING",
+            "INSERT INTO deletion_tombstones(subject_hash) VALUES($1) ON CONFLICT(subject_hash) DO UPDATE SET deleted_at=now()",
         )
         .bind(&subject)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("DELETE FROM players WHERE id=$1")
-            .bind(id)
+        sqlx::query("DELETE FROM players WHERE ($1::text IS NOT NULL AND firebase_uid=$1) OR ($1::text IS NULL AND id=$2 AND firebase_uid IS NULL)")
+            .bind(&uid).bind(q.player_id)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
     }
     let identity_deleted = if let Some(uid) = uid {
-        firebase_admin::delete(&uid).await?
+        firebase_admin::delete(&uid).await.unwrap_or_else(|_| {
+            tracing::warn!(code = "identity_delete_retry");
+            false
+        })
     } else {
         true
     };
@@ -747,7 +753,7 @@ async fn account_export(
             if !guest { return Err(ApiError::unauthorized()); }
         }
         let mut out=Vec::new();
-        for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","daily_claims","daily_streaks","booster_unlock_claims","purchases","purchase_revocations","economy_offers","wallet_aliases","entitlement_transfers","player_value_cache","event_quotas","raw_events"] {
+        for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","rewarded_nonces","unlimited_windows","daily_claims","daily_streaks","booster_unlock_claims","purchases","purchase_revocations","economy_offers","wallet_aliases","entitlement_transfers","player_value_cache","event_quotas","raw_events"] {
             let filter=if table=="players" {"id"} else {"player_id"};
             let sql=if table=="raw_events" {"SELECT to_jsonb(r) AS data FROM raw_events r JOIN events e USING(event_id) WHERE e.player_id=$1".to_string()} else {format!("SELECT to_jsonb(t)-'credential_hash' AS data FROM {table} t WHERE {filter}=$1")};
             use futures_util::TryStreamExt;
@@ -883,6 +889,9 @@ pub async fn retain(pool: &PgPool, days: i32) -> std::result::Result<u64, sqlx::
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut total = 0;
     for statement in [
+        "DELETE FROM deletion_tombstones WHERE ctid IN (SELECT ctid FROM deletion_tombstones WHERE deleted_at<now()-interval '30 days' AND $1>0 LIMIT 5000)",
+        "DELETE FROM rewarded_nonces WHERE ctid IN (SELECT ctid FROM rewarded_nonces WHERE created_at<now()-interval '30 days' AND $1>0 LIMIT 5000)",
+        "DELETE FROM unlimited_windows WHERE ctid IN (SELECT ctid FROM unlimited_windows WHERE ends_at<now()-interval '30 days' AND $1>0 LIMIT 5000)",
         "DELETE FROM events WHERE event_id IN (SELECT event_id FROM events WHERE received_at < now()-make_interval(days => $1) LIMIT 5000)",
         "DELETE FROM event_quotas WHERE ctid IN (SELECT ctid FROM event_quotas WHERE day<CURRENT_DATE-LEAST($1,2) LIMIT 5000)",
         "DELETE FROM players WHERE id IN (SELECT p.id FROM players p WHERE firebase_uid IS NULL AND created_at<now()-make_interval(days => $1) AND NOT EXISTS(SELECT 1 FROM events WHERE player_id=p.id) AND NOT EXISTS(SELECT 1 FROM saves WHERE player_id=p.id) AND NOT EXISTS(SELECT 1 FROM wallets WHERE player_id=p.id) LIMIT 5000)",
@@ -943,6 +952,32 @@ mod account_tests {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+    }
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tombstone_never_skips_a_relinked_identity(pool: PgPool) {
+        let mut state = new_state(pool.clone(), "admin", false);
+        Arc::get_mut(&mut state).unwrap().firebase = auth::fixture();
+        let app = router(state);
+        let token = auth::test_token("repeat-delete", json!({}));
+        for _ in 0..2 {
+            let id = Uuid::new_v4();
+            sqlx::query("INSERT INTO players(id,firebase_uid) VALUES($1,'repeat-delete')")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let (status, body) =
+                call(app.clone(), "DELETE", "/v1/account", json!({}), &token, "").await;
+            assert_eq!(status, 200);
+            assert_eq!(body["deleted"], true);
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM players WHERE id=$1)")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert!(!exists);
+        }
     }
     #[sqlx::test(migrations = "./migrations")]
     async fn saves_link_merge_conflict_and_delete(pool: PgPool) {

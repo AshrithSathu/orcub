@@ -173,13 +173,14 @@ namespace Orcub.Ads
             placement = "rewarded_" + placement;
             if (!RewardedReady) { FailAd(placement, "not_ready"); onClosedWithoutReward?.Invoke(); return; }
             showing = true;
-            policy.RecordRewarded(Now);
-            if (Simulated) { policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); StartCoroutine(Simulate(() => { if(placement.Contains("lives")) { Orcub.Core.ConsumableGateway.AdRefillEarned?.Invoke(Guid.NewGuid().ToString()); _ = Orcub.Core.Lives.RefillFromAd(placement); } TrackAd("ad_reward", placement); onReward?.Invoke(); })); return; }
+
+            if (Simulated) { policy.RecordRewarded(Now); policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); StartCoroutine(Simulate(() => { if(placement.Contains("lives")) { Orcub.Core.ConsumableGateway.AdRefillEarned?.Invoke("editor:"+Guid.NewGuid().ToString()); _ = Orcub.Core.Lives.RefillFromAd(placement); } TrackAd("ad_reward", placement); onReward?.Invoke(); })); return; }
             string nonce=null;
             if(placement.Contains("lives")) {
-                try { nonce=await Orcub.Core.ConsumableGateway.PrepareAdRefill.Invoke("rewarded_lives"); } catch(Exception) { }
+                try { nonce=await Orcub.Core.ConsumableGateway.PrepareAdRefill.Invoke(placement); } catch(Exception) { }
                 if(string.IsNullOrEmpty(nonce)) { showing=false; onClosedWithoutReward?.Invoke(); return; }
             }
+            policy.RecordRewarded(Now);
             var ad = rewarded; rewarded = null;
             if(nonce!=null) ad.SetServerSideVerificationOptions(new ServerSideVerificationOptions { UserId=ClientServices.Instance.PlayerId, CustomData=nonce });
             ad.OnAdFullScreenContentOpened += () => callbacks.Enqueue(() => { policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); });
@@ -189,7 +190,6 @@ namespace Orcub.Ads
             {
                 if (closed) return;
                 closed = true;
-                policy.RecordRewarded(Now);
                 StartCoroutine(SettleReward());
             }
             IEnumerator SettleReward()

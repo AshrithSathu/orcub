@@ -40,7 +40,7 @@ namespace Orcub.Net
         public static JObject Capture()
         {
             var stars = new JObject();
-            for (int i = 0; i < LevelLibrary.Count; i++) if (Progress.BestStars(i) > 0) stars[i.ToString()] = Progress.BestStars(i);
+            for (int i = 0; i <= Math.Min(100000, Math.Max(LevelLibrary.Count, Progress.HighestUnlocked)); i++) if (Progress.BestStars(i) > 0) stars[i.ToString()] = Progress.BestStars(i);
             var workshop = new JObject { ["stars_spent"] = StarBank.Spent };
             foreach (var task in Workshop.Tasks) workshop[task.Id] = Workshop.IsRestored(task.Id) ? 1 : 0;
             var skill = new PlayerSkill(); var recent = new JArray();
@@ -61,8 +61,9 @@ namespace Orcub.Net
         }
         public static void Apply(JObject s)
         {
+            int oldHighest=Progress.HighestUnlocked;
             PlayerPrefs.SetInt("orcub.highest", (int)s["highest_level"]); PlayerPrefs.SetInt("orcub.level", (int)s["highest_level"]);
-            for (int i = 0; i < LevelLibrary.Count; i++) PlayerPrefs.SetInt("orcub.stars." + i, (int?)s["stars"]?[i.ToString()] ?? 0);
+            for (int i = 0; i <= Math.Min(100000, Math.Max(LevelLibrary.Count, Math.Max(oldHighest, (int)s["highest_level"]))); i++) PlayerPrefs.SetInt("orcub.stars." + i, (int?)s["stars"]?[i.ToString()] ?? 0);
             PlayerPrefs.SetInt("orcub.stars.spent", (int?)s["workshop"]?["stars_spent"] ?? 0);
             foreach (var task in Workshop.Tasks) PlayerPrefs.SetInt("orcub.workshop." + task.Id, (int?)s["workshop"]?[task.Id] ?? 0);
             PlayerPrefs.SetInt("orcub.sound", (bool)s["settings"]["sound"] ? 1 : 0); PlayerPrefs.SetInt("orcub.haptics", (bool)s["settings"]["haptics"] ? 1 : 0);

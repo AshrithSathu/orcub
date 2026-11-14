@@ -135,3 +135,9 @@ Review (b) economy authority: see clients/unity-contract.md for consume, server 
 Schema changes are forward-fix only. Never edit or remove an applied migration: SQLx checksums remain enforced. The startup migrator ignores applied versions missing from the binary, allowing a previously shipped compatible binary to start after a newer migration. This does not make destructive schema changes reversible, and binaries predating this migrator configuration still cannot safely roll back across newer migrations. Deploy this configuration before future schema changes; repair schema problems with a new migration and compatible code.
 
 Future indexes over large tables must use a separate SQLx migration starting with `-- no-transaction` and `CREATE INDEX CONCURRENTLY`. Do not rewrite 0005: its transactional index and backfill are already applied. Validate schema compatibility and database recovery before any rollback.
+
+Review-f forward fix: take a database snapshot before migrations 0006/0007. Do not
+roll back past the first `ignore_missing` image (`92c4ceb`). Startup logs unknown
+applied migration versions so an accidentally removed migration is visible.
+0008 and 0009 each build one index CONCURRENTLY, outside a transaction; keep them
+separate because a multi-statement PostgreSQL batch starts an implicit transaction.

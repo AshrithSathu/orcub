@@ -16,3 +16,27 @@ No Game files were edited by this implementation.
 4. Existing review B visibility hook still applies: call RewardedOfferShown when the rewarded button becomes visible, once per sheet opening. No extra pending/reservation UI is needed for TrySpend; it is optimistic and durably queues before returning true.
 
 Keep existing AccountGateway error/deferred-deletion presentation. Deferred identity retry now preserves the current guest's local progress; it does not reset the install. A matching account revoke marker cannot revoke a different signed-in Google UID.
+
+## Review f: win rewards and infinite progress
+
+After emitting `level_end` through `ClientGateway.Event`, read
+`ClientServices.Instance.LastLevelEndEventId` and call
+`await StoreRuntime.ClaimLevelReward(levelIndex, eventId)`. The returned integer is
+the new gold grant (5 for a first normal clear, 50 for a first boss clear, 0 on
+replay). Boss means `levelIndex % 20 == 19`, including infinite chapters. The API
+flushes evidence first; retry the same event ID if upload/claim fails. Show the
+boss reward panel using the returned grant. Game owns wiring `LevelRewards.Live`.
+
+`ConsumableGateway.HasPendingSpends()` reports the durable spend queue. Link
+refuses to merge until it drains, preventing guest uses from charging account
+inventory. `Account.SignOut(true)` explicitly discards unsynced progress after the
+protective default fails. `Account.CancelReauthentication()` cancels the pending
+native reauthentication prompt. An unaccepted delete intent never prompts on boot.
+
+SaveSnapshot uses a sparse stars object through index 100000, including infinite
+levels, and restores the full saved frontier. Level start/end telemetry adds
+`gen_version` (0 curated, InfiniteGenerator.Version otherwise) and `curated`.
+Settings can offer “Finish deleting your account?” when
+`Account.DeletionNeedsConfirmation` is true; call `DeleteAccount()` only after the
+player chooses to continue. Failed final saves can offer the explicit
+`SignOut(true)` discard option. These Settings controls remain owned by Game.

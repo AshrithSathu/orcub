@@ -42,7 +42,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .acquire_timeout(Duration::from_secs(5))
         .connect(&url)
         .await?;
-    orcub_backend::migrator().run(&pool).await?;
+    let migrator = orcub_backend::migrator();
+    let applied: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+    for version in applied {
+        if !migrator.iter().any(|m| m.version == version) {
+            tracing::warn!(version, "unknown applied migration");
+        }
+    }
+    migrator.run(&pool).await?;
     if std::env::args().any(|a| a == "retention") {
         tracing::info!(deleted = retain(&pool, days).await?, "retention completed");
         return Ok(());

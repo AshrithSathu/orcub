@@ -8,6 +8,33 @@ namespace Orcub.Tests
 {
     public class ClientReviewBTests
     {
+        [Test] public async Task UnauthorizedInstallRenewsAndRetriesOnce()
+        {
+            int requests=0,renewals=0,disposed=0;
+            int result=await InstallRetry.Run(()=>Task.FromResult(++requests==1 ? 401 : 200),r=>r,r=>disposed++,()=>{renewals++;return Task.CompletedTask;});
+            Assert.AreEqual(200,result); Assert.AreEqual(2,requests); Assert.AreEqual(1,renewals); Assert.AreEqual(1,disposed);
+        }
+        [Test] public async Task DeletePreparationProceedsWhenCloudSaveFails()
+        {
+            bool flushed=false;
+            await AccountDeletion.Prepare(()=>Task.FromException(new Exception("conflict")),()=>{flushed=true;return Task.CompletedTask;});
+            Assert.True(flushed);
+        }
+        [Test] public void NotificationExportValidationPassesWithoutExport()
+        {
+            var type=Type.GetType("Orcub.EditorTools.OrcubNotificationBuild, Orcub.Editor",true);
+            Assert.DoesNotThrow(()=>type.GetMethod("ValidateSettings").Invoke(null,null));
+        }
+        [Test] public void InfiniteStarsRoundTrip()
+        {
+            var old=SaveSnapshot.Capture(); int oldStar=UnityEngine.PlayerPrefs.GetInt("orcub.stars.219",0);
+            try {
+                UnityEngine.PlayerPrefs.SetInt("orcub.highest",220); UnityEngine.PlayerPrefs.SetInt("orcub.stars.219",3);
+                var snapshot=SaveSnapshot.Capture(); Assert.AreEqual(3,(int)snapshot["stars"]["219"]);
+                UnityEngine.PlayerPrefs.SetInt("orcub.stars.219",0); SaveSnapshot.Apply(snapshot);
+                Assert.AreEqual(3,UnityEngine.PlayerPrefs.GetInt("orcub.stars.219"));
+            } finally { SaveSnapshot.Apply(old); UnityEngine.PlayerPrefs.SetInt("orcub.stars.219",oldStar); }
+        }
         [TestCase(false)] [TestCase(true)]
         public async Task DeletionReauthenticatesBeforeBackendAndAlwaysResetsAfterBackendSuccess(bool identityFails)
         {

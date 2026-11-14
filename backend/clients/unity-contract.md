@@ -201,3 +201,24 @@ Consume bodies additionally accept `occurred_at` (RFC3339 UTC). Old clients may 
 `applied_keys` lists recorded consume keys (merged keys may have a player UUID prefix); remove those reservations before displaying balances. `rewarded_nonces` lists SSV-confirmed life grants. A provisional rewarded refill is local, nonce-deduplicated, capped at 20 per UTC day, and becomes authoritative only through SSV. Post-refill consumes carry optional `rewarded_nonce`; the server returns retriable 503 until SSV confirms it, then applies them at occurred_at. This prevents the confirmation poll from advancing the observed-time floor ahead of offline spends. A gold refill is a distinct explicit 90-gold action requiring UI confirmation. `Lives.Refill()` never spends gold.
 
 See ../docs/admob-ssv.md for nonce issuance, callback verification, conservative reservation cap, and console setup. Optional pre-consent events remain queued; first-party level_start/level_end proofs and bounded errors may be sent without advertising identifiers because rewards depend on them. Firebase events remain consent-gated.
+
+## Review f
+
+`level_start` and `level_end` data accept `gen_version` (unsigned integer) and
+`curated` (boolean). Existing PascalCase fields retain their spelling. Sparse save
+`stars` keys and `highest_level` support infinite progression through 100000.
+`level_reward` uses the winning level_end event ID as ref_id, grants once per level
+per player (5 normal, 50 for index modulo 20 equal to 19), and returns `granted`
+(0 on replay). Normal clears retain the configured daily cap; bosses have an
+independent cap of 100 per UTC day.
+
+`daily_puzzle_end` is essential first-party gameplay evidence, sent without consent
+and without ad identifiers. A 401 renews installation credentials and retries;
+only 400/410/422 permanently reject a daily grant.
+
+Wallet acknowledgement lists are bounded to the latest 4096 consumes and 40
+confirmed nonces from the last day. GET wallet does not advance consume_floor.
+Only life consumes wait for an owned, unconfirmed nonce younger than 10 minutes;
+unknown or older nonces process against real balances. Clients stop tagging new
+spends after 10 minutes. Existing queued tags retain their stable fingerprint for
+lost acknowledgements, and the server releases them normally after that deadline.

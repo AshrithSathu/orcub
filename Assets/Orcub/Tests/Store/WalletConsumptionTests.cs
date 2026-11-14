@@ -52,6 +52,18 @@ namespace Orcub.Tests
             public Task<IReadOnlyList<StoreTransaction>> Restore() => Unfinished();
             public Task Finish(string id) => Task.CompletedTask;
         }
+        [TestCase("editor:simulated",0)] [TestCase("expired",11)] [TestCase("active",0)]
+        public async Task NonceTaggingOnlyUsesLiveServerGrantsForLives(string nonce, int ageMinutes)
+        {
+            var f=new Fake(); var store=new StoreService(f,f,f); await store.Wallet.Refresh(); f.Offline=true;
+            f.Write("adgrants.player",new JArray(new JObject { ["nonce"]=nonce,["at"]=DateTimeOffset.UtcNow.AddMinutes(-ageMinutes).ToString("o") }).ToString());
+            var c=new WalletConsumption(f,f,store.Wallet);
+            Assert.True(c.TrySpend("booster_hint")); await c.Reconcile();
+            Assert.True(c.TrySpend("life")); await c.Reconcile();
+            var queue=JArray.Parse(f.Read("consume.player"));
+            Assert.IsNull((string)queue[0]["rewarded_nonce"]);
+            Assert.AreEqual(nonce=="active" ? nonce : null,(string)queue[1]["rewarded_nonce"]);
+        }
         [Test] public async Task FirstTapSpendsImmediatelyAndAckNeverDoubleSubtractsEvenInChangedCallback()
         {
             var f = new Fake(); var store = new StoreService(f,f,f); await store.Wallet.Refresh();
@@ -99,7 +111,7 @@ namespace Orcub.Tests
             Assert.True(c.TrySpend("booster_hint")); await c.Reconcile();
             Assert.AreEqual(1,JArray.Parse(f.Read("consume.player")).Count);
             f.Reject = 400; await c.Reconcile();
-            Assert.AreEqual(1,JArray.Parse(f.Read("consume.player")).Count);
+            Assert.AreEqual(0,JArray.Parse(f.Read("consume.player")).Count);
         }
         [Test] public async Task FreshOfflinePlayerHasBackendDefaultsAndLifeSpendsRegenerateOffline()
         {

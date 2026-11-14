@@ -9,6 +9,11 @@ namespace Orcub.Daily.Tests
 {
     public class DailyTests
     {
+
+        [NUnit.Framework.TestCase(401,false)] [NUnit.Framework.TestCase(404,false)]
+        [NUnit.Framework.TestCase(400,true)] [NUnit.Framework.TestCase(410,true)] [NUnit.Framework.TestCase(422,true)]
+        public void GrantFailureClassification(long status,bool permanent)
+        { NUnit.Framework.Assert.AreEqual(permanent,new Orcub.Daily.DailyGrantException(status,"test").Permanent); }
         sealed class Clock : IDailyClock
         {
             public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse("2026-11-15T12:00:00Z");

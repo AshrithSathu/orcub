@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::OnceLock};
 use tokio::sync::Mutex;
 
 type Keys = HashMap<String, String>;
-static KEYS: OnceLock<Mutex<(Instant, Keys)>> = OnceLock::new();
+static KEYS: OnceLock<Mutex<(Instant, Instant, Keys)>> = OnceLock::new();
 fn verify(raw: &str, keys: &Keys) -> Result<HashMap<String, String>> {
     let (content, tail) = raw
         .split_once("&signature=")
@@ -53,41 +53,55 @@ fn verify(raw: &str, keys: &Keys) -> Result<HashMap<String, String>> {
 }
 pub async fn callback(State(s): State<Arc<App>>, RawQuery(raw): RawQuery) -> Result<Json<Value>> {
     let raw = raw.ok_or(ApiError::unauthorized())?;
-    let cache = KEYS.get_or_init(|| Mutex::new((Instant::now(), Keys::new())));
-    let mut keys = cache.lock().await;
+    let cache = KEYS.get_or_init(|| Mutex::new((Instant::now(), Instant::now(), Keys::new())));
     let id = reqwest::Url::parse(&format!("https://ssv.invalid/?{raw}"))
         .map_err(|_| ApiError::unauthorized())?
         .query_pairs()
         .find(|(k, _)| k == "key_id")
         .map(|(_, v)| v.into_owned())
         .ok_or(ApiError::unauthorized())?;
-    if keys.0 <= Instant::now() || !keys.1.contains_key(&id) {
-        let response: Value = reqwest::Client::new()
-            .get("https://www.gstatic.com/admob/reward/verifier-keys.json")
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-            .map_err(|_| ApiError::unavailable())?
-            .error_for_status()
-            .map_err(|_| ApiError::unavailable())?
-            .json()
-            .await
-            .map_err(|_| ApiError::unavailable())?;
-        keys.1 = response["keys"]
-            .as_array()
-            .ok_or(ApiError::unavailable())?
-            .iter()
-            .filter_map(|k| {
-                Some((
-                    k["keyId"].as_u64()?.to_string(),
-                    k["pem"].as_str()?.to_owned(),
-                ))
-            })
-            .collect();
-        keys.0 = Instant::now() + Duration::from_secs(3600);
+    let refresh = {
+        let mut keys = cache.lock().await;
+        let due = keys.0 <= Instant::now() || !keys.2.contains_key(&id);
+        if due && keys.1 <= Instant::now() {
+            keys.0 = Instant::now() + Duration::from_secs(3600);
+            keys.1 = Instant::now() + Duration::from_secs(60);
+            true
+        } else {
+            false
+        }
+    };
+    if refresh {
+        let fetched = async {
+            let response: Value = reqwest::Client::new()
+                .get("https://www.gstatic.com/admob/reward/verifier-keys.json")
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            Ok::<_, reqwest::Error>(response)
+        }
+        .await;
+        if let Ok(response) = fetched
+            && let Some(list) = response["keys"].as_array()
+        {
+            let fresh: Keys = list
+                .iter()
+                .filter_map(|k| {
+                    Some((
+                        k["keyId"].as_u64()?.to_string(),
+                        k["pem"].as_str()?.to_owned(),
+                    ))
+                })
+                .collect();
+            if !fresh.is_empty() {
+                cache.lock().await.2 = fresh;
+            }
+        }
     }
-    let fields = verify(&raw, &keys.1)?;
-    drop(keys);
+    let fields = verify(&raw, &cache.lock().await.2)?;
     // The signature proves the request came from Google. Callbacks that cannot map to one of our
     // impressions (AdMob's console "Verify URL" ping, other units, missing/foreign ids) are
     // acknowledged with 200 and grant nothing, so Google neither fails verification nor retries.
@@ -116,7 +130,11 @@ pub async fn callback(State(s): State<Arc<App>>, RawQuery(raw): RawQuery) -> Res
             .bind(player)
             .fetch_optional(&s.pool)
             .await?;
-    confirm(&s, nonce, canonical.unwrap_or(player), transaction).await?;
+    match confirm(&s, nonce, canonical.unwrap_or(player), transaction).await {
+        Ok(()) => (),
+        Err(e) if e.0 == StatusCode::UNAUTHORIZED => return ack(),
+        Err(e) => return Err(e),
+    }
     Ok(Json(json!({"ok":true})))
 }
 async fn confirm(s: &App, nonce: Uuid, player: Uuid, transaction: &str) -> Result<()> {
@@ -138,7 +156,7 @@ async fn confirm(s: &App, nonce: Uuid, player: Uuid, transaction: &str) -> Resul
     if Utc::now() - created > chrono::Duration::days(1) {
         return Err(ApiError::unauthorized());
     }
-    let used: i64=sqlx::query_scalar("SELECT count(*) FROM rewarded_nonces WHERE player_id=$1 AND confirmed_at::date=(now() AT TIME ZONE 'UTC')::date").bind(player).fetch_one(&mut *tx).await?;
+    let used: i64=sqlx::query_scalar("SELECT count(*) FROM rewarded_nonces WHERE player_id=$1 AND (confirmed_at AT TIME ZONE 'UTC')::date=(now() AT TIME ZONE 'UTC')::date").bind(player).fetch_one(&mut *tx).await?;
     if used >= 20 {
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rewarded cap"));
     }
@@ -183,12 +201,20 @@ pub async fn nonce(
     Json(b): Json<NonceRequest>,
 ) -> Result<Json<Value>> {
     install_player(&s, &h, b.player_id).await?;
-    if !["rewarded_lives", "out_of_lives", "retry_lives"].contains(&b.placement.as_str()) {
+    if ![
+        "rewarded_lives",
+        "out_of_lives",
+        "retry_lives",
+        "rewarded_out_of_lives",
+        "rewarded_retry_lives",
+    ]
+    .contains(&b.placement.as_str())
+    {
         return Err(ApiError::bad("placement"));
     }
     let mut tx = s.pool.begin().await?;
     economy::lock(&mut tx, b.player_id).await?;
-    let n:i64=sqlx::query_scalar("SELECT count(*) FROM rewarded_nonces WHERE player_id=$1 AND created_at>(now() AT TIME ZONE 'UTC')::date").bind(b.player_id).fetch_one(&mut *tx).await?;
+    let n:i64=sqlx::query_scalar("SELECT count(*) FROM rewarded_nonces WHERE player_id=$1 AND created_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'").bind(b.player_id).fetch_one(&mut *tx).await?;
     if n >= 20 {
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rewarded cap"));
     }

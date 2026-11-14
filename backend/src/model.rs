@@ -91,6 +91,10 @@ pub struct Event {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "PascalCase")]
 pub struct Attempt {
+    #[serde(default, rename = "gen_version")]
+    pub gen_version: u32,
+    #[serde(default, rename = "curated")]
+    pub curated: bool,
     pub version: u32,
     pub variant: u32,
     pub tuning_version: String,
@@ -162,6 +166,10 @@ pub enum KnownEvent {
         duration: f64,
     },
     LevelStart {
+        #[serde(default)]
+        gen_version: u32,
+        #[serde(default)]
+        curated: bool,
         #[serde(rename = "LevelIndex")]
         level: u32,
         #[serde(rename = "Variant")]
@@ -618,5 +626,23 @@ mod daily_merge_tests {
             account.daily.as_ref().unwrap()["PendingPuzzleGrants"],
             json!(["2026-11-14", "2026-11-15"])
         );
+    }
+}
+
+#[cfg(test)]
+mod infinite_save_tests {
+    use super::*;
+    #[test]
+    fn sparse_stars_above_200_roundtrip() {
+        let mut save = SaveData {
+            highest_level: 1021,
+            stars: BTreeMap::from([(219, 3), (1020, 2)]),
+            ..Default::default()
+        };
+        save.validate().unwrap();
+        let decoded: SaveData =
+            serde_json::from_value(serde_json::to_value(&save).unwrap()).unwrap();
+        assert_eq!(decoded.stars, save.stars);
+        assert_eq!(decoded.highest_level, 1021);
     }
 }

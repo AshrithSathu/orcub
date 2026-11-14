@@ -14,6 +14,17 @@ namespace Orcub.Tests
         string directory, path;
         [SetUp] public void Setup() { directory = Path.Combine(Path.GetTempPath(), "orcub-tests-" + Guid.NewGuid()); Directory.CreateDirectory(directory); path = Path.Combine(directory, "events.json"); }
         [TearDown] public void Cleanup() => Directory.Delete(directory, true);
+        [Test] public async Task DeniedCaptureNeverUploadsAfterConsentChanges()
+        {
+            var q=new EventQueue(path);
+            q.AddCaptured("session_start",new {session_id=Guid.NewGuid().ToString()},false,0);
+            q.AddCaptured("daily_puzzle_end",new {metric_count=1},false,0);
+            q.AddCaptured("session_end",new {duration=1},false,-1);
+            Assert.AreEqual(2,q.Batch(_=>true).Length);
+            q.PurgeOptional(); Assert.AreEqual(1,q.Count);
+            Assert.AreEqual("daily_puzzle_end",(string)q.Batch()[0]["kind"]);
+            await q.Stop();
+        }
         [Test] public async Task QueueSurvivesRestartAndRetryWithSameIds()
         {
             var q = new EventQueue(path); q.Add("session_start", new { session_id = Guid.NewGuid().ToString() });
