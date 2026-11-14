@@ -10,6 +10,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| "orcub_backend=info".into()),
         )
         .init();
+    if std::env::var("APPLE_ALLOW_XCODE").as_deref() == Ok("true") {
+        if std::env::var("APP_ENV").as_deref() != Ok("development")
+            || std::env::var("APPLE_ENVIRONMENT").as_deref() != Ok("Sandbox")
+        {
+            return Err("Xcode transactions require development and Sandbox configuration".into());
+        }
+        tracing::warn!("UNSIGNED Xcode StoreKit testing enabled");
+    }
     let url = std::env::var("DATABASE_URL")?;
     let admin = std::env::var("ADMIN_TOKEN")?;
     if admin.len() < 32 {

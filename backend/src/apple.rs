@@ -130,8 +130,7 @@ fn signed_time(payload: &Value) -> Result<i64> {
     Ok(t / 1000)
 }
 pub fn environment(v: &Value) -> Result<()> {
-    let expected = std::env::var("APPLE_ENVIRONMENT").unwrap_or_else(|_| "Production".into());
-    if !matches!(expected.as_str(), "Production" | "Sandbox") || v["environment"] != expected {
+    if !matches!(v["environment"].as_str(), Some("Production" | "Sandbox")) {
         return Err(ApiError::bad("Apple environment mismatch"));
     }
     Ok(())
@@ -139,6 +138,7 @@ pub fn environment(v: &Value) -> Result<()> {
 pub fn transaction(jws: &str) -> Result<Value> {
     let v = if std::env::var("APP_ENV").as_deref() == Ok("development")
         && std::env::var("APPLE_ALLOW_XCODE").as_deref() == Ok("true")
+        && std::env::var("APPLE_ENVIRONMENT").as_deref() == Ok("Sandbox")
     {
         let parts: Vec<_> = jws.split('.').collect();
         let v: Value = parts
@@ -156,6 +156,9 @@ pub fn transaction(jws: &str) -> Result<Value> {
     };
     if v["bundleId"] != "com.orcub.puzzle" {
         return Err(ApiError::bad("bundle mismatch"));
+    }
+    if v.get("quantity").is_some_and(|q| q.as_i64() != Some(1)) {
+        return Err(ApiError::bad("quantity must be 1"));
     }
     if v["environment"] != "Xcode" {
         environment(&v)?;
@@ -291,6 +294,8 @@ mod tests {
         assert!(signed_time(&serde_json::json!({"signedDate":now-86400000})).is_ok());
         assert!(environment(&serde_json::json!({"environment":"Xcode"})).is_err());
         assert!(environment(&serde_json::json!({"environment":"Invalid"})).is_err());
+        assert!(environment(&serde_json::json!({"environment":"Sandbox"})).is_ok());
+        assert!(environment(&serde_json::json!({"environment":"Production"})).is_ok());
     }
     #[test]
     fn self_signed_test_chain_signature_and_root() {

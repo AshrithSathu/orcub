@@ -375,8 +375,10 @@ fn clamp(v: &mut Value, key: &str) {
 pub struct SaveData {
     pub highest_level: u32,
     pub stars: BTreeMap<u32, u8>,
+    #[serde(default, skip_serializing)]
     pub inventory: BTreeMap<String, u32>,
     pub workshop: BTreeMap<String, u32>,
+    #[serde(default, skip_serializing)]
     pub lives: u32,
     pub settings: Settings,
     pub skill: Skill,

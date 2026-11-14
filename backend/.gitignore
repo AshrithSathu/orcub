@@ -3,3 +3,6 @@
 /.pg-test/
 
 /node_modules/
+/.pg-economy/
+/.pg-economy*.log
+/.economy-*.log

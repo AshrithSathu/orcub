@@ -90,7 +90,7 @@ pub fn new_state(pool: PgPool, admin: &str, _trust_country: bool) -> Arc<App> {
         firebase: auth::Firebase::default(),
         admin_hash: digest(admin),
         trust_country: false,
-        config: json!({"tuning":serde_json::from_str::<Value>(include_str!("../config/tuning.json")).expect("tuning"),"skill_model":serde_json::from_str::<Value>(include_str!("../config/skill-model.json")).expect("model"),"ad_policy":{"interstitial_min_interval_seconds":120,"interstitial_daily_cap":10,"rewarded_daily_cap":20},"version":"1"}),
+        config: json!({"tuning":serde_json::from_str::<Value>(include_str!("../config/tuning.json")).expect("tuning"),"skill_model":serde_json::from_str::<Value>(include_str!("../config/skill-model.json")).expect("model"),"ad_policy":{"interstitial_min_interval_seconds":120,"interstitial_daily_cap":6,"interstitial_session_cap":6,"rewarded_daily_cap":20},"version":"1"}),
         limiter: limits::Limits::default(),
         exports: Arc::new(tokio::sync::Semaphore::new(2)),
         exporting: std::sync::Mutex::new(Default::default()),
@@ -150,6 +150,8 @@ pub fn router(s: Arc<App>) -> Router {
         .route("/v1/wallet", get(economy::wallet))
         .route("/v1/wallet/spend", post(economy::spend))
         .route("/v1/wallet/grant", post(economy::grant))
+        .route("/v1/wallet/consume", post(economy::consume))
+        .route("/v1/offers/shown", post(economy::offer_shown))
         .route("/v1/iap/apple", post(economy::purchase))
         .route("/v1/iap/restore", post(economy::restore))
         .route("/v1/iap/apple/notifications", post(economy::notification))
@@ -599,7 +601,7 @@ async fn link(
                 .map(|r| serde_json::from_value(r.get("data")))
                 .transpose()
                 .map_err(|_| ApiError::unavailable())?
-                .unwrap_or_default();
+                .unwrap_or_else(|| guest.clone());
             data.merge_progress(&guest);
             economy::save_fields(&mut tx, id, &mut data).await?;
             let rev = canonical.map(|r| r.get::<i64, _>("revision")).unwrap_or(0) + 1;
@@ -705,7 +707,7 @@ async fn account_export(
             if !guest { return Err(ApiError::unauthorized()); }
         }
         let mut out=Vec::new();
-        for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","purchases","purchase_revocations","economy_offers","wallet_aliases","event_quotas","raw_events"] {
+        for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","purchases","purchase_revocations","economy_offers","wallet_aliases","entitlement_transfers","player_value_cache","event_quotas","raw_events"] {
             let filter=if table=="players" {"id"} else {"player_id"};
             let sql=if table=="raw_events" {"SELECT to_jsonb(r) AS data FROM raw_events r JOIN events e USING(event_id) WHERE e.player_id=$1".to_string()} else {format!("SELECT to_jsonb(t)-'credential_hash' AS data FROM {table} t WHERE {filter}=$1")};
             use futures_util::TryStreamExt;
@@ -963,9 +965,9 @@ mod account_tests {
         .await;
         assert_eq!(status, 200);
         assert_eq!(r["revision"], 1);
-        assert_eq!(r["data"]["inventory"], json!({}));
+        assert!(r["data"].get("inventory").is_none());
         assert_eq!(r["data"]["workshop"], json!({}));
-        assert_eq!(r["data"]["lives"], 5);
+        assert!(r["data"].get("lives").is_none());
         assert_eq!(
             call(app.clone(), "PUT", "/v1/save", first, &token, secret)
                 .await
@@ -1067,7 +1069,7 @@ mod account_tests {
             call(app.clone(), "GET", "/v1/save", Value::Null, &token, secret).await;
         assert_eq!(status, 200);
         assert_eq!(saved["data"]["highest_level"], 20);
-        assert_eq!(saved["data"]["inventory"], json!({}));
+        assert!(saved["data"].get("inventory").is_none());
         let anon_id = Uuid::new_v4();
         sqlx::query("INSERT INTO players(id,firebase_uid) VALUES($1,'prior-anonymous')")
             .bind(anon_id)
