@@ -604,6 +604,7 @@ async fn link(
                 .map_err(|_| ApiError::unavailable())?
                 .unwrap_or_else(|| guest.clone());
             data.merge_progress(&guest);
+            data.merge_daily_history(&guest);
             economy::save_fields(&mut tx, id, &mut data).await?;
             let rev = canonical.map(|r| r.get::<i64, _>("revision")).unwrap_or(0) + 1;
             sqlx::query("INSERT INTO saves(player_id,revision,data) VALUES($1,$2,$3) ON CONFLICT(player_id) DO UPDATE SET revision=$2,data=$3,updated_at=now()").bind(id).bind(rev).bind(serde_json::to_value(data).map_err(|_|ApiError::unavailable())?).execute(&mut *tx).await?;

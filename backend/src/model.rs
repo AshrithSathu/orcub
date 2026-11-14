@@ -453,7 +453,15 @@ impl SaveData {
     pub fn merge_progress(&mut self, old: &Self) {
         if self.daily.is_none() {
             self.daily = old.daily.clone();
-        } else if let (Some(current), Some(previous)) = (&mut self.daily, &old.daily) {
+        }
+        self.highest_level = self.highest_level.max(old.highest_level);
+        for (k, v) in &old.stars {
+            let s = self.stars.entry(*k).or_default();
+            *s = (*s).max(*v);
+        }
+    }
+    pub fn merge_daily_history(&mut self, old: &Self) {
+        if let (Some(current), Some(previous)) = (&mut self.daily, &old.daily) {
             for key in ["Completed", "PendingPuzzleGrants"] {
                 let mut days = std::collections::BTreeSet::new();
                 for section in [&*current, previous] {
@@ -468,11 +476,6 @@ impl SaveData {
                         .collect::<std::collections::BTreeSet<_>>()
                 );
             }
-        }
-        self.highest_level = self.highest_level.max(old.highest_level);
-        for (k, v) in &old.stars {
-            let s = self.stars.entry(*k).or_default();
-            *s = (*s).max(*v);
         }
     }
 }
@@ -591,6 +594,13 @@ mod daily_merge_tests {
         let mut old_build = SaveData::default();
         old_build.merge_progress(&guest);
         assert_eq!(old_build.daily, guest.daily);
+        let cleared = SaveData {
+            daily: Some(json!({"Version":1,"Completed":["2026-11-14"],"PendingPuzzleGrants":[]})),
+            ..Default::default()
+        };
+        let mut incoming = cleared.clone();
+        incoming.merge_progress(&guest);
+        assert_eq!(incoming.daily, cleared.daily);
         let mut account = SaveData {
             daily: Some(
                 json!({"Version":1,"Completed":["2026-11-15"],"PendingPuzzleGrants":["2026-11-15"]}),
@@ -598,6 +608,7 @@ mod daily_merge_tests {
             ..Default::default()
         };
         account.merge_progress(&guest);
+        account.merge_daily_history(&guest);
         assert_eq!(
             account.daily.as_ref().unwrap()["PendingPuzzleGrants"],
             json!(["2026-11-14", "2026-11-15"])
