@@ -1,0 +1,69 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2cd69a0e17943468da46bf3ae214e36e, type: 3}
+  m_Name: OrcubArt
+  m_EditorClassIdentifier: Orcub.Runtime::Orcub.Game.OrcubArt
+  ringSprites:
+  - {fileID: 21300000, guid: 3017f87df92a34507b230a0729031443, type: 3}
+  - {fileID: 21300000, guid: a5aaef1e005a246658ff8bae4df00d54, type: 3}
+  - {fileID: 21300000, guid: a35bb320a3eca4df49c3b4a843f77365, type: 3}
+  ringTrimSprites: []
+  ringSpriteRadii:
+  - 1
+  - 1.2
+  - 1.4
+  clamp: {fileID: 21300000, guid: ade3cae2b259447e585a3364ed82ff4c, type: 3}
+  clampAccent: {fileID: 21300000, guid: 75dd9ddedda9a4e269c05f1055fe245d, type: 3}
+  mount: {fileID: 21300000, guid: 5465dcb937edc48e9b87749894958079, type: 3}
+  stem: {fileID: 21300000, guid: 05cd7568a02a048b9a6e53f0e002e44f, type: 3}
+  stemWidth: 0.28
+  ringPalette:
+  - {r: 0.9490196, g: 0.5137255, b: 0.41960785, a: 1}
+  - {r: 0.9647059, g: 0.7647059, b: 0.35686275, a: 1}
+  - {r: 0.4862745, g: 0.79607844, b: 0.5568628, a: 1}
+  - {r: 0.43529412, g: 0.7019608, b: 0.9098039, a: 1}
+  - {r: 0.7019608, g: 0.6039216, b: 0.9098039, a: 1}
+  - {r: 0.9490196, g: 0.6156863, b: 0.73333335, a: 1}
+  - {r: 0.37254903, g: 0.78039217, b: 0.7529412, a: 1}
+  - {r: 0.9098039, g: 0.8784314, b: 0.47843137, a: 1}
+  - {r: 0.9607843, g: 0.63529414, b: 0.38431373, a: 1}
+  - {r: 0.5764706, g: 0.654902, b: 0.9411765, a: 1}
+  hardwareTint: {r: 0.8509804, g: 0.68235296, b: 0.5254902, a: 1}
+  background: {r: 0.09803922, g: 0.10980392, b: 0.18039216, a: 1}
+  backgroundGlow: {r: 0.14901961, g: 0.16862746, b: 0.2784314, a: 1}
+  logoLetters:
+  - {fileID: 21300000, guid: ec8cb5d287a7b47ce94739a249e45602, type: 3}
+  - {fileID: 21300000, guid: 467c11ce8ea8c47c69b07a985787f54e, type: 3}
+  - {fileID: 21300000, guid: 97e7c4129d26c4627969ffa8e4522227, type: 3}
+  - {fileID: 21300000, guid: 84226512c2a2a41d790050d89f0b4066, type: 3}
+  logoLetterCenters:
+  - {x: 2.94232, y: 0.8732958}
+  - {x: 4.732594, y: 0.866239}
+  - {x: 6.7980886, y: 0.8680033}
+  - {x: 8.980023, y: 1.2702487}
+  logoLetterColors: 01000000020000000300000004000000i
+  logoOCenter: {x: 0.98444283, y: 0.86976767}
+  logoOHeight: 1.8857627
+  uiFont: {fileID: 12800000, guid: f4b5007a6f3ee4b2aa8c3435e6fe3527, type: 3}
+  uiStar: {fileID: 21300000, guid: f63b7c24d1b8b4c4aa48ddd5d79e6a70, type: 3}
+  uiHeart: {fileID: 21300000, guid: e526994ba637244849bc95d3a5fda6db, type: 3}
+  uiCog: {fileID: 21300000, guid: 079d246feb48d4c1d964fdde418d1c40, type: 3}
+  backgroundSprite: {fileID: 21300000, guid: df0554ba07329439e838f42117425bde, type: 3}
+  masterVolume: 0.9
+  sfxTick: {fileID: 8300000, guid: 39b060b59b52e4aa4a82be142c4cb7cc, type: 3}
+  sfxPick: {fileID: 8300000, guid: 009f1dfe49e0d4e2bb34086aeb0bc1f8, type: 3}
+  sfxClunk: {fileID: 8300000, guid: c5f40623865bb4b9da314f6fb7043994, type: 3}
+  sfxThud: {fileID: 8300000, guid: a292d362e628949a38039658119eaf1c, type: 3}
+  sfxWhoosh: {fileID: 8300000, guid: e45f01f0e28474d1c8d9ba5c04185355, type: 3}
+  sfxChime: {fileID: 8300000, guid: 0d6093621d9a34d9193926ac548df1b0, type: 3}
+  spriteMaterial: {fileID: 2100000, guid: 0167ad2fa2e7a4cd5b76b73a2094404b, type: 2}
+  unlitMaterial: {fileID: 2100000, guid: 42d4936cacc574f84b9d9898026bc0cb, type: 2}

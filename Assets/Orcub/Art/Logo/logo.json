@@ -1,0 +1,44 @@
+{
+  "letters": [
+    {
+      "file": "letter_r.png",
+      "normal": "letter_r_n.png",
+      "letter": "r",
+      "cx": 2.9423201084136963,
+      "cy": 0.8732957784086466,
+      "ppu": 200
+    },
+    {
+      "file": "letter_c.png",
+      "normal": "letter_c_n.png",
+      "letter": "c",
+      "cx": 4.732594132423401,
+      "cy": 0.8662390150129795,
+      "ppu": 200
+    },
+    {
+      "file": "letter_u.png",
+      "normal": "letter_u_n.png",
+      "letter": "u",
+      "cx": 6.798088550567627,
+      "cy": 0.8680033255368471,
+      "ppu": 200
+    },
+    {
+      "file": "letter_b.png",
+      "normal": "letter_b_n.png",
+      "letter": "b",
+      "cx": 8.980023384094238,
+      "cy": 1.2702486291527748,
+      "ppu": 200
+    }
+  ],
+  "o": {
+    "cx": 0.9844428356736898,
+    "cy": 0.8697676509618759,
+    "width": 1.8892910368740559,
+    "height": 1.8857627213001251
+  },
+  "ppu": 200,
+  "textSize": 4.4
+}

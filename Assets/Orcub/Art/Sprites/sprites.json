@@ -1,0 +1,67 @@
+{
+  "sprites": [
+    {
+      "file": "ring_r100.png",
+      "normal": "ring_r100_n.png",
+      "role": "ring",
+      "radius": 1.0,
+      "ppu": 200,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_r120.png",
+      "normal": "ring_r120_n.png",
+      "role": "ring",
+      "radius": 1.2,
+      "ppu": 200,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_r140.png",
+      "normal": "ring_r140_n.png",
+      "role": "ring",
+      "radius": 1.4,
+      "ppu": 200,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clamp.png",
+      "normal": "clamp_n.png",
+      "role": "clamp",
+      "ppu": 200,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clamp_accent.png",
+      "normal": "clamp_accent_n.png",
+      "role": "clamp_accent",
+      "ppu": 200,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "mount.png",
+      "normal": "mount_n.png",
+      "role": "mount",
+      "ppu": 200,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "stem.png",
+      "normal": "stem_n.png",
+      "role": "stem",
+      "ppu": 200,
+      "pivotX": 0.0,
+      "pivotY": 0.5,
+      "borderL": 36,
+      "borderR": 36,
+      "borderB": 0,
+      "borderT": 0
+    }
+  ]
+}
