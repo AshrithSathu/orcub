@@ -306,6 +306,9 @@ def part_b():
     render_ui(star_shape(), "ui_star", 1.0 + m, 1.0 + m)
     render_ui(film_glyph(), "ui_film", 0.85 + m, 0.6 + m)
     render_ui(pause_glyph(), "ui_pause", 0.5 + m, 0.55 + m)
+    # cream clay card for menus (pause, confirm, out of lives): sliced on all four sides
+    card = rounded_rect("card", 4.0, 4.0, 0.72, 0.42, 0.2)
+    render_ui(card, "ui_card", 2.0 + m, 2.0 + m, border_px=int((0.72 + m) * PPU))
     render_ui(heart_shape(), "ui_heart", 1.0 + m, 1.0 + m)
     render_ui(cog_shape(), "ui_cog", 1.15 + m, 1.15 + m)
     render_ui(sound_glyph(), "ui_sound", 0.8 + m, 0.6 + m)

@@ -65,5 +65,10 @@
     "file": "ui_haptics.png",
     "ppu": 200,
     "border": 0
+  },
+  "ui_card": {
+    "file": "ui_card.png",
+    "ppu": 200,
+    "border": 179
   }
 }

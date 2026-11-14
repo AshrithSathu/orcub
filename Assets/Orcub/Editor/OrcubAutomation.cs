@@ -379,6 +379,18 @@ namespace Orcub.EditorTools
             art.uiStarClay = Ui("ui_star", false);
             art.uiFilm = Ui("ui_film", false);
             art.uiPause = Ui("ui_pause", false);
+            art.uiCard = Ui("ui_card", false);
+            {
+                var ti = (TextureImporter)AssetImporter.GetAtPath($"{dir}/ui_card.png");
+                var settings = new TextureImporterSettings();
+                ti.ReadTextureSettings(settings);
+                int b = Border("ui_card");
+                settings.spriteMeshType = SpriteMeshType.FullRect;
+                settings.spriteBorder = new Vector4(b, b, b, b);      // corners stay round at any size
+                ti.SetTextureSettings(settings);
+                ti.SaveAndReimport();
+                art.uiCard = AssetDatabase.LoadAssetAtPath<Sprite>($"{dir}/ui_card.png");
+            }
             art.uiHeartClay = Ui("ui_heart", false);
             art.uiCogClay = Ui("ui_cog", false);
             art.uiSound = Ui("ui_sound", false);

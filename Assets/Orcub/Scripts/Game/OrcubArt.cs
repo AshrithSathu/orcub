@@ -55,6 +55,7 @@ namespace Orcub.Game
         public Sprite uiRound;      // round puffy clay button
         public Sprite uiStarClay;   // neutral clay star: tinted gold (earned) or tan (unearned)
         public Sprite uiFilm;       // film/play glyph (watch ad)
+        public Sprite uiCard;       // cream clay card for menus, sliced on all four sides
         public Sprite uiPause;      // two rounded bars
         public Sprite uiHeartClay;  // puffy clay heart (lives)
         public Sprite uiCogClay;    // clay cog (currency)

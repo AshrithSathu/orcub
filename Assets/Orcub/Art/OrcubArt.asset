@@ -59,6 +59,7 @@ MonoBehaviour:
   uiRound: {fileID: 21300000, guid: 745a9242efcf04745908570d50cf1fca, type: 3}
   uiStarClay: {fileID: 21300000, guid: f77d345dba28c41059b36ab79dec2f4b, type: 3}
   uiFilm: {fileID: 21300000, guid: 5fb8685457c244d209067193fe733b27, type: 3}
+  uiCard: {fileID: 21300000, guid: 0886985a4002f434493485abdadbeae0, type: 3}
   uiPause: {fileID: 21300000, guid: a15ef90b8767e41e08759a312730bd68, type: 3}
   uiHeartClay: {fileID: 21300000, guid: c8de5a6e470864fba87183382e0da081, type: 3}
   uiCogClay: {fileID: 21300000, guid: 39b46951e70014879a95c57375bc437e, type: 3}

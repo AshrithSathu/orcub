@@ -47,6 +47,8 @@ namespace Orcub.Game
         int _movesLeft = 99;
         float _movesBump;
         RectTransform _popup, _card;
+        bool _creamCard;   // menus sit on a cream clay card (ink text); results sit straight in the wreath (cream text)
+        Color OnCard => _creamCard ? Ink : Cream;
 
         public bool PopupOpen => _popup != null;
 
@@ -142,9 +144,10 @@ namespace Orcub.Game
             btn.transition = Selectable.Transition.None;
             btn.onClick.AddListener(() => { Haptics.Play(Haptics.Impact.Light, 0.5f); onClick(); });
             rt.gameObject.AddComponent<PressSquash>();
-            var t = Label(rt, label, 44, Cream);
+            var c = OnCard;
+            var t = Label(rt, label, 44, c);
             Anchor(t.rectTransform, 0f, 0.15f, 1f, 1f);
-            var line = Img(rt, null, new Color(Cream.r, Cream.g, Cream.b, 0.7f), sliced: false);
+            var line = Img(rt, null, new Color(c.r, c.g, c.b, 0.7f), sliced: false);
             Anchor(line.rectTransform, 0.3f, 0.08f, 0.7f, 0.12f);
             return rt;
         }
@@ -321,9 +324,10 @@ namespace Orcub.Game
 
         // ------------------------------------------------------------------ cards (drawn inside the wreath)
 
-        RectTransform OpenCard()
+        RectTransform OpenCard(bool cream = false)
         {
             ClosePopup();
+            _creamCard = cream;
             _popup = Rect("Popup", transform);
             Anchor(_popup, 0, 0, 1, 1);
             var blocker = _popup.gameObject.AddComponent<Image>();
@@ -333,6 +337,15 @@ namespace Orcub.Game
             _card.pivot = new Vector2(0.5f, 0.5f);
             float w = _canvasRect.rect.width * WreathView.WidthOfView * 0.86f;
             _card.sizeDelta = new Vector2(w, w);
+            if (cream)
+            {
+                // cream clay card; the wreath peeks out around it
+                var panel = Img(_card, _art.uiCard, new Color(0.99f, 0.94f, 0.85f), sliced: true);
+                Destroy(panel.GetComponent<RoundCaps>());
+                panel.pixelsPerUnitMultiplier = 1.5f;
+                Anchor(panel.rectTransform, -0.04f, -0.02f, 1.04f, 1.02f);
+                panel.transform.SetAsFirstSibling();
+            }
             StartCoroutine(FadeIn(_card.gameObject.AddComponent<CanvasGroup>()));
             return _card;
         }
@@ -428,9 +441,9 @@ namespace Orcub.Game
         {
             var row = Rect(label, parent);
             Anchor(row, 0.08f, y0, 0.92f, y1);
-            var ic = Img(row, icon, Cream);
+            var ic = Img(row, icon, OnCard);
             Anchor(ic.rectTransform, 0f, 0.12f, 0.16f, 0.88f);
-            var text = Label(row, label, 46, Cream, TextAnchor.MiddleLeft);
+            var text = Label(row, label, 46, OnCard, TextAnchor.MiddleLeft);
             Anchor(text.rectTransform, 0.2f, 0f, 0.62f, 1f);
 
             var track = Rect("Switch", row);
@@ -472,10 +485,9 @@ namespace Orcub.Game
         /// <summary>Pause / settings: sound + haptics switches, Restart (costs a life), Resume.</summary>
         public void ShowPause(Action onRestart, Action onResume)
         {
-            var card = OpenCard();
-            var title = Label(card, "Paused", 80, Cream);
+            var card = OpenCard(cream: true);
+            var title = Label(card, "Paused", 80, Ink);
             Anchor(title.rectTransform, 0f, 0.8f, 1f, 0.95f);
-            Shadow(title);
             Toggle(card, _art.uiSound, "Sound", GameSettings.SoundOn, on => GameSettings.SoundOn = on, 0.63f, 0.75f);
             Toggle(card, _art.uiHaptics, "Haptics", GameSettings.HapticsOn, on => GameSettings.HapticsOn = on, 0.49f, 0.61f);
             var restart = Pill(card, "−1   Restart", Coral, 50, () => { ClosePopup(); onRestart(); }, _art.uiHeartClay, Cream);
@@ -487,15 +499,14 @@ namespace Orcub.Game
         /// <summary>"Restart level? Uses 1 life" confirmation.</summary>
         public void ShowRestartConfirm(Action onRestart, Action onCancel)
         {
-            var card = OpenCard();
-            var title = Label(card, "Restart level?", 72, Cream);
+            var card = OpenCard(cream: true);
+            var title = Label(card, "Restart level?", 72, Ink);
             Anchor(title.rectTransform, 0f, 0.68f, 1f, 0.84f);
-            Shadow(title);
             var cost = Rect("Cost", card);
             Anchor(cost, 0.2f, 0.54f, 0.8f, 0.65f);
             var h = Img(cost, _art.uiHeartClay, HeartRed);
             Anchor(h.rectTransform, 0f, 0f, 0.24f, 1f);
-            var t = Label(cost, "Uses 1 life", 48, Cream, TextAnchor.MiddleLeft);
+            var t = Label(cost, "Uses 1 life", 48, Ink, TextAnchor.MiddleLeft);
             Anchor(t.rectTransform, 0.28f, 0f, 1f, 1f);
             var restart = Pill(card, "Restart", Coral, 62, () => { ClosePopup(); onRestart(); });
             Anchor(restart, 0.14f, 0.32f, 0.86f, 0.49f);
@@ -506,13 +517,12 @@ namespace Orcub.Game
         /// <summary>Out of lives: big heart, live countdown, refill with ad, refill with cogs (disabled until cogs exist).</summary>
         public void ShowOutOfLives(Action onRefillAd, Action onRefillCogs, Action onBack)
         {
-            var card = OpenCard();
-            var title = Label(card, "Out of lives", 74, Cream);
+            var card = OpenCard(cream: true);
+            var title = Label(card, "Out of lives", 74, Ink);
             Anchor(title.rectTransform, 0f, 0.82f, 1f, 0.95f);
-            Shadow(title);
             var heart = Img(card, _art.uiHeartClay, HeartRed);
             Anchor(heart.rectTransform, 0.36f, 0.62f, 0.64f, 0.82f);
-            var timer = Label(card, "", 44, Cream);
+            var timer = Label(card, "", 44, Ink);
             Anchor(timer.rectTransform, 0f, 0.53f, 1f, 0.62f);
             StartCoroutine(Countdown(timer));
             var ad = Pill(card, "Refill with ad", Coral, 46, () => { ClosePopup(); onRefillAd(); }, _art.uiFilm);
