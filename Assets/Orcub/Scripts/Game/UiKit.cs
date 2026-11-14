@@ -94,12 +94,12 @@ namespace Orcub.Game
         }
 
         /// <summary>Cream clay card panel (sliced on all four sides).</summary>
-        public Image Card(Transform parent)
+        public Image Card(Transform parent, float cornerScale = 1f)
         {
             var img = Rect("Card", parent).gameObject.AddComponent<Image>();
             img.sprite = Art.uiCard;
             img.type = UnityEngine.UI.Image.Type.Sliced;
-            img.pixelsPerUnitMultiplier = 1.5f;
+            img.pixelsPerUnitMultiplier = 1.5f / Mathf.Max(0.2f, cornerScale);   // higher multiplier = tighter corners
             img.color = CardCream;
             img.raycastTarget = false;
             return img;
@@ -119,7 +119,7 @@ namespace Orcub.Game
             return img;
         }
 
-        static void Tap(GameObject go, Action onClick, float haptic = 0.6f)
+        public static void Tap(GameObject go, Action onClick, float haptic = 0.6f)
         {
             var btn = go.AddComponent<Button>();
             btn.transition = Selectable.Transition.None;
@@ -143,13 +143,14 @@ namespace Orcub.Game
             if (glyph != null)
             {
                 // Glyph + label read as one centred group, not an icon pinned to the far edge.
-                float glyphW = fontSize * 1.15f, gap = fontSize * 0.35f, textW = text.preferredWidth;
+                float aspect = glyph.rect.height > 0f ? Mathf.Clamp(glyph.rect.width / glyph.rect.height, 0.6f, 2f) : 1f;
+                float glyphH = fontSize * 1.15f, glyphW = glyphH * aspect, gap = fontSize * 0.35f, textW = text.preferredWidth;
                 float g0 = -(glyphW + gap + textW) * 0.5f;
                 text.rectTransform.anchoredPosition = new Vector2((glyphW + gap) * 0.5f, 0f);
                 var g = MakeImage(rt, glyph, glyphTint ?? Ink);
                 var grt = g.rectTransform;
                 grt.anchorMin = grt.anchorMax = new Vector2(0.5f, 0.5f);
-                grt.sizeDelta = new Vector2(glyphW, glyphW);
+                grt.sizeDelta = new Vector2(glyphW, glyphH);
                 grt.anchoredPosition = new Vector2(g0 + glyphW * 0.5f, 0f);
             }
             return rt;
@@ -186,6 +187,49 @@ namespace Orcub.Game
             lrt.anchoredPosition = new Vector2(0f, -Label * 0.62f);
             return rt;
         }
+
+        /// <summary>Cream rounded-square clay button with a glyph (back, settings). Square via its height.</summary>
+        public RectTransform SquareButton(Transform parent, string name, Sprite glyph, Color glyphTint, Action onClick)
+        {
+            var rt = Rect(name, parent);
+            var img = rt.gameObject.AddComponent<Image>();
+            img.sprite = Art.navSquare != null ? Art.navSquare : Art.uiRound;
+            img.color = CardCream;
+            img.preserveAspect = true;
+            Tap(rt.gameObject, onClick);
+            if (glyph != null)
+            {
+                var g = MakeImage(rt, glyph, glyphTint);
+                Anchor(g.rectTransform, 0.24f, 0.24f, 0.76f, 0.76f);
+            }
+            rt.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+            return rt;
+        }
+
+        /// <summary>Thin ink rule used to split a card into an art column and a text column.</summary>
+        public Image Divider(Transform parent, bool vertical = true)
+        {
+            var d = MakeImage(parent, null, new Color(Ink.r, Ink.g, Ink.b, 0.14f));
+            return d;
+        }
+
+        /// <summary>Entrance: fade + slight rise, ease-out (~200ms). Screens and cards use the same curve.</summary>
+        public static System.Collections.IEnumerator FadeIn(CanvasGroup g, float seconds = 0.2f)
+        {
+            if (g == null) yield break;
+            float t = 0f;
+            g.alpha = 0f;
+            while (t < 1f && g != null)
+            {
+                t += Time.unscaledDeltaTime / seconds;
+                g.alpha = EaseOut(Mathf.Clamp01(t));
+                yield return null;
+            }
+            if (g != null) g.alpha = 1f;
+        }
+
+        public static float EaseOut(float t) => 1f - Mathf.Pow(1f - t, 3f);
+        public static float EaseIn(float t) => t * t * t;
 
         public static void Shadow(Graphic g, float alpha = 0.4f)
         {

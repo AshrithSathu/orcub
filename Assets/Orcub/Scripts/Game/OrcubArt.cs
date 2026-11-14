@@ -79,6 +79,18 @@ namespace Orcub.Game
         public Vector2[] workshopSize = new Vector2[0];
         public Vector2 workshopBox = new Vector2(1000, 900);
 
+        [Header("Navigation v3 (approved: home A, chapters A, map A, level start B)")]
+        public Sprite navSquare;        // cream rounded-square button base (back / settings)
+        public Sprite glyphBack, glyphClose, glyphChevron, glyphPath;
+        public Sprite starSocket;       // empty star pressed into clay
+        public Sprite mapNode;          // tintable gear node
+        public Sprite mapNodeCenter;    // cream centre disc for the number
+        public Sprite nodeGlow;         // soft halo behind the current node
+        public Sprite bubble;           // "Play" speech bubble, sliced left/right
+        public Sprite sheet;            // level-start bottom sheet, sliced
+        public Sprite homeHero;         // connected clay gear-rings illustration
+        public Sprite chapterLamp;      // chapter 1 card art
+
         [Header("Background")]
         [Tooltip("Optional full-screen backdrop, scaled to cover the camera view.")]
         public Sprite backgroundSprite;

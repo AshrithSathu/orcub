@@ -51,6 +51,7 @@ namespace Orcub.Game
         UiKit _kit;
         HomeScreen _home;
         MapScreen _map;
+        ChaptersScreen _chapters;
         readonly Stack<(ModelSnapshot snap, int moves)> _undo = new Stack<(ModelSnapshot, int)>();
         ModelSnapshot _pendingSnap;
 
@@ -132,9 +133,10 @@ namespace Orcub.Game
             _hud.Next += () => DevJump(+1);
             _hud.Booster += UseBooster;
             _kit = new UiKit(art);
-            _home = HomeScreen.Create(transform, _kit, _fx, onPlay: () => PlayLevel(Frontier), onMap: ShowMap,
+            _home = HomeScreen.Create(transform, _kit, _fx, onPlay: () => PlayLevel(Frontier), onMap: ShowChapters,
                 onSettings: () => _hud.ShowSettings(onClose: () => { }));
-            _map = MapScreen.Create(transform, _kit, onPlayLevel: PlayLevel, onBack: ShowHome);
+            _map = MapScreen.Create(transform, _kit, onPlayLevel: PlayLevel, onBack: ShowChapters);
+            _chapters = ChaptersScreen.Create(transform, _kit, onOpen: ShowMap, onBack: ShowHome);
             _home.Hide();
 
             // The frontier board is built (hidden) so the felt backdrop is there for the splash.
@@ -162,13 +164,23 @@ namespace Orcub.Game
             _hud.SetVisible(false, instant: true);
             _wreath?.Hide();
             _map.Hide();
+            _chapters.Hide();
             _home.Show();
         }
 
-        void ShowMap()
+        /// <summary>Home → All levels (chapter cards) → one chapter's map → level-start sheet → play.</summary>
+        void ShowChapters()
         {
             _home.Hide();
-            _map.Show();
+            _map.Hide();
+            _chapters.Show();
+        }
+
+        void ShowMap(int chapter)
+        {
+            _home.Hide();
+            _chapters.Hide();
+            _map.Show(chapter);
         }
 
         /// <summary>Start a level from home or the map. Needs at least one life to start.</summary>
@@ -184,6 +196,7 @@ namespace Orcub.Game
             }
             _home.Hide();
             _map.Hide();
+            _chapters.Hide();
             _hud.SetVisible(true);
             LoadLevel(index);
         }

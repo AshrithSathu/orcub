@@ -103,6 +103,19 @@ MonoBehaviour:
   - {x: 300, y: 240}
   - {x: 312, y: 240}
   workshopBox: {x: 1000, y: 900}
+  navSquare: {fileID: 21300000, guid: a9c53e59b531d4a24929dd9e7c447a6f, type: 3}
+  glyphBack: {fileID: 21300000, guid: 1ef68a2734e524433a67332bfe3919eb, type: 3}
+  glyphClose: {fileID: 21300000, guid: af498c3bfbb0e4e8c9d32955064b3ff3, type: 3}
+  glyphChevron: {fileID: 21300000, guid: 90269a6617f1141b3ba7dbd45e4f87b6, type: 3}
+  glyphPath: {fileID: 21300000, guid: 015ae9ae93a0c40c3b3f9c1cbdd5e3cd, type: 3}
+  starSocket: {fileID: 21300000, guid: 7b81ec616382d45d59f7f1ef8decaadf, type: 3}
+  mapNode: {fileID: 21300000, guid: 8d595eb6025ea48d485701c30fbd1594, type: 3}
+  mapNodeCenter: {fileID: 21300000, guid: e378be037e4d04498940feb1755b9304, type: 3}
+  nodeGlow: {fileID: 21300000, guid: 79dea20a953ae4b7898b118340b138c5, type: 3}
+  bubble: {fileID: 21300000, guid: 1db6f3de8c9f14a7f9d1e69335964192, type: 3}
+  sheet: {fileID: 21300000, guid: 909851c911b954822a2acb3c66c05649, type: 3}
+  homeHero: {fileID: 21300000, guid: ede971016fb184a9288413b42535090f, type: 3}
+  chapterLamp: {fileID: 21300000, guid: 68b49d14f7f3e4bdfb04af62474f4958, type: 3}
   backgroundSprite: {fileID: 21300000, guid: df0554ba07329439e838f42117425bde, type: 3}
   masterVolume: 0.9
   sfxTick: {fileID: 8300000, guid: 39b060b59b52e4aa4a82be142c4cb7cc, type: 3}

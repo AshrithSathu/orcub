@@ -224,6 +224,7 @@ namespace Orcub.EditorTools
             art.uiFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/Orcub/Fonts/Fredoka-Bold.ttf");
             ImportUiKit(art);
             ImportHomeKit(art);
+            ImportNavKit(art);
             // Soft-clay palette: saturated enough to read on navy, chalky enough to feel like clay.
             art.ringPalette = new[]
             {
@@ -445,6 +446,33 @@ namespace Orcub.EditorTools
             art.workshopBroken = broken.ToArray();
             art.workshopPos = pos.ToArray();
             art.workshopSize = size.ToArray();
+        }
+
+        /// <summary>Nav v3 kit (approved home A / chapters A / map A / level start B), rendered by build_nav_kit.py.</summary>
+        static void ImportNavKit(OrcubArt art)
+        {
+            const string dir = "Assets/Orcub/Art/Nav";
+            if (!File.Exists(Path.Combine(ProjectRoot, dir, "nav_kit.json"))) { Debug.LogWarning("[Orcub] nav_kit.json missing"); return; }
+            Sprite S(string n, Vector4 border = default)
+            {
+                string path = $"{dir}/{n}.png";
+                var ti = (TextureImporter)AssetImporter.GetAtPath(path);
+                if (ti != null) ti.spriteBorder = border;   // left, bottom, right, top (same order as nav_kit.json)
+                return ImportUiIcon(path);
+            }
+            art.navSquare = S("btn_square");
+            art.glyphBack = S("glyph_back");
+            art.glyphClose = S("glyph_close");
+            art.glyphChevron = S("glyph_chevron");
+            art.glyphPath = S("glyph_path");
+            art.starSocket = S("star_socket");
+            art.mapNode = S("map_node");
+            art.mapNodeCenter = S("map_node_center");
+            art.nodeGlow = S("node_glow");
+            art.bubble = S("bubble");
+            art.sheet = S("sheet", new Vector4(132, 0, 132, 132));
+            art.homeHero = S("home_hero");
+            art.chapterLamp = S("chapter_lamp");
         }
 
         static Sprite ImportUiIcon(string path)

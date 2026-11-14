@@ -1,6 +1,5 @@
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using Orcub.Core;
 using UnityEngine;
 using UnityEngine.UI;
@@ -8,11 +7,12 @@ using UnityEngine.UI;
 namespace Orcub.Game
 {
     /// <summary>
-    /// Home (approved direction A, "Workshop"), kept deliberately sparse:
-    ///   top bar   - lives (+ time to next life), star balance, settings
-    ///   centre    - the clay workbench; each object is broken until restored with stars
-    ///   task card - the single next task, its star cost, and Restore (or how many stars are still needed)
-    ///   bottom    - one big PLAY pill for the next level, and an "All levels" link to the map
+    /// Home (approved nav v3, direction A). One job: get the player into their next level.
+    ///   top bar     settings · lives · stars (shared TopBar)
+    ///   wordmark    "orcub" + the clay gear-ring illustration
+    ///   task card   the next workshop object to fix and star progress toward it (Restore when affordable)
+    ///   play card   "Level N", the stars already earned on it, and the one primary button: Play
+    ///   all levels  secondary pill into the chapter list
     /// </summary>
     public sealed class HomeScreen : MonoBehaviour
     {
@@ -20,10 +20,10 @@ namespace Orcub.Game
         Action _onPlay, _onMap, _onSettings;
         Feedback _fx;
         CanvasGroup _group;
-        RectTransform _safe, _scene, _taskArea;
-        Text _lives, _livesTimer, _stars, _playLabel;
-        readonly Dictionary<string, Image> _props = new Dictionary<string, Image>();
-        float _refresh;
+        RectTransform _safe, _taskArea;
+        TopBar _bar;
+        Text _levelLabel;
+        readonly Image[] _stars = new Image[3];
 
         public static HomeScreen Create(Transform parent, UiKit kit, Feedback fx, Action onPlay, Action onMap, Action onSettings)
         {
@@ -48,137 +48,110 @@ namespace Orcub.Game
         {
             gameObject.SetActive(true);
             Refresh();
-            StartCoroutine(Fade(0f, 1f, 0.22f));
+            StartCoroutine(UiKit.FadeIn(_group));
         }
 
         public void Hide() => gameObject.SetActive(false);
-
-        IEnumerator Fade(float from, float to, float seconds)
-        {
-            float t = 0f;
-            while (t < 1f)
-            {
-                t += Time.unscaledDeltaTime / seconds;
-                _group.alpha = Mathf.Lerp(from, to, t);
-                yield return null;
-            }
-        }
 
         void Build()
         {
             var kit = _kit;
             var art = kit.Art;
 
-            // ---- top bar
-            var bar = kit.MakeImage(_safe, art.uiSlab, UiKit.Slab, sliced: true).rectTransform;
-            UiKit.Anchor(bar, 0.04f, 0.905f, 0.96f, 0.975f);
+            _bar = TopBar.Create(_safe, kit, art.uiCogClay, UiKit.Brass, () => _onSettings?.Invoke());
 
-            var heart = kit.MakeImage(bar, art.uiHeartClay, UiKit.HeartRed);
-            UiKit.Anchor(heart.rectTransform, 0.04f, 0.08f, 0.16f, 0.92f);
-            _lives = kit.MakeText(heart.transform, "5", UiKit.Label, UiKit.Cream);
-            UiKit.Anchor(_lives.rectTransform, 0, 0.1f, 1, 0.9f);
-            _livesTimer = kit.MakeText(bar, "Full", UiKit.Caption, UiKit.Ink, TextAnchor.MiddleLeft);
-            UiKit.Anchor(_livesTimer.rectTransform, 0.18f, 0f, 0.4f, 1f);
+            // ---- wordmark + hero illustration
+            var word = kit.MakeText(_safe, "orcub", 150, UiKit.Cream);
+            UiKit.Anchor(word.rectTransform, 0f, 0.8f, 1f, 0.895f);
+            UiKit.Shadow(word, 0.3f);
+            if (art.homeHero != null)
+            {
+                var hero = kit.MakeImage(_safe, art.homeHero, Color.white);
+                UiKit.Anchor(hero.rectTransform, 0.18f, 0.53f, 0.82f, 0.8f);
+            }
+            var tagline = kit.MakeText(_safe, "Ready to unwind?", UiKit.Title, UiKit.Cream);
+            UiKit.Anchor(tagline.rectTransform, 0f, 0.48f, 1f, 0.53f);
 
-            var star = kit.MakeImage(bar, art.uiStarClay, UiKit.StarGold);
-            UiKit.Anchor(star.rectTransform, 0.44f, 0.12f, 0.54f, 0.88f);
-            _stars = kit.MakeText(bar, "0", UiKit.Body, UiKit.Ink, TextAnchor.MiddleLeft);
-            UiKit.Anchor(_stars.rectTransform, 0.56f, 0f, 0.76f, 1f);
-
-            var settings = kit.RoundButton(bar, "Settings", art.uiCogClay, UiKit.CardCream, UiKit.Ink, () => _onSettings?.Invoke());
-            UiKit.Anchor(settings, 0.84f, 0.04f, 0.97f, 0.96f);
-            settings.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
-
-            // ---- workshop scene (laid out from the Blender kit's reference box)
-            _scene = UiKit.Rect("Workshop", _safe);
-            UiKit.Anchor(_scene, 0.03f, 0.425f, 0.97f, 0.895f);
-            var fit = _scene.gameObject.AddComponent<AspectRatioFitter>();
-            fit.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
-            fit.aspectRatio = art.workshopBox.x / Mathf.Max(1f, art.workshopBox.y);
-            if (art.workshopBench != null) AddProp("bench", art.workshopBench, art.workshopBenchPos, art.workshopBenchSize, null);
-            for (int i = 0; i < art.workshopIds.Length; i++)
-                AddProp(art.workshopIds[i], art.workshopRestored[i], art.workshopPos[i], art.workshopSize[i], art.workshopBroken[i]);
-
-            // ---- task card
+            // ---- next workshop task
             _taskArea = UiKit.Rect("Task", _safe);
-            UiKit.Anchor(_taskArea, 0.08f, 0.285f, 0.92f, 0.39f);
+            UiKit.Anchor(_taskArea, 0.12f, 0.375f, 0.88f, 0.465f);
 
-            // ---- play
-            var levelTag = kit.MakeImage(_safe, art.uiSlab, UiKit.Slab, sliced: true).rectTransform;
-            UiKit.Anchor(levelTag, 0.32f, 0.205f, 0.68f, 0.25f);
-            _playLabel = kit.MakeText(levelTag, "Level 1", UiKit.Label, UiKit.Ink);
-            UiKit.Anchor(_playLabel.rectTransform, 0, 0, 1, 1);
-            var play = kit.Pill(_safe, "Play", UiKit.Mint, UiKit.Display, () => _onPlay?.Invoke());
-            UiKit.Anchor(play, 0.12f, 0.09f, 0.88f, 0.205f);
-            var map = kit.Link(_safe, "All levels", UiKit.Cream, () => _onMap?.Invoke());
-            UiKit.Anchor(map, 0.3f, 0.015f, 0.7f, 0.08f);
-        }
+            // ---- play card: the single primary action
+            var playArea = UiKit.Rect("PlayCard", _safe);
+            UiKit.Anchor(playArea, 0.08f, 0.115f, 0.92f, 0.355f);
+            var card = kit.Card(playArea);
+            UiKit.Anchor(card.rectTransform, 0f, 0f, 1f, 1f);
+            _levelLabel = kit.MakeText(playArea, "Level 1", UiKit.Display, UiKit.Ink);
+            UiKit.Anchor(_levelLabel.rectTransform, 0f, 0.74f, 1f, 0.93f);
+            for (int i = 0; i < 3; i++)
+            {
+                var socket = kit.MakeImage(playArea, art.starSocket != null ? art.starSocket : art.uiStarClay,
+                    art.starSocket != null ? Color.white : UiKit.StarTan);
+                float x0 = 0.26f + i * 0.165f;
+                UiKit.Anchor(socket.rectTransform, x0, 0.47f, x0 + 0.15f, 0.74f);
+                _stars[i] = kit.MakeImage(socket.transform, art.uiStarClay, UiKit.StarGold);
+                UiKit.Anchor(_stars[i].rectTransform, 0.1f, 0.1f, 0.9f, 0.9f);
+            }
+            var play = kit.Pill(playArea, "Play", UiKit.Mint, 96, () => _onPlay?.Invoke());
+            UiKit.Anchor(play, 0.06f, 0.09f, 0.94f, 0.44f);
 
-        /// <summary>Place a workshop piece using the kit's layout (centre + size in the reference box).</summary>
-        void AddProp(string id, Sprite sprite, Vector2 pos, Vector2 size, Sprite broken)
-        {
-            if (sprite == null) return;
-            var box = _kit.Art.workshopBox;
-            var img = _kit.MakeImage(_scene, sprite, Color.white);
-            Vector2 c = new Vector2(pos.x / box.x, pos.y / box.y);
-            Vector2 half = new Vector2(size.x / box.x, size.y / box.y) * 0.5f;
-            UiKit.Anchor(img.rectTransform, c.x - half.x, c.y - half.y, c.x + half.x, c.y + half.y);
-            if (broken != null) _props[id] = img;
-        }
-
-        void Update()
-        {
-            _refresh -= Time.unscaledDeltaTime;
-            if (_refresh > 0f) return;
-            _refresh = 1f;
-            int lives = Lives.Count;
-            _lives.text = lives.ToString();
-            int s = Lives.SecondsToNext;
-            _livesTimer.text = lives >= Lives.Max ? "Full" : $"{Mathf.CeilToInt(s / 60f)}m";
+            // ---- secondary: every level, by chapter
+            var all = kit.Pill(_safe, "All levels", UiKit.CardCream, UiKit.Body, () => _onMap?.Invoke(),
+                art.glyphPath, Color.white);
+            UiKit.Anchor(all, 0.22f, 0.025f, 0.78f, 0.09f);
         }
 
         public void Refresh()
         {
-            var art = _kit.Art;
-            _stars.text = StarBank.Available.ToString();
-            int frontier = Mathf.Clamp(Progress.HighestUnlocked, 0, Mathf.Max(0, LevelLibrary.Count - 1));
-            _playLabel.text = $"Level {frontier + 1}";
-            for (int i = 0; i < art.workshopIds.Length; i++)
-            {
-                if (!_props.TryGetValue(art.workshopIds[i], out var img)) continue;
-                img.sprite = Workshop.IsRestored(art.workshopIds[i]) ? art.workshopRestored[i] : art.workshopBroken[i];
-            }
+            _bar?.Refresh();
+            int frontier = Chapters.Frontier;
+            _levelLabel.text = $"Level {frontier + 1}";
+            int best = Progress.BestStars(frontier);
+            for (int i = 0; i < 3; i++) _stars[i].enabled = i < best;
             BuildTask();
-            _refresh = 0f;
         }
 
         void BuildTask()
         {
             for (int i = _taskArea.childCount - 1; i >= 0; i--) Destroy(_taskArea.GetChild(i).gameObject);
             var kit = _kit;
-            var task = Workshop.Next;
-            var card = kit.Card(_taskArea);
+            var art = kit.Art;
+            var card = kit.Card(_taskArea, 0.6f);
             UiKit.Anchor(card.rectTransform, 0, 0, 1, 1);
+            var task = Workshop.Next;
             if (task == null)
             {
                 var done = kit.MakeText(_taskArea, "Workshop restored!", UiKit.Body, UiKit.Ink);
                 UiKit.Anchor(done.rectTransform, 0, 0, 1, 1);
                 return;
             }
-            var name = kit.MakeText(_taskArea, task.Name, UiKit.Body, UiKit.Ink, TextAnchor.MiddleLeft);
-            UiKit.Anchor(name.rectTransform, 0.07f, 0f, 0.55f, 1f);
-            bool canAfford = StarBank.Available >= task.Cost;
-            if (canAfford)
+
+            int idx = Array.IndexOf(art.workshopIds, task.Id);
+            if (idx >= 0 && idx < art.workshopBroken.Length && art.workshopBroken[idx] != null)
             {
-                var btn = kit.Pill(_taskArea, $"{task.Cost}", UiKit.Mint, UiKit.Body, () => Restore(task), kit.Art.uiStarClay, UiKit.StarGold);
-                UiKit.Anchor(btn, 0.58f, 0.16f, 0.95f, 0.84f);
+                var icon = kit.MakeImage(_taskArea, art.workshopBroken[idx], Color.white);
+                UiKit.Anchor(icon.rectTransform, 0.04f, 0.1f, 0.27f, 0.9f);
+            }
+            var divider = kit.Divider(_taskArea);
+            UiKit.Anchor(divider.rectTransform, 0.305f, 0.2f, 0.31f, 0.8f);
+
+            var name = kit.MakeText(_taskArea, task.Name, UiKit.Body, UiKit.Ink, TextAnchor.MiddleLeft);
+            UiKit.Anchor(name.rectTransform, 0.35f, 0.5f, 0.97f, 0.92f);
+
+            int have = Mathf.Min(StarBank.Available, task.Cost);
+            if (have >= task.Cost)
+            {
+                var restore = kit.Pill(_taskArea, $"Restore  {task.Cost}", UiKit.Mint, UiKit.Label, () => Restore(task),
+                    art.uiStarClay, UiKit.StarGold);
+                UiKit.Anchor(restore, 0.35f, 0.1f, 0.93f, 0.48f);
             }
             else
             {
-                var need = kit.MakeText(_taskArea, $"{task.Cost - StarBank.Available} more", UiKit.Caption, UiKit.Dim, TextAnchor.MiddleRight);
-                UiKit.Anchor(need.rectTransform, 0.55f, 0f, 0.82f, 1f);
-                var s = kit.MakeImage(_taskArea, kit.Art.uiStarClay, UiKit.StarTan);
-                UiKit.Anchor(s.rectTransform, 0.83f, 0.2f, 0.95f, 0.8f);
+                var star = kit.MakeImage(_taskArea, art.uiStarClay, UiKit.StarGold);
+                UiKit.Anchor(star.rectTransform, 0.35f, 0.12f, 0.43f, 0.46f);
+                var progress = kit.MakeText(_taskArea, $"{have}/{task.Cost} stars", UiKit.Label,
+                    new Color(UiKit.Ink.r, UiKit.Ink.g, UiKit.Ink.b, 0.75f), TextAnchor.MiddleLeft);
+                UiKit.Anchor(progress.rectTransform, 0.45f, 0.08f, 0.97f, 0.5f);
             }
         }
 
@@ -187,8 +160,8 @@ namespace Orcub.Game
             if (!Workshop.TryRestore(task.Id)) return;
             _fx?.Release();
             Haptics.Play(Haptics.Impact.Medium, 1f);
-            if (_props.TryGetValue(task.Id, out var img)) StartCoroutine(Pop(img.transform));
             Refresh();
+            StartCoroutine(Pop(_taskArea));
         }
 
         static IEnumerator Pop(Transform t)
@@ -196,8 +169,8 @@ namespace Orcub.Game
             float k = 0f;
             while (k < 1f)
             {
-                k += Time.unscaledDeltaTime / 0.4f;
-                float s = 1f + 0.18f * Mathf.Sin(Mathf.Clamp01(k) * Mathf.PI) * (1f - k * 0.4f);
+                k += Time.unscaledDeltaTime / 0.35f;
+                float s = 1f + 0.06f * Mathf.Sin(Mathf.Clamp01(k) * Mathf.PI);
                 t.localScale = new Vector3(s, s, 1f);
                 yield return null;
             }
