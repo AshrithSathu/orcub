@@ -41,7 +41,20 @@ namespace Orcub.Game
             return s;
         }
 
-        static LoaderScreen Build(Transform parent, UiKit kit)
+        /// <summary>
+        /// Level loader: the same screen while a generated level is prepared (at most ~1 s, then the board falls
+        /// back to a ready stand-in). Progress is driven by the caller via <see cref="SetProgress"/>.
+        /// </summary>
+        public static LoaderScreen ShowLevel(Transform parent, UiKit kit) =>
+            Build(parent, kit, "Building…", "Getting your next level ready", "");
+
+        public void SetProgress(float progress)
+        {
+            if (_fill != null) _fill.fillAmount = Mathf.Max(_fill.fillAmount, Mathf.Clamp01(progress));
+        }
+
+        static LoaderScreen Build(Transform parent, UiKit kit,
+            string titleText = "Connecting…", string subText = "Getting your save ready", string footText = "You can play offline")
         {
             var (canvas, safe) = UiKit.Screen("Loader", parent, 300);
             var s = canvas.gameObject.AddComponent<LoaderScreen>();
@@ -84,13 +97,13 @@ namespace Orcub.Game
             UiKit.Anchor(col, 0f, 0f, 1f, 1f);
             col.offsetMin = new Vector2(52f + 236f + 40f, 0f);
             col.offsetMax = new Vector2(-40f, 0f);
-            var title = kit.MakeText(col, "Connecting…", UiKit.Title, UiKit.Ink, TextAnchor.LowerLeft);
+            var title = kit.MakeText(col, titleText, UiKit.Title, UiKit.Ink, TextAnchor.LowerLeft);
             UiKit.Anchor(title.rectTransform, 0f, 0.5f, 1f, 0.86f);
-            var sub = kit.MakeText(col, "Getting your save ready", UiKit.Label, UiKit.Ink, TextAnchor.UpperLeft);
+            var sub = kit.MakeText(col, subText, UiKit.Label, UiKit.Ink, TextAnchor.UpperLeft);
             UiKit.Anchor(sub.rectTransform, 0f, 0.14f, 1f, 0.46f);
             AccountUi.Fit(sub, 864f - 368f, UiKit.Label, UiKit.Caption);
 
-            var foot = kit.MakeText(safe, "You can play offline", UiKit.Body, UiKit.Cream);
+            var foot = kit.MakeText(safe, footText, UiKit.Body, UiKit.Cream);
             UiKit.Anchor(foot.rectTransform, 0f, 0.19f, 1f, 0.24f);
             return s;
         }
@@ -112,7 +125,8 @@ namespace Orcub.Game
         {
             float t = 0f;
             // Local warm-up, spread over a couple of frames.
-            _ = LevelLibrary.Count;
+            _ = LevelLibrary.Pack;
+            LevelLibrary.Prefetch(Mathf.Max(0, Progress.HighestUnlocked));   // generated boards warm while we boot
             yield return null;
             _ = Lives.Count;
             _ = Progress.HighestUnlocked;

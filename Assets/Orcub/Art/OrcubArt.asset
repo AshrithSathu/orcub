@@ -116,6 +116,90 @@ MonoBehaviour:
   sheet: {fileID: 21300000, guid: 909851c911b954822a2acb3c66c05649, type: 3}
   homeHero: {fileID: 21300000, guid: ede971016fb184a9288413b42535090f, type: 3}
   chapterLamp: {fileID: 21300000, guid: 68b49d14f7f3e4bdfb04af62474f4958, type: 3}
+  mechRadii:
+  - 1
+  - 1.2
+  - 1.4
+  ratchetCcw:
+  - {fileID: 21300000, guid: 286d305c4e59d4fe2b524330a728aaea, type: 3}
+  - {fileID: 21300000, guid: 3bddfd0a36bb54441bc5b92f95899609, type: 3}
+  - {fileID: 21300000, guid: 96eb9a6fa63854e768c62458d2c33b5f, type: 3}
+  ratchetCw:
+  - {fileID: 21300000, guid: a437af0cd774e41b1b6124be0e1fc6a0, type: 3}
+  - {fileID: 21300000, guid: a726c477d29cb4516af23f26620d538c, type: 3}
+  - {fileID: 21300000, guid: bd723647a554e486b8c117605c3f1899, type: 3}
+  ringStamps:
+  - {fileID: 21300000, guid: 89c950a58f11f4ea386cb5560daa5e52, type: 3}
+  - {fileID: 21300000, guid: 2035709214b6b442fb4ddb8b6bbaa4e1, type: 3}
+  - {fileID: 21300000, guid: 1614ba577f51a4aabbc2094a0b64da2d, type: 3}
+  - {fileID: 21300000, guid: 5885ac4cbdaa148e9bde27f4dcef224a, type: 3}
+  - {fileID: 21300000, guid: b0421f2af5192417580d2dfd17794987, type: 3}
+  - {fileID: 21300000, guid: cb6ea0f823d2f42c88da2e7619b5bb06, type: 3}
+  - {fileID: 21300000, guid: d6c2b1917f00149a4b81d8f8f85cc75f, type: 3}
+  - {fileID: 21300000, guid: 118e08cbc35164f80ac18ed94f41bfe4, type: 3}
+  - {fileID: 21300000, guid: 507a31ef4be61446db8e8b33ddf4ef32, type: 3}
+  - {fileID: 21300000, guid: ec3087067dbdd49efb840bdde7b90016, type: 3}
+  - {fileID: 21300000, guid: 3bd1680b12469496881bb32604904650, type: 3}
+  - {fileID: 21300000, guid: 66ebddaa24f9f4e83bde15af74a63228, type: 3}
+  - {fileID: 21300000, guid: 3c43ab19bb7114cf691175cdd8b993ba, type: 3}
+  - {fileID: 21300000, guid: 82723732e33f64679b0013077ce7ecd0, type: 3}
+  - {fileID: 21300000, guid: ad24cbb6178174daea65b6990d3d5c93, type: 3}
+  - {fileID: 21300000, guid: 7351d986d99c34c6da1072663a36f065, type: 3}
+  - {fileID: 21300000, guid: d59ba1e9b23a14e58b05889ec68899be, type: 3}
+  - {fileID: 21300000, guid: 964f6d53aaa724ed88048287c2976907, type: 3}
+  clampStamps:
+  - {fileID: 21300000, guid: da9f3204ff91049ed83a8c27dd09e92d, type: 3}
+  - {fileID: 21300000, guid: 74ec521604c424ffa9e5873fbe42e5c5, type: 3}
+  - {fileID: 21300000, guid: 071f21507000d46b0a198dda5cfddd04, type: 3}
+  - {fileID: 21300000, guid: 82533388a88244489bff754db095ad73, type: 3}
+  - {fileID: 21300000, guid: d51b7ec2d30e144f2bc0e9d8a1dc1c58, type: 3}
+  - {fileID: 21300000, guid: 89afddf62c09b4b899a0e4822cf01dcc, type: 3}
+  rustPatchA:
+  - {fileID: 21300000, guid: fd1ef4566df6549cca799ef8a23ebf5a, type: 3}
+  - {fileID: 21300000, guid: 0c6b6f394c03b48ee9c284320d2d2d11, type: 3}
+  - {fileID: 21300000, guid: 449c2d58303a3463ba1223350eab6c89, type: 3}
+  rustPatchB:
+  - {fileID: 21300000, guid: 1148e1f2aa9844c8ea720aaaf6a8ad27, type: 3}
+  - {fileID: 21300000, guid: dc93bbd264f534b63affb38783f11b72, type: 3}
+  - {fileID: 21300000, guid: 5ba3173401df14b19ad439f72eef3a78, type: 3}
+  rustSeized:
+  - {fileID: 21300000, guid: 0cbbd58ee889a4799a82bd65b803dfbb, type: 3}
+  - {fileID: 21300000, guid: 6b2228b1bc8d745aaa7596fe4bccb940, type: 3}
+  - {fileID: 21300000, guid: 59a354ad04d1944249b4ba9b7d9b7b3f, type: 3}
+  linkedMark: {fileID: 21300000, guid: b47c3192649fa4f7aa0715982757369c, type: 3}
+  key: {fileID: 21300000, guid: bb90aa6c6b2b7434395edd0bdc44f18e, type: 3}
+  padlockLocked: {fileID: 21300000, guid: f1270678ea11944b69986a73e698e3c6, type: 3}
+  padlockUnlocked: {fileID: 21300000, guid: bf6f06d150d0545e89cb209769cf3dd6, type: 3}
+  oilCan: {fileID: 21300000, guid: 5c83ea812bc6e46319903affc21c160a, type: 3}
+  movesBadge: {fileID: 21300000, guid: 74f0e55116d7a4d9db0b29c2258451ac, type: 3}
+  idBadge: {fileID: 21300000, guid: c7ad29711a23f42cc986ee9a468e87ba, type: 3}
+  springClosed: {fileID: 21300000, guid: 657a3eb8b63b04f79b123d93d5fba361, type: 3}
+  springOpen: {fileID: 21300000, guid: afb8a55f4796d4920ae66b710ca8113e, type: 3}
+  springBadge: {fileID: 21300000, guid: f87f0daab03044288a35a944b0cc10fd, type: 3}
+  clayIntact: {fileID: 21300000, guid: dfe4ba52e4057417fbf39a535ed36790, type: 3}
+  clayCracked: {fileID: 21300000, guid: f4cf8e22a16f54cdbb3dc9cb0564f8a6, type: 3}
+  clayIntactLight: {fileID: 21300000, guid: cb004e629e10540c0a1ae9645e16a7c1, type: 3}
+  clayCrackedLight: {fileID: 21300000, guid: 0582fe197ba1d4b05a74c98954188e7a, type: 3}
+  bossBadge: {fileID: 21300000, guid: 20b2175a189b141949bf281b7c77c252, type: 3}
+  goldBar: {fileID: 21300000, guid: ffd32f3cdd2b9484fa40d546577d8d07, type: 3}
+  introKeys:
+  - ratchet
+  - linked
+  - colour_clamp
+  - key_padlock
+  - rust_oil
+  - spring
+  - clay
+  - mix
+  introIcons:
+  - {fileID: 21300000, guid: 60f3a4dd2b6a94e3d88825aae5b36229, type: 3}
+  - {fileID: 21300000, guid: f7a85cae37d654abf95fcaac19dfe93f, type: 3}
+  - {fileID: 21300000, guid: 3173190b08a47420fa48e854f4d5f073, type: 3}
+  - {fileID: 21300000, guid: 04768470b8219471182d994e09bfbfc1, type: 3}
+  - {fileID: 21300000, guid: fa7678e3524da4dc6a9920788f3d1053, type: 3}
+  - {fileID: 21300000, guid: 907634f0ca3ab456eb07660088cfa47e, type: 3}
+  - {fileID: 21300000, guid: 417125912d17a43c2ad5b65cf4336b8b, type: 3}
+  - {fileID: 21300000, guid: 5d17b7eca61454db8b2878ff182f975d, type: 3}
   backgroundSprite: {fileID: 21300000, guid: df0554ba07329439e838f42117425bde, type: 3}
   masterVolume: 0.9
   sfxTick: {fileID: 8300000, guid: 39b060b59b52e4aa4a82be142c4cb7cc, type: 3}

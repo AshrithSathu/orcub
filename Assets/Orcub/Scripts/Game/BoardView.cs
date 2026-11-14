@@ -12,6 +12,9 @@ namespace Orcub.Game
     ///  - tap a ring that is not locked   -> spin it a fixed step
     ///  - touch a locked ring             -> it shakes and its holders flash
     ///  - drag / tap a free ring          -> pull it out of the board
+    /// Gear mechanics (README in ArtSource/mechanics): the model's CompleteMove() runs exactly once per counted
+    /// gesture (drag on release, tap when its spin ends, locked touch at once); a ratchet turned the wrong way is
+    /// refused with a shake and costs nothing; Undo rebuilds every mechanic view from the restored model.
     /// </summary>
     [ExecuteAlways]
     public sealed class BoardView : MonoBehaviour
@@ -67,6 +70,15 @@ namespace Orcub.Game
         readonly Dictionary<int, float> _spins = new Dictionary<int, float>();
         readonly List<Link> _released = new List<Link>();
         readonly Dictionary<int, float> _turned = new Dictionary<int, float>(); // unwrapped rotation per ring, for ratchet detents
+        readonly Dictionary<int, GestureTracker> _spinMoves = new Dictionary<int, GestureTracker>();   // tap spins: move completes when they stop
+        GestureTracker _gesture;   // the drag in progress
+        readonly List<RingMechanics> _mechs = new List<RingMechanics>();
+        readonly List<(Link link, int passes, bool inGap)> _probe = new List<(Link, int, bool)>();
+        float _refusedAt = -10f, _clampRefusedAt = -10f;
+        readonly HashSet<string> _toldOnce = new HashSet<string>();
+        LevelData _fallbackData;
+        Coroutine _loading;
+        LoaderScreen _loader;
         Transform _content;
         SpriteRenderer _glow;
         SpriteRenderer _backdrop;
@@ -162,7 +174,7 @@ namespace Orcub.Game
         // ------------------------------------------------------------------ screens
 
         /// <summary>The next level the player hasn't beaten (home's Play button).</summary>
-        static int Frontier => Mathf.Clamp(Progress.HighestUnlocked, 0, Mathf.Max(0, LevelLibrary.Count - 1));
+        static int Frontier => Mathf.Max(0, Progress.HighestUnlocked);   // infinite saga: no upper bound
 
         void ShowHome()
         {
@@ -173,6 +185,7 @@ namespace Orcub.Game
             _map.Hide();
             _chapters.Hide();
             _home.Show();
+            LevelLibrary.Prefetch(Frontier);   // warm the next generated boards before Play is tapped
         }
 
         /// <summary>Home → All levels (chapter cards) → one chapter's map → level-start sheet → play.</summary>
@@ -218,7 +231,7 @@ namespace Orcub.Game
 
         void DevJump(int delta)
         {
-            int target = Mathf.Clamp(_levelIndex + delta, 0, Mathf.Max(0, LevelLibrary.Count - 1));
+            int target = Mathf.Max(0, _levelIndex + delta);
             Progress.HighestUnlocked = target;   // dev: unlock as you skip so the map follows
             LoadLevel(target);
         }
@@ -253,10 +266,30 @@ namespace Orcub.Game
 
         public void Build() => Build(Frontier);
 
-        public void Build(int index)
+        public void Build(int index) => Build(index, ReadyData(index, _plan?.Variant ?? 0));
+
+        /// <summary>
+        /// Curated data, or a generated board that is already prepared. Never blocks on the infinite worker:
+        /// a cold generated index (edit-mode preview, splash backdrop) shows its curated stand-in instead.
+        /// </summary>
+        static LevelData ReadyData(int index, int variant)
+        {
+            if (index < LevelLibrary.CuratedCount) return LevelLibrary.Get(index, variant);
+            if (LevelLibrary.TryGetVariants(index, out var choices) && choices != null && choices.Length > 0)
+                return choices[Mathf.Clamp(variant, 0, choices.Length - 1)];
+            return LevelLibrary.Get(FallbackIndex(index));
+        }
+
+        /// <summary>
+        /// Ready-cached stand-in when a generated board isn't prepared within the loader ceiling: the curated
+        /// chapter-10 slot in the same position (all seven mechanics mixed; slot 20 is that chapter's boss).
+        /// </summary>
+        public static int FallbackIndex(int index) => LevelLibrary.CuratedCount - 20 + ((index % 20) + 20) % 20;
+
+        void Build(int index, LevelData data)
         {
             _levelIndex = index;
-            _levelData = LevelLibrary.Get(_levelIndex, _plan?.Variant ?? 0);
+            _levelData = data;
             var def = _levelData != null ? _levelData.ToDef() : Levels.Basic10();
             _def = def;
             Build(def);
@@ -273,23 +306,120 @@ namespace Orcub.Game
             UpdateHud();
         }
 
-        /// <summary>Jump to a level (wraps), save progress, and drop the new board in.</summary>
+        /// <summary>Hard ceiling on the loader before a ready curated stand-in is used (INFINITE.md).</summary>
+        const float LoaderCeiling = 1f;
+
+        /// <summary>
+        /// Jump to a level (the saga is infinite: no wrap), and drop the new board in. Generated boards are
+        /// prepared off the main thread first; the loader shows for at most ~1 s, then a ready stand-in is used.
+        /// </summary>
         public void LoadLevel(int index)
         {
-            int count = Mathf.Max(1, LevelLibrary.Count);
-            _levelIndex = ((index % count) + count) % count;
+            index = Mathf.Max(0, index);
             EndAttempt(AttemptOutcome.Quit);   // restart / skip before a result counts as a quit
             _plan = null;
-            if (Application.isPlaying) BeginAttempt();
-            Build(_levelIndex);
-            if (Application.isPlaying)
+            _levelIndex = index;
+            if (!Application.isPlaying) { Build(index); return; }
+            if (_loading != null) { StopCoroutine(_loading); _loading = null; }   // a newer request wins
+            HideLevelLoader();
+            if (LevelLibrary.TryGetVariants(index, out var ready) && ready != null && ready.Length > 0) StartLevel(index, null);
+            else _loading = StartCoroutine(LoadWhenReady(index));
+        }
+
+        System.Collections.IEnumerator LoadWhenReady(int index)
+        {
+            _inputLocked = true;
+            var task = LevelLibrary.PrepareAsync(index);
+            float start = Time.unscaledTime;
+            while (!task.IsCompleted && Time.unscaledTime - start < LoaderCeiling)
             {
-                _rules = LevelRules.For(_def, tutorial: _levelIndex < 3, extraMoves: _plan.ExtraMoves);
-                UpdateHud();
-                HideRingsForIntro();
-                DropInRings();
-                if (_plan.ExtraMoves > 0 || _plan.FreeHintGlow) StartCoroutine(AnnounceAssist(_plan));
+                float t = Time.unscaledTime - start;
+                if (_loader == null && t > 0.12f) _loader = LoaderScreen.ShowLevel(transform, _kit);   // no flash for fast boards
+                if (_loader != null) _loader.SetProgress(Mathf.Clamp01(t / LoaderCeiling));
+                yield return null;
             }
+            HideLevelLoader();
+            _loading = null;
+            if (index != _levelIndex) yield break;   // stale request
+            bool ok = task.Status == System.Threading.Tasks.TaskStatus.RanToCompletion && task.Result != null && task.Result.Length > 0;
+            if (!ok)
+            {
+                ClientGateway.Track("level_fallback", new { LevelIndex = index, Fallback = FallbackIndex(index), Faulted = task.IsFaulted });
+                StartLevel(index, LevelLibrary.Get(FallbackIndex(index)));
+            }
+            else StartLevel(index, null);
+        }
+
+        void HideLevelLoader()
+        {
+            if (_loader != null) Destroy(_loader.gameObject);
+            _loader = null;
+        }
+
+        /// <param name="fallback">Curated stand-in when the generated board wasn't ready in time; null = the real board.</param>
+        void StartLevel(int index, LevelData fallback)
+        {
+            _fallbackData = fallback;
+            BeginAttempt(fallback?.ToDef());
+            Build(index, fallback ?? LevelLibrary.Get(index, _plan.Variant));
+            _rules = LevelRules.For(_def, tutorial: _levelIndex < 3, extraMoves: _plan.ExtraMoves);
+            UpdateHud();
+            HideRingsForIntro();
+            DropInRings();
+            LevelLibrary.Prefetch(index + 1);   // keep the next window warm
+            StartCoroutine(AfterLanding(_plan));
+        }
+
+        // ------------------------------------------------------------------ "New gear!" intro
+
+        /// <summary>Intro key of this level's tutorial ("ratchet", ... "mix"), or null.</summary>
+        string IntroKey
+        {
+            get
+            {
+                var raw = _levelData?.mechanic_intro;
+                if (string.IsNullOrEmpty(raw) || _fallbackData != null || _levelIndex >= LevelLibrary.CuratedCount) return null;
+                int dot = raw.LastIndexOf('.');
+                return dot >= 0 ? raw.Substring(dot + 1) : raw;
+            }
+        }
+
+        /// <summary>What the pause card's "i" re-opens: this board's mechanic, or "mix" when it has several.</summary>
+        string BoardIntroKey
+        {
+            get
+            {
+                if (IntroKey != null) return IntroKey;
+                var m = _def?.Mechanics;
+                if (m == null || m.Length == 0) return null;
+                return m.Length == 1 && _kit.Art.IntroIcon(m[0]) != null ? m[0] : "mix";
+            }
+        }
+
+        System.Collections.IEnumerator AfterLanding(AttemptPlan plan)
+        {
+            int level = _levelIndex;
+            var model = _model;
+            while (_inputLocked) yield return null;   // after the rings have landed
+            if (level != _levelIndex || model != _model || _levelOver || _hud == null) yield break;
+            string key = IntroKey;
+            if (key != null && !MechanicIntro.Seen(key))
+            {
+                _inputLocked = true;
+                bool closed = false;
+                ShowIntro(key, () => closed = true);
+                while (!closed && model == _model) yield return null;
+                MechanicIntro.MarkSeen(key);
+                if (model == _model) _inputLocked = false;
+            }
+            if (model != _model) yield break;
+            if (plan.ExtraMoves > 0 || plan.FreeHintGlow) yield return AnnounceAssist(plan);
+        }
+
+        void ShowIntro(string key, Action onClose)
+        {
+            var info = MechanicIntro.For(key, _def);
+            _hud.ShowMechanicIntro(_kit.Art.IntroIcon(key), info, onClose);
         }
 
         void UpdateHud()
@@ -299,6 +429,7 @@ namespace Orcub.Game
                 $"{_levelData.rings.Length} rings · {_levelData.links.Length} holders · depth {_levelData.depth} · " +
                 $"best {_rules.MinMoves} · 3★ ≤{_rules.ThreeStar} · 2★ ≤{_rules.TwoStar} · limit {_rules.MoveLimit} · diff {_levelData.difficulty:F1}";
             _hud.SetLevel(_levelIndex + 1, info);
+            _hud.SetBoss(_def != null && _def.IsBoss);
             _hud.SetMoves(MovesLeft);
             var colours = new List<Color>();
             foreach (var r in _model.Rings) colours.Add(art.RingColor(r.Color));
@@ -315,6 +446,11 @@ namespace Orcub.Game
             _model.LinkReleased += OnLinkReleased;
             _model.RingRemoved += r => _hud?.MarkGoalFreed(r.Id);
             _model.Solved += OnSolved;
+            _model.KeyCollected += OnKeyCollected;
+            _model.OilCollected += OnOilCollected;
+            _model.RingFrozen += OnRingFrozen;
+            _model.ClampReclosed += OnClampReclosed;
+            _toldOnce.Clear();
             BuildViews();
         }
 
@@ -329,11 +465,12 @@ namespace Orcub.Game
 
             foreach (var ring in _model.Rings)
             {
-                if (ring.Removed) { _rings.Add(null); continue; }
+                if (ring.Removed) { _rings.Add(null); _mechs.Add(null); continue; }
                 var view = new GameObject().AddComponent<RingView>();
                 view.transform.SetParent(_content, false);
                 view.Init(ring, art);
                 _rings.Add(view);
+                _mechs.Add(RingMechanics.Attach(view, ring, _model, art));   // mechanic pieces, from current state
             }
             foreach (var link in _model.Links)
             {
@@ -359,8 +496,10 @@ namespace Orcub.Game
         {
             _spins.Clear();
             _spinSpeed.Clear();
+            _spinMoves.Clear();
             _turned.Clear();
             _rings.Clear();
+            _mechs.Clear();
             _holders.Clear();
             _active = -1;
             _mode = DragMode.None;
@@ -460,8 +599,9 @@ namespace Orcub.Game
             else if (_model.CanRotate(_active))
             {
                 _mode = DragMode.Rotate;
-                _spins.Remove(_active);
+                EndSpin(_active);                  // a tap spin still running ends its own move first
                 _pendingSnap = _model.Capture();   // pushed onto the undo stack if this becomes a move
+                _gesture = new GestureTracker(_model, _active);
                 _fx?.Pick(ring.Radius);
             }
             else
@@ -472,9 +612,12 @@ namespace Orcub.Game
                 _fx?.Locked();
                 foreach (var h in view.OwnedHolders)
                     if (_model.Links[h.LinkId].Active) h.Flash();
-                // Touching a ring that is still holding another is a wrong move: it costs a move too.
+                ExplainLocked(_active);
+                // Touching a ring that is still held (by a holder, padlock, rust or its locked gear partner)
+                // is a wrong move: it costs a move too, and it is a counted gesture for the rules.
                 _lockedTouches++;
                 CountMove();
+                _model.CompleteMove();
                 FinishFeature();
                 _failCheckAt = Time.time + 0.45f;
             }
@@ -494,8 +637,14 @@ namespace Orcub.Game
                     float angle = PuzzleModel.AngleOf(p - ring.Center);
                     float delta = Mathf.DeltaAngle(_lastAngle, angle);
                     _lastAngle = angle;
-                    _rotated += Mathf.Abs(delta);
-                    TurnRing(_active, delta, delta / dt);
+                    var outcome = TurnRing(_active, delta, delta / dt, _gesture);
+                    _rotated = _gesture.Rotated;
+                    // ratchet: never silently reverse the drag; refuse with a shake and charge nothing
+                    if (outcome == RotateOutcome.WrongDirection && _gesture.WrongTurn > 5f && Time.time - _refusedAt > 0.6f)
+                    {
+                        _gesture.ClearWrongTurn();
+                        RefuseTurn(_active);
+                    }
                     break;
                 case DragMode.Pull:
                     view.SetPullOffset(p - _pressWorld);
@@ -518,12 +667,15 @@ namespace Orcub.Game
                     {
                         StartSmartSpin(_active);
                         CountMove();
+                        _spinMoves[_active] = new GestureTracker(_model, _active);   // completes when the spin stops
                     }
-                    else if (_rotated >= 8f)
+                    else if (_gesture != null && _gesture.Counts)
                     {
                         CountMove();
+                        _gesture.Complete();       // exactly once per counted gesture
                         _failCheckAt = Time.time + 0.15f;
                     }
+                    _gesture = null;
                     break;
                 case DragMode.Pull:
                     view.IsHeld = false;
@@ -554,16 +706,11 @@ namespace Orcub.Game
                 float step = Mathf.Sign(remaining) * Mathf.Min(Mathf.Abs(remaining), speed * dt);
                 if (TurnRing(id, step, step / Mathf.Max(dt, 1e-4f)) != RotateOutcome.Rotated)
                 {
-                    _spins.Remove(id);
-                    _failCheckAt = Time.time + 0.15f;
+                    EndSpin(id);
                     continue;
                 }
                 remaining -= step;
-                if (Mathf.Abs(remaining) < 0.01f)
-                {
-                    _spins.Remove(id);
-                    _failCheckAt = Time.time + 0.15f;
-                }
+                if (Mathf.Abs(remaining) < 0.01f) EndSpin(id);
                 else _spins[id] = remaining;
             }
         }
@@ -571,6 +718,54 @@ namespace Orcub.Game
         // ------------------------------------------------------------------ moves, win, fail
 
         int MovesLeft => _rules.MoveLimit + _bonusMoves - _movesUsed;
+
+        /// <summary>Stops a spin; a tap spin's counted move completes here (spring timers, rust deadlines).</summary>
+        void EndSpin(int id)
+        {
+            if (!_spins.Remove(id) && !_spinMoves.ContainsKey(id)) return;
+            _spinSpeed.Remove(id);
+            if (_spinMoves.TryGetValue(id, out var g)) { _spinMoves.Remove(id); g.Complete(); }
+            _failCheckAt = Time.time + 0.15f;
+        }
+
+        void RefuseTurn(int id)
+        {
+            _refusedAt = Time.time;
+            _fx?.Refused();
+            int mate = _model.LinkedPartner(id);
+            foreach (int r in new[] { id, mate })
+            {
+                if (r < 0 || _rings[r] == null) continue;
+                _rings[r].Shake();
+                _mechs[r]?.Refuse();
+            }
+            TellOnce("ratchet", "This gear only turns one way");
+        }
+
+        /// <summary>Extra cues on a locked touch: which mechanic is holding the ring.</summary>
+        void ExplainLocked(int id)
+        {
+            var ring = _model.Rings[id];
+            int mate = -1;
+            foreach (var r in _model.Rings) if (r.Id != id && r.GearGroup != 0 && r.GearGroup == ring.GearGroup && !r.Removed) mate = r.Id;
+            if (_model.IsPadlocked(id)) { _mechs[id]?.Nudge(); TellOnce("padlock", "Free the key to unlock"); }
+            else if (ring.Frozen) { _mechs[id]?.Nudge(); TellOnce("frozen", "Rusted solid"); }
+            else if (mate >= 0 && _rings[mate] != null && !_model.CanRotate(mate))
+            {
+                // its gear partner is the one held: show that ring too
+                _rings[mate].Shake();
+                foreach (var h in _rings[mate].OwnedHolders)
+                    if (_model.Links[h.LinkId].Active) h.Flash();
+                _mechs[mate]?.Nudge();
+                TellOnce("linked", "Its gear partner is held");
+            }
+        }
+
+        void TellOnce(string key, string message)
+        {
+            if (_hud == null || !_toldOnce.Add(key)) return;
+            _hud.ShowToast(message);
+        }
 
         void CountMove()
         {
@@ -588,24 +783,49 @@ namespace Orcub.Game
         /// </summary>
         void StartSmartSpin(int id)
         {
-            var ring = _model.Rings[id];
-            float delta = tapSpin, best = float.MaxValue;
-            foreach (var linkId in ring.Incoming)
-            {
-                var l = _model.Links[linkId];
-                if (!l.Active) continue;
-                float reach = PuzzleModel.GapHalfAngle - l.ClampHalfAngle;
-                float d = Mathf.DeltaAngle(ring.GapAngle, l.ClampAngle);
-                float need = Mathf.Max(0f, Mathf.Abs(d) - reach) + 3f;
-                if (need < best)
-                {
-                    best = need;
-                    delta = Mathf.Sign(d) * need;
-                }
-            }
+            float delta = SmartSpinDelta(_model, id, tapSpin);
             _spins[id] = delta;
             // Short hops are quick, long ones a touch slower but never sluggish.
             _spinSpeed[id] = Mathf.Max(tapSpinSpeed, Mathf.Abs(delta) / 0.45f);
+        }
+
+        /// <summary>
+        /// Shortest turn that makes progress on this ring or its gear partner, respecting both ratchets:
+        /// reach the nearest clamp the ring can open; a clay coat gets its second pass in the same spin (one
+        /// gesture, like the solver); a clamp already in the gap needs a full turn to leave and re-enter.
+        /// </summary>
+        public static float SmartSpinDelta(PuzzleModel m, int id, float idle)
+        {
+            int mate = m.LinkedPartner(id);
+            bool Allowed(float d) => m.DirectionAllowed(id, d) && (mate < 0 || m.DirectionAllowed(mate, -d));
+            float delta = 0f, best = float.MaxValue;
+            foreach (int r in new[] { id, mate })
+            {
+                if (r < 0) continue;
+                var ring = m.Rings[r];
+                float sign = r == id ? 1f : -1f;   // the partner turns the opposite way
+                foreach (var linkId in ring.Incoming)
+                {
+                    var l = m.Links[linkId];
+                    if (!l.Active || (l.Tinted && l.Color != ring.Color)) continue;
+                    float reach = PuzzleModel.GapHalfAngle - l.ClampHalfAngle;
+                    float d = Mathf.DeltaAngle(ring.GapAngle, l.ClampAngle);
+                    float turn;
+                    if (l.InGap) turn = (d >= 0f ? 1f : -1f) * 360f;
+                    else
+                    {
+                        turn = Mathf.Sign(d) * (Mathf.Max(0f, Mathf.Abs(d) - reach) + 3f);
+                        if (l.Clay && l.Passes == 0) turn += Mathf.Sign(turn) * 360f;
+                    }
+                    turn *= sign;
+                    if (!Allowed(turn)) turn -= Mathf.Sign(turn) * (l.Clay && l.Passes == 0 ? 720f : 360f);
+                    if (!Allowed(turn) || Mathf.Abs(turn) >= best) continue;
+                    best = Mathf.Abs(turn);
+                    delta = turn;
+                }
+            }
+            if (best < float.MaxValue) return delta;
+            return Allowed(idle) ? idle : -idle;
         }
 
         bool HasActiveLinks()
@@ -669,7 +889,9 @@ namespace Orcub.Game
 
         void ShowPauseCard()
         {
+            string intro = BoardIntroKey;
             _hud.ShowPause(
+                onInfo: intro == null ? null : (Action)(() => ShowIntro(intro, ShowPauseCard)),
                 onRestart: () => _hud.ShowLifeConfirm("Restart level?", "Restart",
                     onConfirm: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: ShowPauseCard),
                     onCancel: ShowPauseCard),
@@ -782,14 +1004,15 @@ namespace Orcub.Game
         /// Freezes this attempt's plan: a player who keeps losing a level gets a few extra moves and,
         /// after more losses, a free hint. Never fewer moves than the level's authored budget.
         /// </summary>
-        void BeginAttempt()
+        void BeginAttempt(LevelDef fallback = null)
         {
             _attemptStart = _lastGesture = Time.unscaledTime;
             _attemptBoosters = _attemptContinues = _lockedTouches = 0;
             _featurePending = false; _gestures = 0;
             _adaptive ??= new Adaptive();
             ClientGateway.Configure?.Invoke(_adaptive);
-            _plan = _adaptive.BeginAttempt(_levelIndex);
+            // a curated stand-in (generated board not ready in time) is recorded against this index as given
+            _plan = fallback != null ? _adaptive.BeginAttempt(_levelIndex, fallback) : _adaptive.BeginAttempt(_levelIndex);
             _attemptOpen = true;
             ClientGateway.Track("level_start", new { LevelIndex = _levelIndex, Variant = _plan.Variant, Plan = new { variant = _plan.Variant, extraMoves = _plan.ExtraMoves, freeHintGlow = _plan.FreeHintGlow, reason = _plan.Reason, moveLimit = _plan.MoveLimit } });
         }
@@ -858,16 +1081,41 @@ namespace Orcub.Game
             _fx?.Cleared();
             _winStars = _rules.StarsFor(_movesUsed);
             Progress.RecordWin(_levelIndex, _winStars);
+            LevelLibrary.Prefetch(_levelIndex + 1);   // the frontier moved: warm the next boards
             _account.RecordWin(_levelIndex + 1);   // may wait for the tracking pre-prompt
             EndAttempt(AttemptOutcome.Win);
             _winAt = Time.time + 1.0f;   // let the last ring fly off and the chime ring first
         }
 
         /// <summary>Rotates through the model and fires a ratchet tick for every gear detent crossed.</summary>
-        RotateOutcome TurnRing(int id, float delta, float speed)
+        RotateOutcome TurnRing(int id, float delta, float speed, GestureTracker gesture = null)
         {
-            var outcome = _model.Rotate(id, delta);
+            // watch clamps on this ring and its gear partner: colour refusals and clay cracks
+            _probe.Clear();
+            int mate = _model.LinkedPartner(id);
+            foreach (int r in new[] { id, mate })
+                if (r >= 0)
+                    foreach (int linkId in _model.Rings[r].Incoming)
+                    {
+                        var l = _model.Links[linkId];
+                        if (l.Active && (l.Clay || l.Tinted)) _probe.Add((l, l.Passes, l.InGap));
+                    }
+            var outcome = gesture != null ? gesture.Turn(delta) : _model.Rotate(id, delta);
             if (outcome != RotateOutcome.Rotated) return outcome;
+            foreach (var (l, passes, inGap) in _probe)
+            {
+                if (!l.Active) continue;
+                bool mismatch = l.Tinted && l.Color != _model.Rings[l.Target].Color;
+                if (mismatch && l.InGap && !inGap && Time.time - _clampRefusedAt > 0.4f)
+                {   // the gap passed a colour clamp that isn't this ring's colour: a gentle "no"
+                    _clampRefusedAt = Time.time;
+                    if (_holders[l.Id] != null) _holders[l.Id].Refuse();
+                    _fx?.ClampRefused();
+                    TellOnce("colour", "This clamp opens only for its own colour");
+                }
+                if (l.Clay && l.Passes > passes) _fx?.Cracked();
+            }
+            if (mate >= 0) _turned[mate] = (_turned.TryGetValue(mate, out float m0) ? m0 : 0f) - delta;
             var ring = _model.Rings[id];
             _turned.TryGetValue(id, out float before);
             float after = before + delta;
@@ -888,8 +1136,9 @@ namespace Orcub.Game
 
         void PullOut(int id, Vector2 dir, float speed)
         {
+            if (!_model.IsFree(id)) return;
+            EndSpin(id);   // a tap spin that freed this ring finishes its move before the pull
             if (!_model.TryRemove(id)) return;
-            _spins.Remove(id);
             _rings[id].FreeHint = false;
             _rings[id].FlyAway(dir, speed);
             _fx?.PullOut(_model.Rings[id].Radius);
@@ -911,6 +1160,37 @@ namespace Orcub.Game
                 _rings[id].Pulse();
                 _rings[id].FreeHint = true;
             }
+        }
+
+        void OnKeyCollected(Ring carrier)
+        {
+            _fx?.Unlocked();
+            foreach (var r in _model.Rings)
+                if (r.PadlockId == carrier.KeyId && !r.Removed && _rings[r.Id] != null) _rings[r.Id].Pulse();
+        }
+
+        void OnOilCollected(Ring carrier)
+        {
+            _fx?.Oiled();
+            foreach (var r in _model.Rings)
+                if (r.RustOilId == carrier.OilId && !r.Removed && !r.Frozen && _rings[r.Id] != null) _rings[r.Id].Pulse();
+        }
+
+        void OnRingFrozen(Ring ring)
+        {
+            _fx?.Frozen();
+            if (_rings[ring.Id] != null) _rings[ring.Id].Shake();
+            bool stuck = false;
+            foreach (int id in ring.Incoming) stuck |= _model.Links[id].Active;
+            if (stuck) TellOnce("frozen", "Rusted solid! Undo to try again");
+        }
+
+        void OnClampReclosed(Link link)
+        {
+            if (_holders[link.Id] != null) _holders[link.Id].Reclose();
+            _fx?.Snapped();
+            foreach (int id in new[] { link.Target, link.Owner })
+                if (_rings[id] != null && !_model.IsFree(id)) _rings[id].FreeHint = false;
         }
 
         /// <summary>Closest ring whose tube (or interior) is under the pointer.</summary>
@@ -937,15 +1217,26 @@ namespace Orcub.Game
         // ------------------------------------------------------------------ debug / demo
 
         /// <summary>
-        /// Plays the board by itself through the same paths a tap uses: pull out any free ring, otherwise
-        /// spin a ring that can turn and still has clamps on it. Used to smoke-test views and animations.
+        /// Plays the board by itself through the same paths the player uses: pull out every free ring, then make
+        /// the gesture an exact search says is best (a full sweep in an allowed direction, a double sweep for a
+        /// fresh clay coat), counted and completed like a tap. Works on mechanic boards (ratchets, keys, rust
+        /// deadlines, springs). Used to smoke-test views and to confirm boards are completable in play mode.
         /// </summary>
         public void StartAutoSolve(float stepDelay = 0.6f) => StartCoroutine(AutoSolve(stepDelay));
 
+        /// <summary>Last autosolve result for tools: null while running, then "solved" or the reason it stopped.</summary>
+        public string AutoSolveResult { get; private set; }
+
         System.Collections.IEnumerator AutoSolve(float stepDelay)
         {
-            while (_inputLocked) yield return null;
+            AutoSolveResult = null;
+            while (_inputLocked || (_hud != null && _hud.PopupOpen))
+            {
+                if (_hud != null && _hud.PopupOpen && !_levelOver) _hud.ClosePopupAndNotify();   // e.g. the intro card
+                yield return null;
+            }
             var model = _model;
+            var memo = new Dictionary<string, int>();
             while (model == _model && !_model.IsSolved)
             {
                 int pick = -1;
@@ -955,19 +1246,20 @@ namespace Orcub.Game
                 {
                     Vector2 dir = _model.Rings[pick].Center - _bounds.center;
                     PullOut(pick, dir.sqrMagnitude < 0.01f ? Vector2.up : dir, 10f);
-                    yield return new WaitForSeconds(stepDelay);
+                    yield return new WaitForSeconds(stepDelay * 0.5f);
                     continue;
                 }
-                for (int i = 0; i < _model.Rings.Count && pick < 0; i++)
-                {
-                    if (!_model.CanRotate(i) || _spins.ContainsKey(i)) continue;
-                    foreach (var id in _model.Rings[i].Incoming)
-                        if (_model.Links[id].Active) { pick = i; break; }
-                }
-                if (pick < 0) yield break; // stuck (should not happen on a solvable board)
-                _spins[pick] = tapSpin;
+                var (ring, angle) = AutoPlan.Next(_def, _model, memo);
+                if (ring < 0) { AutoSolveResult = "stuck at move " + _model.Moves; Debug.LogWarning("[Orcub] autosolve: " + AutoSolveResult); yield break; }
+                _pendingSnap = _model.Capture();
+                _spins[ring] = angle;
+                _spinSpeed[ring] = 900f;
+                CountMove();
+                _spinMoves[ring] = new GestureTracker(_model, ring);
+                while (_spins.ContainsKey(ring) && model == _model) yield return null;
                 yield return new WaitForSeconds(stepDelay);
             }
+            if (model == _model) AutoSolveResult = "solved in " + _model.Moves + " moves";
         }
 
         // ------------------------------------------------------------------ framing

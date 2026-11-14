@@ -18,7 +18,7 @@ namespace Orcub.EditorTools
     {
         const BindingFlags Flags = BindingFlags.NonPublic | BindingFlags.Instance;
 
-        struct Step { public float Wait; public Action Do; public string Shot; }
+        struct Step { public float Wait; public Action Do; public string Shot; public Func<bool> Until; }
 
         static readonly Queue<Step> Steps = new Queue<Step>();
         static double _next;
@@ -156,12 +156,214 @@ namespace Orcub.EditorTools
         }
 
         static void Add(float wait, Action act, string shot) => Steps.Enqueue(new Step { Wait = wait, Do = act, Shot = shot });
+        static void AddUntil(Func<bool> until, Action act = null) => Steps.Enqueue(new Step { Wait = 0f, Do = act, Until = until });
+
+        // ------------------------------------------------------------------ gear mechanics
+
+        /// <summary>One board per mechanic (chapter tutorial with its intro card + a mid-chapter level), states.</summary>
+        static readonly (int index, string name)[] MechanicLevels =
+        {
+            (20, "ratchet"), (40, "linked"), (60, "colour"), (80, "key"), (100, "rust"), (120, "spring"), (140, "clay"), (160, "mix"),
+        };
+
+        [MenuItem("Orcub/Capture Mechanics")]
+        static void MenuMechanics() => RunMechanics(Path.GetFullPath("ArtSource/.automation/shots"));
+
+        /// <summary>
+        /// Mechanic captures at the Game view's size (set it to iPhone 12 Pro, 1170x2532): every chapter's
+        /// "New gear!" card, mid-chapter boards, live states (refusal, open spring, cracked clay, unlocked padlock,
+        /// spreading/frozen rust, linked turn), a boss board + level-start sheet, an infinite level, the pause "i".
+        /// </summary>
+        public static void RunMechanics(string dir)
+        {
+            if (!EditorApplication.isPlaying) { Debug.LogWarning("[Orcub] enter play mode first"); return; }
+            _dir = dir;
+            Directory.CreateDirectory(dir);
+            foreach (var f in Directory.GetFiles(dir, "m*.png")) File.Delete(f);
+            Application.runInBackground = true;
+            Steps.Clear();
+            var bv = UnityEngine.Object.FindFirstObjectByType<BoardView>();
+            object Field(string n) => bv.GetType().GetField(n, Flags).GetValue(bv);
+            object Call(string method, params object[] args) => bv.GetType().GetMethod(method, Flags | BindingFlags.Public).Invoke(bv, args);
+            LevelHud Hud() => UnityEngine.Object.FindFirstObjectByType<LevelHud>();
+            var saved = SaveProgress();
+            void Play(int index)
+            {
+                Orcub.Core.Lives.Refill();
+                Hud().ClosePopup();
+                Call("PlayLevel", index);
+            }
+            int Ring(Func<Orcub.Core.Ring, bool> p)
+            {
+                foreach (var r in bv.Model.Rings) if (!r.Removed && p(r)) return r.Id;
+                return -1;
+            }
+            void Spin(int ring, float degrees)
+            {
+                var spins = (System.Collections.Generic.Dictionary<int, float>)Field("_spins");
+                if (ring >= 0) spins[ring] = degrees;
+            }
+
+            AddUntil(() => UnityEngine.Object.FindFirstObjectByType<LoaderScreen>() == null && Field("_splash") == null);   // boot done
+            Add(0f, () => { foreach (var (_, n) in MechanicLevels) PlayerPrefs.DeleteKey("orcub.intro." + (n == "colour" ? "colour_clamp" : n == "key" ? "key_padlock" : n == "rust" ? "rust_oil" : n)); }, null);
+            int k = 1;
+            foreach (var (index, name) in MechanicLevels)
+            {
+                Add(0f, () => Play(index), null);
+                Add(2.6f, null, $"m{k++:00}_{name}_intro");
+                Add(0f, () => Hud().ClosePopupAndNotify(), null);
+                Add(0.7f, null, $"m{k++:00}_{name}_tutorial");
+            }
+            // mid-chapter boards and live states
+            Add(0f, () => Play(26), null);
+            Add(2.2f, null, $"m{k++:00}_ratchet_level27");
+            Add(0f, () => Call("RefuseTurn", Ring(r => r.Ratchet != 0)), null);
+            Add(0.12f, null, $"m{k++:00}_ratchet_refused");
+            Add(0f, () => Play(47), null);
+            Add(2.2f, null, $"m{k++:00}_linked_level48");
+            Add(0f, () => Spin(Ring(r => r.GearGroup > 0 && bv.Model.CanRotate(r.Id)), 120f), null);
+            Add(0.15f, null, $"m{k++:00}_linked_turning");
+            Add(0f, () => Play(66), null);
+            Add(2.2f, null, $"m{k++:00}_colour_level67");
+            Add(0f, () => Play(88), null);
+            Add(2.2f, null, $"m{k++:00}_key_level89");
+            Add(0f, () =>
+            {   // pull the key carrier straight out (its holders let go) to show the padlock popping open
+                var m = bv.Model;
+                int carrier = Ring(r => r.KeyId > 0);
+                foreach (var l in m.Links) if (l.Active && (l.Owner == carrier || l.Target == carrier)) m.ReleaseLink(l.Id);
+                Call("PullOut", carrier, UnityEngine.Vector2.up, 10f);
+            }, null);
+            Add(0.25f, null, $"m{k++:00}_key_unlocking");
+            Add(0f, () => Play(107), null);
+            Add(2.2f, null, $"m{k++:00}_rust_level108");
+            Add(0f, () => { var m = bv.Model; int r = Ring(x => x.RustAfter > 0); while (m.Rings[r].RustAfter - m.Moves > 1) m.CompleteMove(); }, null);
+            Add(0.5f, null, $"m{k++:00}_rust_last_move");
+            Add(0f, () => bv.Model.CompleteMove(), null);
+            Add(0.5f, null, $"m{k++:00}_rust_frozen");
+            Add(0f, () => Play(126), null);
+            Add(2.2f, null, $"m{k++:00}_spring_level127");
+            Add(0f, () => { var m = bv.Model; foreach (var l in m.Links) if (l.Active && l.SpringMoves > 0) { m.ReleaseLink(l.Id); break; } }, null);
+            Add(0.6f, null, $"m{k++:00}_spring_open");
+            Add(0f, () => Play(146), null);
+            Add(2.2f, null, $"m{k++:00}_clay_level147");
+            Add(0f, () => Play(140), null);   // the tutorial board: its coated clamp's ring can turn
+            Add(2.4f, () => Hud().ClosePopupAndNotify(), null);
+            Add(0.6f, null, $"m{k++:00}_clay_intact");
+            Add(0f, () =>
+            {   // one pass of the gap over a clay coat: it cracks
+                var m = bv.Model;
+                foreach (var l in m.Links)
+                    if (l.Active && l.Clay && m.CanRotate(l.Target))
+                    {
+                        var t = m.Rings[l.Target];
+                        float d = UnityEngine.Mathf.DeltaAngle(t.GapAngle, l.ClampAngle);
+                        if (!m.DirectionAllowed(l.Target, d)) d -= UnityEngine.Mathf.Sign(d) * 360f;
+                        m.Rotate(l.Target, d);
+                        break;
+                    }
+            }, null);
+            Add(0.5f, null, $"m{k++:00}_clay_cracked");
+            Add(0f, () => Play(185), null);
+            Add(2.2f, null, $"m{k++:00}_mix_level186");
+            Add(0f, () => Call("OpenPause"), null);
+            Add(0.8f, null, $"m{k++:00}_pause_info");
+            Add(0f, () => { Hud().ClosePopup(); Play(39); }, null);
+            Add(2.6f, null, $"m{k++:00}_boss_level40");
+            Add(0f, () => { Hud().ClosePopup(); Call("ShowMap", 1); }, null);
+            Add(0.6f, () => SheetOpen(39), null);
+            Add(0.7f, null, $"m{k++:00}_boss_sheet");
+            Add(0f, () => { LevelRewards.Live = true; SheetOpen(39); }, null);
+            Add(0.7f, null, $"m{k++:00}_boss_sheet_reward_preview");
+            Add(0f, () => { LevelRewards.Live = false; SheetOpen(436); }, null);
+            Add(0.9f, null, $"m{k++:00}_infinite_sheet_437");
+            Add(0f, () => Play(436), null);
+            AddUntil(() => bv.LevelIndex == 436 && bv.Model != null && Field("_loading") == null);
+            Add(2.4f, null, $"m{k++:00}_infinite_level437");
+            Add(0f, () => Play(459), null);
+            AddUntil(() => Field("_loading") == null);
+            Add(2.6f, null, $"m{k++:00}_infinite_boss460");
+            Add(0f, () => { Hud().ClosePopup(); RestoreProgress(saved); }, null);
+            Start();
+        }
+
+        static void SheetOpen(int index)
+        {
+            var map = UnityEngine.Object.FindFirstObjectByType<MapScreen>(FindObjectsInactive.Include);
+            var sheet = (LevelStartSheet)map.GetType().GetField("_sheet", Flags).GetValue(map);
+            sheet.Open(index);
+        }
+
+        [MenuItem("Orcub/Verify Mechanics Autosolve")]
+        static void MenuVerify() => VerifyAutosolve(new[] { 20, 26, 40, 47, 60, 66, 80, 88, 100, 107, 120, 126, 140, 146, 160, 185, 39, 199, 436, 459 });
+
+        /// <summary>Plays each level in play mode with the dev autosolve (real input paths) and logs the result.</summary>
+        public static void VerifyAutosolve(int[] levels)
+        {
+            if (!EditorApplication.isPlaying) { Debug.LogWarning("[Orcub] enter play mode first"); return; }
+            Application.runInBackground = true;
+            Steps.Clear();
+            _dir = Path.GetFullPath("ArtSource/.automation/shots");
+            var bv = UnityEngine.Object.FindFirstObjectByType<BoardView>();
+            var saved = SaveProgress();
+            var report = new System.Text.StringBuilder();
+            foreach (int index in levels)
+            {
+                double started = 0;
+                Add(0f, () =>
+                {
+                    Orcub.Core.Lives.Refill();
+                    UnityEngine.Object.FindFirstObjectByType<LevelHud>().ClosePopup();
+                    bv.GetType().GetMethod("PlayLevel", Flags).Invoke(bv, new object[] { index });
+                }, null);
+                AddUntil(() => bv.LevelIndex == index && bv.GetType().GetField("_loading", Flags).GetValue(bv) == null);
+                Add(0.3f, () => { started = EditorApplication.timeSinceStartup; bv.StartAutoSolve(0.05f); }, null);
+                AddUntil(() => bv.AutoSolveResult != null || EditorApplication.timeSinceStartup - started > 90, () =>
+                {
+                    string line = $"level {index + 1}: {bv.AutoSolveResult ?? "timeout"} (moves used {bv.Model.Moves}, solved {bv.Model.IsSolved})";
+                    report.AppendLine(line);
+                    Debug.Log("[Orcub] verify " + line);
+                });
+                Add(1.3f, null, null);
+            }
+            Add(0f, () =>
+            {
+                UnityEngine.Object.FindFirstObjectByType<LevelHud>().ClosePopup();
+                RestoreProgress(saved);
+                File.WriteAllText(Path.Combine(_dir, "mechanics_autosolve.txt"), report.ToString());
+                Debug.Log("[Orcub] autosolve verification:\n" + report);
+            }, null);
+            Start();
+        }
+
+        /// <summary>Dev tools play and win levels; put the editor's saved progress back afterwards.</summary>
+        static System.Collections.Generic.Dictionary<string, int> SaveProgress()
+        {
+            var d = new System.Collections.Generic.Dictionary<string, int>();
+            foreach (var key in new[] { "orcub.level", "orcub.highest" }) d[key] = PlayerPrefs.GetInt(key, -1);
+            for (int i = 0; i < 480; i++) d["orcub.stars." + i] = PlayerPrefs.GetInt("orcub.stars." + i, -1);
+            return d;
+        }
+
+        static void RestoreProgress(System.Collections.Generic.Dictionary<string, int> d)
+        {
+            foreach (var kv in d)
+                if (kv.Value < 0) PlayerPrefs.DeleteKey(kv.Key);
+                else PlayerPrefs.SetInt(kv.Key, kv.Value);
+            PlayerPrefs.Save();
+        }
 
         static void Tick()
         {
             if (!EditorApplication.isPlaying) { Steps.Clear(); EditorApplication.update -= Tick; return; }
             if (EditorApplication.timeSinceStartup < _next) return;
             if (Steps.Count == 0) { EditorApplication.update -= Tick; Debug.Log("[Orcub] shots done: " + _dir); return; }
+            if (Steps.Peek().Until != null)
+            {
+                bool ready;
+                try { ready = Steps.Peek().Until(); } catch { ready = true; }
+                if (!ready) return;
+            }
             var s = Steps.Dequeue();
             try { s.Do?.Invoke(); }
             catch (Exception e) { Debug.LogWarning("[Orcub] shot step failed: " + (e.InnerException ?? e).Message); }

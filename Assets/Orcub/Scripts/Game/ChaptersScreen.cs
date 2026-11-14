@@ -85,7 +85,7 @@ namespace Orcub.Game
             int count = Chapters.Count;
             int earned = 0;
             for (int c = 0; c < count; c++) earned += Chapters.Stars(c);
-            _subtitle.text = $"{LevelLibrary.Count} levels · {earned}/{LevelLibrary.Count * 3} stars";
+            _subtitle.text = $"{earned} stars earned";   // the saga never ends: no total
             _content.sizeDelta = new Vector2(0f, count * (CardHeight + Gap) + 80f);
             int current = Chapters.Of(Chapters.Frontier);
             for (int c = 0; c < count; c++) Card(c, c == current);

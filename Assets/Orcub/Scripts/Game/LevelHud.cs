@@ -50,6 +50,10 @@ namespace Orcub.Game
         float _movesBump;
         RectTransform _popup, _card;
         bool _creamCard;
+        bool _keepBar;              // the "New gear!" sheet leaves the top bar in view (approved intro card B)
+        Action _onDismiss;          // what closing the open sheet means (intro: "Got it")
+        RectTransform _levelRt, _movesRt, _dividerRt;
+        Image _boss;
         Color OnCard => _creamCard ? UiKit.Ink : UiKit.Cream;
 
         public bool PopupOpen => _popup != null;
@@ -150,12 +154,27 @@ namespace Orcub.Game
 
             // level
             _level = kit.MakeText(face, "Level 1", UiKit.Body, UiKit.Ink);
-            UiKit.Anchor(_level.rectTransform, 0.16f, 0f, 0.43f, 1f);
+            _level.resizeTextForBestFit = true;
+            _level.resizeTextMinSize = UiKit.Caption;
+            _level.resizeTextMaxSize = UiKit.Body;
+            _levelRt = _level.rectTransform;
+            UiKit.Anchor(_levelRt, 0.16f, 0f, 0.43f, 1f);
             var divider = kit.Divider(face);
-            UiKit.Anchor(divider.rectTransform, 0.445f, 0.2f, 0.45f, 0.8f);
+            _dividerRt = divider.rectTransform;
+            UiKit.Anchor(_dividerRt, 0.445f, 0.2f, 0.45f, 0.8f);
+
+            // boss levels: the approved "Boss" badge sits right after the level number
+            if (_art.bossBadge != null)
+            {
+                _boss = kit.MakeImage(face, _art.BossBadgeTight, Color.white);
+                _boss.preserveAspect = true;
+                UiKit.Anchor(_boss.rectTransform, 0.37f, 0.02f, 0.575f, 0.98f);
+                _boss.gameObject.SetActive(false);
+            }
 
             // moves is the hero: number and caption are one group, centred on the face
             var moves = UiKit.Rect("Moves", face);
+            _movesRt = moves;
             UiKit.Anchor(moves, 0.47f, 0f, 0.8f, 1f);
             _moves = kit.MakeText(moves, "0", 76, UiKit.Ink);
             var mrt = _moves.rectTransform;
@@ -250,9 +269,9 @@ namespace Orcub.Game
 
         void Update()
         {
-            float target = _popup != null ? 0f : _targetAlpha;   // a card owns the screen: top bar and tray step back
+            float target = _popup != null && !_keepBar ? 0f : _targetAlpha;   // a card owns the screen: top bar and tray step back
             _group.alpha = Mathf.MoveTowards(_group.alpha, target, Time.unscaledDeltaTime * 5f);
-            _group.interactable = _group.blocksRaycasts = target > 0.5f;
+            _group.interactable = _group.blocksRaycasts = target > 0.5f && _popup == null;
 
             _movesBump = Mathf.MoveTowards(_movesBump, 0f, Time.unscaledDeltaTime * 3f);
             bool low = _movesLeft <= 3;
@@ -278,6 +297,16 @@ namespace Orcub.Game
         {
             _level.text = $"Level {number}";
             if (_info != null) _info.text = info;
+        }
+
+        /// <summary>Boss levels show the badge after the level number; the moves group shifts right to make room.</summary>
+        public void SetBoss(bool boss)
+        {
+            if (_boss == null) return;
+            _boss.gameObject.SetActive(boss);
+            UiKit.Anchor(_levelRt, boss ? 0.135f : 0.16f, 0f, boss ? 0.37f : 0.43f, 1f);
+            UiKit.Anchor(_dividerRt, boss ? 0.59f : 0.445f, 0.2f, boss ? 0.595f : 0.45f, 0.8f);
+            UiKit.Anchor(_movesRt, boss ? 0.6f : 0.47f, 0f, boss ? 0.84f : 0.8f, 1f);
         }
 
         public void SetMoves(int movesLeft, bool bump = false)
@@ -459,6 +488,141 @@ namespace Orcub.Game
             if (_popup != null) Destroy(_popup.gameObject);
             _popup = null;
             _card = null;
+            _keepBar = false;
+            _onDismiss = null;
+        }
+
+        /// <summary>Closes the open sheet the way its own button would (tools / autosolve).</summary>
+        public void ClosePopupAndNotify()
+        {
+            var a = _onDismiss;
+            ClosePopup();
+            a?.Invoke();
+        }
+
+        // ------------------------------------------------------------------ "New gear!" sheet
+
+        /// <summary>
+        /// Approved mech_intro_card_B: an anchored cream sheet over the dimmed board (top bar stays) with
+        /// "New gear!", the piece illustration and an animated hint arrow, one line of rule, an optional number
+        /// pill, and a single "Got it".
+        /// </summary>
+        public void ShowMechanicIntro(Sprite icon, MechanicIntro.Info info, Action onClose)
+        {
+            ClosePopup();
+            _creamCard = true;
+            _keepBar = true;
+            _onDismiss = onClose;
+            _popup = UiKit.Rect("Popup", _cards);
+            UiKit.Anchor(_popup, 0, 0, 1, 1);
+            var scrim = _popup.gameObject.AddComponent<Image>();
+            scrim.color = new Color(0.05f, 0.01f, 0.03f, 0f);
+            StartCoroutine(FadeScrim(scrim, 0.45f));
+            Haptics.Play(Haptics.Impact.Light, 0.6f);
+
+            var sheet = UiKit.Rect("IntroSheet", _popup);
+            bool pill = !string.IsNullOrEmpty(info.Pill);
+            UiKit.Anchor(sheet, 0.03f, 0f, 0.97f, pill ? 0.53f : 0.49f);
+            var bg = _kit.MakeImage(sheet, _art.sheet != null ? _art.sheet : _art.uiCard, _art.sheet != null ? Color.white : UiKit.CardCream);
+            bg.type = Image.Type.Sliced;
+            bg.raycastTarget = true;
+            UiKit.Anchor(bg.rectTransform, 0, 0, 1, 1);
+            bg.rectTransform.offsetMin = new Vector2(0f, -60f);
+            var body = UiKit.Rect("Body", sheet);
+            UiKit.Anchor(body, 0.06f, 0.07f, 0.94f, 0.96f);
+            var ink = UiKit.Ink;
+
+            var title = _kit.MakeText(body, "New gear!", 96, ink);
+            UiKit.Anchor(title.rectTransform, 0f, 0.85f, 1f, 1f);
+
+            var art = UiKit.Rect("Art", body);
+            UiKit.Anchor(art, 0.5f, pill ? 0.47f : 0.42f, 0.5f, 0.85f);
+            art.pivot = new Vector2(0.5f, 0.5f);
+            art.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+            if (icon != null)
+            {
+                var pic = _kit.MakeImage(art, icon, Color.white);
+                pic.preserveAspect = true;
+                UiKit.Anchor(pic.rectTransform, 0, 0, 1, 1);
+            }
+            // animated hint arrow(s): drawn on, held, faded, repeated
+            var arrows = new List<Image>();
+            if (info.Opposed)
+            {
+                arrows.Add(HintArrow(art, -0.62f, 0.62f, -1f));
+                arrows.Add(HintArrow(art, 0.62f, 0.62f, 1f));
+            }
+            else arrows.Add(HintArrow(art, 0f, 0.62f, info.Direction >= 0f ? 1f : -1f, 1.25f));
+            StartCoroutine(AnimateArrows(arrows));
+
+            var rule = _kit.MakeText(body, info.Rule, UiKit.Body, ink);
+            rule.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UiKit.Anchor(rule.rectTransform, 0f, pill ? 0.33f : 0.27f, 1f, pill ? 0.47f : 0.42f);
+
+            if (pill)
+            {
+                var badge = _kit.Pill(body, info.Pill, UiKit.Coral, UiKit.Title, () => { });
+                badge.GetComponentInChildren<Text>().color = UiKit.Cream;
+                UiKit.Anchor(badge, 0.27f, 0.2f, 0.73f, 0.315f);
+                badge.GetComponent<Button>().interactable = false;
+            }
+            var got = _kit.Pill(body, "Got it", UiKit.Mint, 84, () => ClosePopupAndNotify());
+            UiKit.Anchor(got, 0.04f, 0.01f, 0.96f, pill ? 0.18f : 0.21f);
+
+            var slide = sheet.gameObject.AddComponent<CanvasGroup>();
+            StartCoroutine(SlideUp(sheet, slide));
+        }
+
+        Image HintArrow(RectTransform parent, float x, float y, float direction, float size = 0.75f)
+        {
+            var rt = UiKit.Rect("HintArrow", parent);
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f + x * 0.5f, 0.5f + y * 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(1f, 1f);
+            var img = _kit.MakeImage(rt, MechSprites.ArcArrow, UiKit.Coral);
+            img.type = Image.Type.Filled;
+            img.fillMethod = Image.FillMethod.Horizontal;
+            img.fillOrigin = (int)Image.OriginHorizontal.Right;   // drawn tail-first toward the head
+            var irt = img.rectTransform;
+            irt.anchorMin = irt.anchorMax = new Vector2(0.5f, 0.5f);
+            float w = ((RectTransform)parent).rect.height * size * 0.6f;
+            irt.sizeDelta = new Vector2(Mathf.Max(w, 160f * size), Mathf.Max(w, 160f * size));
+            irt.localScale = new Vector3(direction >= 0f ? 1f : -1f, 1f, 1f);   // the sprite is counter-clockwise
+            return img;
+        }
+
+        static IEnumerator AnimateArrows(List<Image> arrows)
+        {
+            while (arrows.Count > 0 && arrows[0] != null)
+            {
+                float t = 0f;
+                while (t < 1.7f && arrows[0] != null)
+                {
+                    t += Time.unscaledDeltaTime;
+                    float fill = UiKit.EaseOut(Mathf.Clamp01(t / 0.7f));
+                    float a = t < 1.3f ? 1f : 1f - (t - 1.3f) / 0.4f;
+                    foreach (var img in arrows)
+                    {
+                        if (img == null) continue;
+                        img.fillAmount = fill;
+                        img.color = new Color(UiKit.Coral.r, UiKit.Coral.g, UiKit.Coral.b, a);
+                    }
+                    yield return null;
+                }
+            }
+        }
+
+        static IEnumerator SlideUp(RectTransform sheet, CanvasGroup g)
+        {
+            float h = sheet.rect.height + 80f, t = 0f;
+            while (t < 1f && sheet != null)
+            {
+                t += Time.unscaledDeltaTime / 0.28f;
+                float k = UiKit.EaseOut(Mathf.Clamp01(t));
+                sheet.anchoredPosition = new Vector2(0f, -h * (1f - k));
+                g.alpha = Mathf.Clamp01(t * 3f);
+                yield return null;
+            }
         }
 
         Text Title(RectTransform card, string text, float y0, float y1, int size = UiKit.Display)
@@ -539,10 +703,23 @@ namespace Orcub.Game
         }
 
         /// <summary>Pause / settings: sound + haptics, Restart (costs a life), Resume, and a Home link.</summary>
-        public void ShowPause(Action onRestart, Action onResume, Action onHome)
+        public void ShowPause(Action onRestart, Action onResume, Action onHome, Action onInfo = null)
         {
             var card = OpenCard(cream: true);
             Title(card, "Paused", 0.8f, 0.93f, 80);
+            if (onInfo != null)
+            {   // re-open this board's "New gear!" card
+                var info = UiKit.Rect("Info", card);
+                UiKit.Anchor(info, 0.85f, 0.81f, 0.98f, 0.94f);
+                info.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+                var disc = _kit.MakeImage(info, _art.uiRound, UiKit.Coral);
+                disc.preserveAspect = true;
+                disc.raycastTarget = true;
+                UiKit.Anchor(disc.rectTransform, 0, 0, 1, 1);
+                var i = _kit.MakeText(info, "i", UiKit.Title, UiKit.Cream);
+                UiKit.Anchor(i.rectTransform, 0, 0.06f, 1, 1);
+                UiKit.Tap(info.gameObject, () => { ClosePopup(); onInfo(); });
+            }
             Toggle(card, _art.uiSound, "Sound", GameSettings.SoundOn, on => GameSettings.SoundOn = on, 0.67f, 0.78f);
             Toggle(card, _art.uiHaptics, "Haptics", GameSettings.HapticsOn, on => GameSettings.HapticsOn = on, 0.54f, 0.65f);
             var resume = _kit.Pill(card, "Resume", UiKit.Mint, UiKit.Title, () => { ClosePopup(); onResume(); });

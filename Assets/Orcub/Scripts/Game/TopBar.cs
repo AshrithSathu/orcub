@@ -81,13 +81,18 @@ namespace Orcub.Game
             "Tinker town", "Ratchet ridge", "Cog canyon", "Brass bay", "The grand mechanism",
         };
 
-        public static int Count => Mathf.Max(1, (LevelLibrary.Count + Size - 1) / Size);
-        public static string Name(int chapter) => Names[chapter % Names.Length];
+        /// <summary>
+        /// Chapters shown: the infinite saga is windowed at the frontier's chapter plus the next (locked) one,
+        /// never fewer than the ten hand-made chapters. Not a progression limit.
+        /// </summary>
+        public static int Count => Mathf.Max(LevelLibrary.CuratedCount / Size, Of(Frontier) + 2);
+        public static string Name(int chapter) =>
+            chapter < Names.Length ? Names[chapter] : LevelLibrary.ChapterInfo(chapter).Name;
         public static int First(int chapter) => chapter * Size;
-        public static int Last(int chapter) => Mathf.Min(LevelLibrary.Count, (chapter + 1) * Size) - 1;
-        public static int LevelCount(int chapter) => Last(chapter) - First(chapter) + 1;
-        public static int Of(int level) => level / Size;
-        public static int Frontier => Mathf.Clamp(Progress.HighestUnlocked, 0, Mathf.Max(0, LevelLibrary.Count - 1));
+        public static int Last(int chapter) => First(chapter) + Size - 1;
+        public static int LevelCount(int chapter) => Size;
+        public static int Of(int level) => Mathf.Max(0, level) / Size;
+        public static int Frontier => Mathf.Max(0, Progress.HighestUnlocked);
         public static bool Unlocked(int chapter) => First(chapter) <= Frontier;
         public static bool Complete(int chapter) => Frontier > Last(chapter);
 

@@ -96,6 +96,17 @@ namespace Orcub.EditorTools
                     Log("OK autosolve");
                     break;
                 }
+                case "mcp-start":
+                {
+                    // Recover a dropped MCP for Unity session without the package UI (reflection: no asmdef dependency).
+                    var locator = Type.GetType("MCPForUnity.Editor.Services.MCPServiceLocator, MCPForUnity.Editor");
+                    var bridge = locator?.GetProperty("Bridge")?.GetValue(null);
+                    if (bridge == null) throw new Exception("MCP for Unity not installed");
+                    var task = (System.Threading.Tasks.Task<bool>)bridge.GetType().GetMethod("StartAsync").Invoke(bridge, null);
+                    task.ContinueWith(r => Log("OK mcp-start " + (r.IsFaulted ? r.Exception?.GetBaseException().Message : r.Result.ToString())),
+                        System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
+                    break;
+                }
                 case "play":
                     EditorApplication.isPlaying = true;
                     Log("OK play");
@@ -225,6 +236,7 @@ namespace Orcub.EditorTools
             ImportUiKit(art);
             ImportHomeKit(art);
             ImportNavKit(art);
+            ImportMechanicsKit(art);
             // Soft-clay palette: saturated enough to read on navy, chalky enough to feel like clay.
             art.ringPalette = new[]
             {
@@ -473,6 +485,137 @@ namespace Orcub.EditorTools
             art.sheet = S("sheet", new Vector4(132, 0, 132, 132));
             art.homeHero = S("home_hero");
             art.chapterLamp = S("chapter_lamp");
+        }
+
+        public const string MechanicsDir = "Assets/Orcub/Art/Mechanics";
+
+        /// <summary>Re-imports only the gear-mechanics kit into the existing art set (no full art rebuild).</summary>
+        [MenuItem("Orcub/Import Mechanics Kit")]
+        public static void ImportMechanicsKitMenu()
+        {
+            var art = AssetDatabase.LoadAssetAtPath<OrcubArt>(ArtAssetPath);
+            if (art == null) throw new Exception("Run Orcub/Import Art first");
+            ImportMechanicsKit(art);
+            EditorUtility.SetDirty(art);
+            AssetDatabase.SaveAssets();
+            Log("OK import-mechanics");
+        }
+
+        /// <summary>
+        /// Gear mechanics kit (render_mechanics, mechanics.json): board pieces are lit sprites at 200 PPU with their
+        /// _n normal map as the _NormalMap secondary texture, like build_parts; intro/boss icons are pre-lit UI.
+        /// Clockwise ratchet arrows are generated as mirrored copies (albedo flipped, normal red channel inverted)
+        /// because flipping a normal-mapped sprite by scale would light it from the wrong side.
+        /// </summary>
+        static void ImportMechanicsKit(OrcubArt art)
+        {
+            string dir = MechanicsDir;
+            if (!File.Exists(Path.Combine(ProjectRoot, dir, "mechanics.json"))) { Debug.LogWarning("[Orcub] mechanics.json missing"); return; }
+            Sprite Lit(string name) =>
+                File.Exists(Path.Combine(ProjectRoot, dir, name + ".png"))
+                    ? ImportLitSprite($"{dir}/{name}.png", File.Exists(Path.Combine(ProjectRoot, dir, name + "_n.png")) ? $"{dir}/{name}_n.png" : null, 200f)
+                    : null;
+            string[] radii = { "r100", "r120", "r140" };
+            art.mechRadii = new[] { 1.0f, 1.2f, 1.4f };
+
+            var ccw = new List<Sprite>();
+            var cw = new List<Sprite>();
+            foreach (var r in radii)
+            {
+                ccw.Add(Lit($"ratchet_arrow_{r}"));
+                MirrorPair(dir, $"ratchet_arrow_{r}", $"ratchet_arrow_{r}_cw");
+                cw.Add(Lit($"ratchet_arrow_{r}_cw"));
+            }
+            art.ratchetCcw = ccw.ToArray();
+            art.ratchetCw = cw.ToArray();
+
+            var stamps = new List<Sprite>();
+            foreach (var r in radii)
+                foreach (var s in OrcubArt.Shapes) stamps.Add(Lit($"ring_stamp_{s}_{r}"));
+            art.ringStamps = stamps.ToArray();
+            art.clampStamps = OrcubArt.Shapes.Select(s => Lit($"clamp_{s}")).ToArray();
+            art.rustPatchA = radii.Select(r => Lit($"rust_patch1_{r}")).ToArray();
+            art.rustPatchB = radii.Select(r => Lit($"rust_patch2_{r}")).ToArray();
+            art.rustSeized = radii.Select(r => Lit($"rust_seized_{r}")).ToArray();
+
+            art.linkedMark = Lit("linked_pair_mark");
+            art.key = Lit("key");
+            art.padlockLocked = Lit("padlock_locked");
+            art.padlockUnlocked = Lit("padlock_unlocked");
+            art.oilCan = Lit("oil_can");
+            art.movesBadge = Lit("moves_badge");
+            art.idBadge = Lit("identifier_badge");
+            art.springClosed = Lit("spring_closed");
+            art.springOpen = Lit("spring_open");
+            art.springBadge = Lit("spring_countdown");
+            art.clayIntact = Lit("clay_intact");
+            art.clayCracked = Lit("clay_cracked");
+            // the kit's shell is the same tan as the clamp and vanishes at board zoom; the approved coat is cream
+            Whiten(dir, "clay_intact", "clay_intact_light");
+            Whiten(dir, "clay_cracked", "clay_cracked_light");
+            art.clayIntactLight = Lit("clay_intact_light");
+            art.clayCrackedLight = Lit("clay_cracked_light");
+
+            art.bossBadge = ImportUiIcon($"{dir}/boss_badge.png");
+            art.goldBar = ImportUiIcon("Assets/Orcub/Art/Shop/gold_bar.png");
+            string[] intros = { "ratchet", "linked", "colour_clamp", "key_padlock", "rust_oil", "spring", "clay", "mix" };
+            art.introKeys = intros;
+            art.introIcons = intros.Select(k => ImportUiIcon($"{dir}/intro_{k}.png")).ToArray();
+        }
+
+        /// <summary>Writes a near-white, shading-preserving copy of a lit sprite (same normal map) for runtime tinting.</summary>
+        static void Whiten(string dir, string source, string target)
+        {
+            string full(string n) => Path.Combine(ProjectRoot, dir, n + ".png");
+            if (!File.Exists(full(source)) || File.Exists(full(target))) return;
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            tex.LoadImage(File.ReadAllBytes(full(source)));
+            var px = tex.GetPixels32();
+            float peak = 1f;
+            foreach (var c in px) if (c.a > 200) peak = Mathf.Max(peak, (0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b));
+            for (int i = 0; i < px.Length; i++)
+            {
+                var c = px[i];
+                float lum = (0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b) / peak;   // keep the baked occlusion, drop the tan
+                byte v = (byte)Mathf.Clamp(Mathf.RoundToInt(255f * Mathf.Lerp(0.55f, 1f, lum)), 0, 255);
+                px[i] = new Color32(v, v, v, c.a);
+            }
+            tex.SetPixels32(px);
+            File.WriteAllBytes(full(target), tex.EncodeToPNG());
+            if (File.Exists(full(source + "_n"))) File.Copy(full(source + "_n"), full(target + "_n"));
+            UnityEngine.Object.DestroyImmediate(tex);
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+        }
+
+        /// <summary>Writes a horizontally mirrored copy of an albedo + normal pair (normal X inverted) if missing.</summary>
+        static void MirrorPair(string dir, string source, string target)
+        {
+            string full(string n) => Path.Combine(ProjectRoot, dir, n + ".png");
+            if (!File.Exists(full(source))) return;
+            bool wrote = false;
+            foreach (var (src, dst, isNormal) in new[] { (source, target, false), (source + "_n", target + "_n", true) })
+            {
+                if (!File.Exists(full(src)) || File.Exists(full(dst))) continue;
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false, linear: true);
+                tex.LoadImage(File.ReadAllBytes(full(src)));
+                var px = tex.GetPixels32();
+                int w = tex.width, h = tex.height;
+                var outPx = new Color32[px.Length];
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        var c = px[y * w + (w - 1 - x)];
+                        if (isNormal) c.r = (byte)(255 - c.r);
+                        outPx[y * w + x] = c;
+                    }
+                var o = new Texture2D(w, h, TextureFormat.RGBA32, false, linear: true);
+                o.SetPixels32(outPx);
+                File.WriteAllBytes(full(dst), o.EncodeToPNG());
+                UnityEngine.Object.DestroyImmediate(tex);
+                UnityEngine.Object.DestroyImmediate(o);
+                wrote = true;
+            }
+            if (wrote) AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
         }
 
         static Sprite ImportUiIcon(string path)

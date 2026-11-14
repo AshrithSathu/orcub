@@ -51,7 +51,7 @@ namespace Orcub.Game
 
         public void Show(int chapter)
         {
-            _chapter = Mathf.Clamp(chapter, 0, Chapters.Count - 1);
+            _chapter = Mathf.Clamp(chapter, 0, Chapters.Count - 1);   // a window around the frontier (infinite saga)
             gameObject.SetActive(true);
             _sheet.CloseInstant();
             _bar.Refresh();
@@ -121,7 +121,7 @@ namespace Orcub.Game
             _chapterCaption.text = $"Chapter {_chapter + 1}";
             _chapterName.text = Chapters.Name(_chapter);
             _chapterInfo.text = $"Levels {first + 1}–{last + 1} · {Chapters.Stars(_chapter)}/{n * 3} stars";
-            _footer.text = $"Chapter {_chapter + 1} of {Chapters.Count}";
+            _footer.text = $"Chapter {_chapter + 1}";   // the saga is infinite: no "of N"
             _content.sizeDelta = new Vector2(0f, NodePos(n - 1).y + NodeSize + 220f);
 
             for (int k = 1; k < n; k++)
@@ -252,9 +252,10 @@ namespace Orcub.Game
 
         UiKit _kit;
         Action<int> _onPlay;
-        RectTransform _root, _panel, _goal;
-        Image _scrim;
-        Text _title, _goalText;
+        RectTransform _root, _panel, _goal, _starBox, _reward;
+        Image _scrim, _boss;
+        Text _title, _goalText, _rewardText, _regularText;
+        Coroutine _wait;
         readonly Text[] _targets = new Text[3];
         int _level;
         Coroutine _anim;
@@ -310,8 +311,34 @@ namespace Orcub.Game
             _goal = UiKit.Rect("Goal", body);
             UiKit.Anchor(_goal, 0.04f, 0.55f, 0.96f, 0.73f);
 
+            // boss (approved boss_level_A): badge under the title, and the bigger reward in place of the star row
+            if (art.bossBadge != null)
+            {
+                _boss = kit.MakeImage(body, art.BossBadgeTight, Color.white);
+                _boss.preserveAspect = true;
+                UiKit.Anchor(_boss.rectTransform, 0.33f, 0.745f, 0.67f, 0.85f);
+                _boss.gameObject.SetActive(false);
+            }
+            _reward = kit.MakeImage(body, art.uiSlab, UiKit.Slab, sliced: true).rectTransform;
+            UiKit.Anchor(_reward, 0.02f, 0.28f, 0.98f, 0.535f);
+            _rewardText = kit.MakeText(_reward, "", UiKit.Label, ink);
+            UiKit.Anchor(_rewardText.rectTransform, 0, 0.72f, 1, 0.94f);
+            for (int i = 0; i < 3; i++)
+            {
+                var bar = kit.MakeImage(_reward, art.goldBar != null ? art.GoldBarTight : art.uiStarClay, art.goldBar != null ? Color.white : UiKit.StarGold);
+                bar.preserveAspect = true;
+                float x0 = 0.1f + i * 0.28f;
+                UiKit.Anchor(bar.rectTransform, x0, 0.42f, x0 + 0.24f, 0.72f);
+            }
+            var rule = kit.Divider(_reward);
+            UiKit.Anchor(rule.rectTransform, 0.08f, 0.385f, 0.92f, 0.395f);
+            _regularText = kit.MakeText(_reward, "", UiKit.Caption, new Color(ink.r, ink.g, ink.b, 0.72f));
+            UiKit.Anchor(_regularText.rectTransform, 0, 0.17f, 1, 0.38f);   // on the slab's face, above its lip
+            _reward.gameObject.SetActive(false);
+
             // star targets: moves needed for 1, 2 and 3 stars
             var box = kit.MakeImage(body, art.uiSlab, UiKit.Slab, sliced: true).rectTransform;
+            _starBox = box;
             UiKit.Anchor(box, 0.02f, 0.3f, 0.98f, 0.52f);
             var cap = kit.MakeText(box, "Moves to earn stars", UiKit.Caption, new Color(ink.r, ink.g, ink.b, 0.75f));
             UiKit.Anchor(cap.rectTransform, 0, 0.64f, 1, 0.94f);
@@ -361,10 +388,53 @@ namespace Orcub.Game
         public void Open(int level)
         {
             _level = level;
-            var data = LevelLibrary.Get(level);
-            var def = data != null ? data.ToDef() : Levels.Basic10();
-            var rules = LevelRules.For(def, tutorial: level < 3);
+            if (_wait != null) StopCoroutine(_wait);
+            _wait = null;
+            // generated levels: never block the UI thread; show what we know and fill in when prepared
+            LevelData data = null;
+            if (LevelLibrary.TryGetVariants(level, out var choices) && choices != null && choices.Length > 0) data = choices[0];
+            else
+            {
+                LevelLibrary.Prefetch(level);
+                _wait = StartCoroutine(FillWhenReady(level));
+            }
+            Fill(level, data);
+
+            _root.gameObject.SetActive(true);
+            _root.SetAsLastSibling();
+            if (_anim != null) StopCoroutine(_anim);
+            _anim = StartCoroutine(Slide(true));
+        }
+
+        IEnumerator FillWhenReady(int level)
+        {
+            LevelData[] choices;
+            while (!LevelLibrary.TryGetVariants(level, out choices) || choices == null || choices.Length == 0) yield return null;
+            if (_level == level) Fill(level, choices[0]);
+            _wait = null;
+        }
+
+        void Fill(int level, LevelData data)
+        {
+            bool boss = data != null ? data.is_boss : LevelLibrary.ChapterInfo(LevelLibrary.ChapterOf(level)).IsBoss(level);
             _title.text = $"Level {level + 1}";
+            if (_boss != null) _boss.gameObject.SetActive(boss);
+            bool reward = boss && LevelRewards.Live;
+            _reward.gameObject.SetActive(reward);
+            _starBox.gameObject.SetActive(!reward);
+            _rewardText.text = $"Boss reward · {LevelRewards.Boss} gold";
+            _regularText.text = $"Regular reward · {LevelRewards.Regular} gold";
+            UiKit.Anchor(_goalText.rectTransform, 0, boss ? 0.655f : 0.74f, 1, boss ? 0.745f : 0.84f);
+            UiKit.Anchor(_goal, 0.04f, boss ? 0.545f : 0.55f, 0.96f, boss ? 0.65f : 0.73f);
+            for (int i = _goal.childCount - 1; i >= 0; i--) Destroy(_goal.GetChild(i).gameObject);
+            if (data == null)
+            {
+                _goalText.text = "Free all the gears";
+                foreach (var t in _targets) t.text = "…";
+                return;
+            }
+            var def = data.ToDef();
+            var rules = LevelRules.For(def, tutorial: level < 3);
             int rings = def.Rings.Count;
             _goalText.text = $"Free all {rings} gears";
 
@@ -380,11 +450,6 @@ namespace Orcub.Game
             _targets[0].text = $"≤ {rules.MoveLimit}";
             _targets[1].text = $"≤ {rules.TwoStar}";
             _targets[2].text = $"≤ {rules.ThreeStar}";
-
-            _root.gameObject.SetActive(true);
-            _root.SetAsLastSibling();
-            if (_anim != null) StopCoroutine(_anim);
-            _anim = StartCoroutine(Slide(true));
         }
 
         public void Close()

@@ -91,6 +91,73 @@ namespace Orcub.Game
         public Sprite homeHero;         // connected clay gear-rings illustration
         public Sprite chapterLamp;      // chapter 1 card art
 
+        [Header("Gear mechanics kit (approved features_v1; lit board pieces + pre-lit UI icons)")]
+        [Tooltip("Tube centre-line radius each per-radius decal set was rendered at (1.0, 1.2, 1.4).")]
+        public float[] mechRadii = new float[0];
+        public Sprite[] ratchetCcw = new Sprite[0];   // per radius: left-pointing at the top = counter-clockwise
+        public Sprite[] ratchetCw = new Sprite[0];    // per radius: mirrored copy (albedo + red-flipped normal)
+        [Tooltip("Ring stamps, index = radiusIndex * Shapes.Length + shape.")]
+        public Sprite[] ringStamps = new Sprite[0];
+        public Sprite[] clampStamps = new Sprite[0];  // per shape: replacement clamp with the stamp pressed in
+        public Sprite[] rustPatchA = new Sprite[0], rustPatchB = new Sprite[0], rustSeized = new Sprite[0];   // per radius
+        public Sprite linkedMark, key, padlockLocked, padlockUnlocked, oilCan, movesBadge, idBadge;
+        public Sprite springClosed, springOpen, springBadge, clayIntact, clayCracked;
+        [Tooltip("Whitened copies of the clay shell, tinted cream at runtime so the coat reads against the tan clamp.")]
+        public Sprite clayIntactLight, clayCrackedLight;
+        public Sprite bossBadge, goldBar;
+        public string[] introKeys = new string[0];
+        public Sprite[] introIcons = new Sprite[0];
+
+        /// <summary>Shape stamps for colour clamps, in kit order. Never colour alone: each palette index has a shape.</summary>
+        public static readonly string[] Shapes = { "triangle", "square", "star", "diamond", "circle", "heart" };
+
+        /// <summary>Palette index → shape (coral 0 = triangle and lavender 4 = circle, as in the approved board).</summary>
+        public static int ShapeFor(int paletteIndex) => Mathf.Abs(paletteIndex) % Shapes.Length;
+
+        public int MechRadiusIndex(float radius)
+        {
+            int best = 0;
+            for (int i = 1; i < mechRadii.Length; i++)
+                if (Mathf.Abs(mechRadii[i] - radius) < Mathf.Abs(mechRadii[best] - radius)) best = i;
+            return best;
+        }
+
+        public Sprite PerRadius(Sprite[] set, float radius)
+        {
+            if (set == null || set.Length == 0) return null;
+            return set[Mathf.Min(MechRadiusIndex(radius), set.Length - 1)];
+        }
+
+        public Sprite RingStamp(int shape, float radius)
+        {
+            if (ringStamps == null || ringStamps.Length < Shapes.Length) return null;
+            int r = Mathf.Min(MechRadiusIndex(radius), ringStamps.Length / Shapes.Length - 1);
+            return ringStamps[r * Shapes.Length + shape];
+        }
+
+        [System.NonSerialized] Sprite _bossTight, _goldTight;
+
+        /// <summary>The boss badge cropped to its pill (the kit icon is a padded square), so it sizes like text.</summary>
+        public Sprite BossBadgeTight => _bossTight != null ? _bossTight : (_bossTight = Tight(bossBadge, new Rect(21, 81, 198, 78)));
+
+        /// <summary>The gold bar cropped to the bar.</summary>
+        public Sprite GoldBarTight => _goldTight != null ? _goldTight : (_goldTight = Tight(goldBar, new Rect(27, 68, 205, 120)));
+
+        static Sprite Tight(Sprite s, Rect r)
+        {
+            if (s == null) return null;
+            var rect = new Rect(s.rect.x + r.x, s.rect.y + r.y, r.width, r.height);
+            if (rect.xMax > s.texture.width || rect.yMax > s.texture.height) return s;
+            return Sprite.Create(s.texture, rect, new Vector2(0.5f, 0.5f), s.pixelsPerUnit);
+        }
+
+        public Sprite IntroIcon(string key)
+        {
+            for (int i = 0; i < introKeys.Length && i < introIcons.Length; i++)
+                if (introKeys[i] == key) return introIcons[i];
+            return null;
+        }
+
         [Header("Background")]
         [Tooltip("Optional full-screen backdrop, scaled to cover the camera view.")]
         public Sprite backgroundSprite;

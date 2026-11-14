@@ -124,6 +124,15 @@ namespace Orcub.Game
         public bool HintActive { get; private set; }
         bool _hintPull;
         public void Pulse() => _pulseTime = 0.45f;
+
+        /// <summary>Multiplies the ring's clay colour (rust creeping in). White restores the palette colour.</summary>
+        public void SetBodyTint(Color multiplier)
+        {
+            if (_body == null || _introHidden || _flying) return;
+            var c = _color * multiplier;
+            c.a = _body.color.a;
+            _body.color = c;
+        }
         public void SetPicked(bool picked)
         {
             _picked = picked;

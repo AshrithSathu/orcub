@@ -96,6 +96,29 @@ namespace Orcub.Game
             Haptics.Play(Haptics.Impact.Soft, 0.9f);
         }
 
+        // ---- gear mechanics: all haptic-only (keep audio sparse; see orcub-sound-preference)
+
+        /// <summary>Ratchet turned the wrong way: refused, no move charged.</summary>
+        public void Refused() => Haptics.Notify(Haptics.Notice.Warning);
+
+        /// <summary>A colour clamp the gap passed but that won't open for this ring: a gentle "no".</summary>
+        public void ClampRefused() => Haptics.Play(Haptics.Impact.Soft, 0.5f);
+
+        /// <summary>Key carrier pulled: its padlock pops open.</summary>
+        public void Unlocked() => Haptics.Play(Haptics.Impact.Medium, 0.85f);
+
+        /// <summary>Oil collected: the rusting ring is safe.</summary>
+        public void Oiled() => Haptics.Play(Haptics.Impact.Light, 0.9f);
+
+        /// <summary>Rust deadline passed: the ring seized.</summary>
+        public void Frozen() => Haptics.Play(Haptics.Impact.Heavy, 0.9f);
+
+        /// <summary>A spring clamp snapped shut again.</summary>
+        public void Snapped() => Haptics.Play(Haptics.Impact.Rigid, 1f);
+
+        /// <summary>First pass through a clay coat: it cracks.</summary>
+        public void Cracked() => Haptics.Play(Haptics.Impact.Rigid, 0.55f);
+
         public void Cleared()
         {
             Play(_art.sfxChime, 0.8f, 1f);
