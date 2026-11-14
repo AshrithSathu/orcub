@@ -1,0 +1,192 @@
+{
+  "samples": 48,
+  "ppu": 200,
+  "border_order": [
+    "left",
+    "bottom",
+    "right",
+    "top"
+  ],
+  "sprites": {
+    "cloud": {
+      "file": "cloud.png",
+      "width": 300,
+      "height": 220,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Cream clay cloud (account badge, save nudge, sign-out)."
+    },
+    "cloud_check": {
+      "file": "cloud_check.png",
+      "width": 300,
+      "height": 220,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Cream cloud carrying a mint check (welcome back)."
+    },
+    "phone": {
+      "file": "phone.png",
+      "width": 200,
+      "height": 260,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Tan clay phone (this phone save)."
+    },
+    "trash": {
+      "file": "trash.png",
+      "width": 220,
+      "height": 240,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Neutral tan clay bin (delete confirmation)."
+    },
+    "info": {
+      "file": "info.png",
+      "width": 220,
+      "height": 220,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Cream clay disc with a plum i (tracking sheet title)."
+    },
+    "g_logo": {
+      "file": "g_logo.png",
+      "width": 256,
+      "height": 256,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Flat four-colour Google G (branding guidelines)."
+    },
+    "g_button": {
+      "file": "g_button.png",
+      "width": 128,
+      "height": 128,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        40,
+        40,
+        40,
+        40
+      ],
+      "note": "Flat white provider button with grey stroke; slice 40px each side."
+    },
+    "spinner": {
+      "file": "spinner.png",
+      "width": 160,
+      "height": 160,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "White 12-spoke spinner; tint grey; step-rotate."
+    },
+    "info_ring": {
+      "file": "info_ring.png",
+      "width": 96,
+      "height": 96,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "White outline info mark; tint coral for inline errors."
+    },
+    "check": {
+      "file": "check.png",
+      "width": 96,
+      "height": 96,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "White rounded check; tint ink."
+    }
+  }
+}

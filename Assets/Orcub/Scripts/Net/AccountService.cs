@@ -20,6 +20,10 @@ namespace Orcub.Net
         public event Action<string> Failed;
         public FirebaseUser User => auth?.CurrentUser;
         public bool IsAnonymous => User == null || User.IsAnonymous;
+        /// <summary>UTC time of the last confirmed cloud round trip (link or save).</summary>
+        public DateTime? LastSaved { get; private set; }
+        /// <summary>Cloud snapshot that differs from this phone; saves pause until the player picks one.</summary>
+        public JObject PendingCloud { get; private set; }
 #if UNITY_IOS && !UNITY_EDITOR
         [DllImport("__Internal")] static extern void OrcubGoogleSignIn();
         [DllImport("__Internal")] static extern void OrcubGoogleSignOut();
@@ -43,7 +47,19 @@ namespace Orcub.Net
                 client.SetPlayer((string)JObject.Parse(req.downloadHandler.text)["player_id"]); linked = true;
                 using var save = await Authorized("/v1/save", "GET"); Ensure(save);
                 var state = JObject.Parse(save.downloadHandler.text); revision = (long)state["revision"];
-                if (state["data"] is JObject data) SaveSnapshot.Apply(SaveSnapshot.MergeProgress(SaveSnapshot.Capture(), data));
+                if (state["data"] is JObject data)
+                {
+                    var local = SaveSnapshot.Capture();
+                    var diff = SaveSnapshot.Compare(local, data);
+                    if (diff == SaveDiff.Conflict) PendingCloud = data;   // the player chooses (cloud restore sheet)
+                    else
+                    {
+                        SaveSnapshot.Apply(SaveSnapshot.MergeProgress(local, data));
+                        if (diff == SaveDiff.Fresh) Orcub.Game.AccountGateway.Boot.Restored = SaveSnapshot.Summary(data);
+                    }
+                }
+                LastSaved = DateTime.UtcNow;
+                Orcub.Game.AccountGateway.Boot.SaveChecked = true;
                 Changed?.Invoke();
             }
             finally { gate.Release(); }
@@ -104,7 +120,7 @@ namespace Orcub.Net
         public async void RequestSave() { try { await Save(); } catch (Exception) { Failed?.Invoke("cloud_save_failed"); } }
         public async Task Save()
         {
-            if (!linked || deleting || User == null || !await gate.WaitAsync(0)) return;
+            if (!linked || deleting || User == null || PendingCloud != null || !await gate.WaitAsync(0)) return;
             try
             {
                 var local = SaveSnapshot.Capture();
@@ -125,8 +141,19 @@ namespace Orcub.Net
                     if (current["data"] is JObject data) SaveSnapshot.Apply(SaveSnapshot.MergeProgress(local, data));
                 }
                 else { Ensure(req); revision = (long)JObject.Parse(req.downloadHandler.text)["revision"]; }
+                LastSaved = DateTime.UtcNow;
             }
             finally { gate.Release(); }
+        }
+        /// <summary>Cloud restore choice. Keeping this phone writes it over the cloud at the revision just read.</summary>
+        public async Task ResolveConflict(bool keepCloud)
+        {
+            var cloud = PendingCloud;
+            if (cloud == null) return;
+            PendingCloud = null;
+            if (keepCloud) SaveSnapshot.Apply(cloud);
+            Changed?.Invoke();
+            if (!keepCloud) await Save();
         }
         async Task<UnityWebRequest> Authorized(string path, string method, object body = null, string previous = null)
         {

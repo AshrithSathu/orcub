@@ -55,6 +55,7 @@ namespace Orcub.Game
         WreathView _wreath;
         UiKit _kit;
         HomeScreen _home;
+        AccountFlow _account;
         MapScreen _map;
         ChaptersScreen _chapters;
         readonly Stack<(ModelSnapshot snap, int moves)> _undo = new Stack<(ModelSnapshot, int)>();
@@ -139,7 +140,8 @@ namespace Orcub.Game
             _hud.Booster += UseBooster;
             _kit = new UiKit(art);
             _home = HomeScreen.Create(transform, _kit, _fx, onPlay: () => PlayLevel(Frontier), onMap: ShowChapters,
-                onSettings: () => _hud.ShowSettings(onClose: () => { }));
+                onSettings: () => _account.OpenSettings());
+            _account = AccountFlow.Create(transform, _kit, _home);
             _map = MapScreen.Create(transform, _kit, onPlayLevel: PlayLevel, onBack: ShowChapters);
             _chapters = ChaptersScreen.Create(transform, _kit, onOpen: ShowMap, onBack: ShowHome);
             _home.Hide();
@@ -151,10 +153,10 @@ namespace Orcub.Game
             if (playSplash && art.logoLetters != null && art.logoLetters.Length > 0)
             {
                 _splash = SplashView.Play(transform, art, cam, _fx, _crumbs,
-                    onReveal: () => LoaderScreen.Show(transform, _kit, onDone: ShowHome),
+                    onReveal: () => LoaderScreen.Show(transform, _kit, onDone: boot => { ShowHome(); _account.AfterBoot(boot); }),
                     onDone: () => _splash = null);
             }
-            else ShowHome();
+            else { ShowHome(); _account.AfterBoot(default); }
         }
 
         // ------------------------------------------------------------------ screens
@@ -383,12 +385,12 @@ namespace Orcub.Game
                 _winAt = -1f;
                 _wreath?.Show();
                 _hud?.ShowWin(_levelIndex + 1, _winStars,
-                    onNext: () =>
+                    onNext: () => _account.AfterWin(_levelIndex + 1, () =>
                     {
                         if (AdsGateway.Service != null) AdsGateway.Service.MaybeShowInterstitial("level_end", () => LoadLevel(_levelIndex + 1));
                         else LoadLevel(_levelIndex + 1);
-                    },
-                    onHome: () => GoHome(costsLife: false));
+                    }),
+                    onHome: () => _account.AfterWin(_levelIndex + 1, () => GoHome(costsLife: false)));
             }
             if (_failCheckAt > 0f && Time.time >= _failCheckAt && _spins.Count == 0 && _active < 0)
             {
@@ -856,7 +858,7 @@ namespace Orcub.Game
             _fx?.Cleared();
             _winStars = _rules.StarsFor(_movesUsed);
             Progress.RecordWin(_levelIndex, _winStars);
-            AdsGateway.Service?.RecordWin(_levelIndex + 1);
+            _account.RecordWin(_levelIndex + 1);   // may wait for the tracking pre-prompt
             EndAttempt(AttemptOutcome.Win);
             _winAt = Time.time + 1.0f;   // let the last ring fly off and the chime ring first
         }

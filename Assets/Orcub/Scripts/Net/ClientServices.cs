@@ -36,6 +36,7 @@ namespace Orcub.Net
         async void Awake()
         {
             Instance = this; DontDestroyOnLoad(gameObject);
+            AccountGateway.Boot.Reset();
             queue = new EventQueue(Path.Combine(Application.persistentDataPath, "orcub-events.json"));
             try { var stored = InstallStore.Read(); if (!string.IsNullOrEmpty(stored)) credentials = JObject.Parse(stored); }
             catch (Exception) { Debug.LogWarning("Install credentials unavailable"); }
@@ -55,13 +56,14 @@ namespace Orcub.Net
             try
             {
                 if (await FirebaseApp.CheckAndFixDependenciesAsync() != DependencyStatus.Available) return;
-                firebaseReady = true;
+                firebaseReady = true; AccountGateway.Boot.FirebaseReady = true;
                 Crashlytics.IsCrashlyticsCollectionEnabled = true;
                 Crashlytics.ReportUncaughtExceptionsAsFatal = true;
                 var rc = FirebaseRemoteConfig.DefaultInstance;
                 await rc.SetDefaultsAsync(new Dictionary<string, object> { ["tuning"] = JsonUtility.ToJson(new Tuning()), ["skill_model"] = JsonUtility.ToJson(PlayerModel.Load()), ["ad_policy"] = "{\"interstitial_min_interval_seconds\":150,\"interstitial_daily_cap\":6,\"rewarded_daily_cap\":20}", ["version"] = "bundled", ["experiments"] = "{}" });
                 try { await Account.Initialize(); }
-                catch (Exception) { Track("error", new { code = "anonymous_auth_failed", context = "startup" }); }
+                catch (Exception) { AccountGateway.Boot.NetworkFailed = true; Track("error", new { code = "anonymous_auth_failed", context = "startup" }); }
+                AccountGateway.Boot.AuthDone = true;
                 try
                 {
                     await rc.FetchAsync(TimeSpan.FromHours(1)); await rc.ActivateAsync();
@@ -75,7 +77,7 @@ namespace Orcub.Net
                 }
                 catch (Exception) { Track("error", new { code = "remote_config_failed", context = "startup" }); }
             }
-            catch (Exception) { Track("error", new { code = "firebase_init_failed", context = "startup" }); }
+            catch (Exception) { AccountGateway.Boot.AuthDone = true; Track("error", new { code = "firebase_init_failed", context = "startup" }); }
         }
         async Task Register()
         {
@@ -92,14 +94,15 @@ namespace Orcub.Net
                         screen = new { w = Screen.width, h = Screen.height, dpi = Screen.dpi }, locale = culture.Name,
                         language = culture.TwoLetterISOLanguageName, timezone = TimeZoneInfo.Local.Id, first_open_ts = DateTime.UtcNow.ToString("o") };
                     using var req = await Request("/v1/install", "POST", payload, install: false);
-                    if (req.responseCode != 200 && req.responseCode != 201) { nextFlush = Time.realtimeSinceStartupAsDouble + 30; return; }
+                    if (req.responseCode != 200 && req.responseCode != 201) { AccountGateway.Boot.NetworkFailed = true; nextFlush = Time.realtimeSinceStartupAsDouble + 30; return; }
                     var value = JObject.Parse(req.downloadHandler.text);
                     InstallStore.Write(value.ToString(Formatting.None)); credentials = value;
                 }
                 await FetchConfig();
+                AccountGateway.Boot.ConfigDone = true;
                 await Account.Link();
             }
-            catch (Exception) { nextFlush = Time.realtimeSinceStartupAsDouble + 30; }
+            catch (Exception) { AccountGateway.Boot.NetworkFailed = true; nextFlush = Time.realtimeSinceStartupAsDouble + 30; }
             finally { registering = false; }
         }
         public async Task<UnityWebRequest> Request(string path, string method, object body = null, string token = null, bool install = true, byte[] bytes = null, string previous = null, string etag = null)

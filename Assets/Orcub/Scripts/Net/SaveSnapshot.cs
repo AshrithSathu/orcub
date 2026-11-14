@@ -6,8 +6,37 @@ using UnityEngine;
 
 namespace Orcub.Net
 {
+    public enum SaveDiff { Same, LocalAhead, Fresh, Conflict }
+
     public static class SaveSnapshot
     {
+        /// <summary>Frontier level (1-based) and total earned stars of a snapshot.</summary>
+        public static SaveSummary Summary(JObject s)
+        {
+            int stars = 0;
+            if (s?["stars"] is JObject st) foreach (var p in st.Properties()) stars += (int)p.Value;
+            return new SaveSummary(((int?)s?["highest_level"] ?? 0) + 1, stars);
+        }
+
+        /// <summary>
+        /// How a cloud snapshot relates to this phone. Fresh: this phone has no progress (take the cloud quietly).
+        /// LocalAhead/Same: nothing in the cloud is missing here (normal autosave lag; merge quietly).
+        /// Conflict: the cloud holds progress this phone lacks while this phone has its own progress.
+        /// </summary>
+        public static SaveDiff Compare(JObject local, JObject cloud)
+        {
+            if (cloud == null) return SaveDiff.LocalAhead;
+            int lh = (int?)local["highest_level"] ?? 0, ch = (int?)cloud["highest_level"] ?? 0;
+            var ls = local["stars"] as JObject ?? new JObject();
+            bool cloudHasMore = ch > lh;
+            if (cloud["stars"] is JObject cs)
+                foreach (var p in cs.Properties()) if ((int)p.Value > ((int?)ls[p.Name] ?? 0)) cloudHasMore = true;
+            if (!cloudHasMore) return lh > ch || ls.Count > 0 ? SaveDiff.LocalAhead : SaveDiff.Same;
+            if (lh == 0 && !ls.HasValues) return SaveDiff.Fresh;
+            var a = Summary(local); var b = Summary(cloud);
+            return a.Level == b.Level && a.Stars == b.Stars ? SaveDiff.Same : SaveDiff.Conflict;
+        }
+
         public static JObject Capture()
         {
             var stars = new JObject();

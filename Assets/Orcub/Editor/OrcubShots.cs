@@ -29,17 +29,23 @@ namespace Orcub.EditorTools
         [MenuItem("Orcub/Capture All Screens")]
         static void Menu() => Run(Path.GetFullPath("ArtSource/.automation/shots"));
 
-        public static void Run(string dir)
+        [MenuItem("Orcub/Capture Account Screens")]
+        static void MenuAccount() => Run(Path.GetFullPath("ArtSource/.automation/shots"), accountOnly: true);
+
+        public static void Run(string dir) => Run(dir, false);
+
+        public static void Run(string dir, bool accountOnly)
         {
             if (!EditorApplication.isPlaying) { Debug.LogWarning("[Orcub] enter play mode first"); return; }
             _dir = dir;
             Directory.CreateDirectory(dir);
-            foreach (var f in Directory.GetFiles(dir, "*.png")) File.Delete(f);
+            foreach (var f in Directory.GetFiles(dir, accountOnly ? "a*.png" : "*.png")) File.Delete(f);
             Application.runInBackground = true;
             Steps.Clear();
 
             var bv = UnityEngine.Object.FindFirstObjectByType<BoardView>();
             void Call(string method, params object[] args) => bv.GetType().GetMethod(method, Flags).Invoke(bv, args);
+            Action<string, object[]> call = (m, a) => Call(m, a);
             LevelHud Hud() => UnityEngine.Object.FindFirstObjectByType<LevelHud>();
             void Click(string name)
             {
@@ -51,6 +57,7 @@ namespace Orcub.EditorTools
                     }
             }
 
+            if (accountOnly) { AddAccount(bv, call); Start(); return; }
             Add(0f, () => Call("ShowHome"), null);
             Add(0.8f, null, "01_home");
             Add(0f, () => Call("ShowChapters"), null);
@@ -72,8 +79,6 @@ namespace Orcub.EditorTools
             Add(0.4f, null, "07_toast");
             Add(1.8f, () => Call("OpenPause"), null);
             Add(0.8f, null, "08_pause");
-            Add(0f, () => Hud().ShowSettings(() => { }), null);
-            Add(0.8f, null, "09_settings");
             Add(0f, () => Hud().ShowLifeConfirm("Restart level?", "Restart", () => { }, () => { }), null);
             Add(0.8f, null, "10_life_confirm");
             Add(0f, () => Hud().ShowOutOfLives(() => { }, null, () => { }), null);
@@ -82,11 +87,69 @@ namespace Orcub.EditorTools
             Add(1.0f, null, "12_out_of_moves");
             Add(0f, () => { Hud().ClosePopup(); Hud().ShowWin(Chapters.Frontier + 1, 2, () => { }, () => { }); }, null);
             Add(1.0f, null, "13_win");
-            Add(0f, () => { Hud().ClosePopup(); Call("ShowHome"); Hud().ShowSettings(() => { }); }, null);
-            Add(0.8f, null, "14_home_settings");
-            Add(0f, () => { Hud().ClosePopup(); LoaderScreen.Show(bv.transform, (UiKit)bv.GetType().GetField("_kit", Flags).GetValue(bv), () => { }); }, null);
-            Add(0.35f, null, "15_loader");
+            Add(0f, () => Hud().ClosePopup(), null);
+            AddAccount(bv, call);
+            Start();
+        }
 
+        /// <summary>
+        /// Account / privacy screens (approved account_v1 + account_v2). Signed-in states use
+        /// SettingsScreen.Fake: the editor can't complete a native Google sign-in.
+        /// </summary>
+        static void AddAccount(BoardView bv, Action<string, object[]> call)
+        {
+            var kit = (UiKit)bv.GetType().GetField("_kit", Flags).GetValue(bv);
+            AccountFlow Flow() => UnityEngine.Object.FindFirstObjectByType<AccountFlow>();
+            var signedIn = new SettingsScreen.View { Guest = false, Provider = "Google", Email = "alex@gmail.com", Saved = DateTime.UtcNow };
+            var guest = new SettingsScreen.View { Guest = true };
+            void Clear()
+            {
+                foreach (var d in UnityEngine.Object.FindObjectsByType<AccountDialog>(FindObjectsSortMode.None)) UnityEngine.Object.Destroy(d.gameObject);
+                foreach (var o in UnityEngine.Object.FindObjectsByType<AccountOverlay>(FindObjectsSortMode.None)) UnityEngine.Object.Destroy(o.gameObject);
+                foreach (var s in UnityEngine.Object.FindObjectsByType<SettingsScreen>(FindObjectsSortMode.None)) UnityEngine.Object.Destroy(s.gameObject);
+                foreach (var l in UnityEngine.Object.FindObjectsByType<LoaderScreen>(FindObjectsSortMode.None)) UnityEngine.Object.Destroy(l.gameObject);
+                var f = Flow();
+                f.GetType().GetField("_settings", Flags).SetValue(f, null);
+                f.GetType().GetField("_sheet", Flags).SetValue(f, null);
+            }
+            void Settings(SettingsScreen.View view) { Clear(); SettingsScreen.Fake = view; Flow().OpenSettings(); }
+
+            Add(0f, () => { call("ShowHome", new object[0]); Settings(guest); }, null);
+            Add(0.7f, null, "a01_settings_guest");
+            Add(0f, () => Settings(signedIn), null);
+            Add(0.7f, null, "a02_settings_signed_in");
+            Add(0f, () => { Settings(guest); }, null);
+            Add(0.6f, () => Flow().Settings.ShowSigningIn(), null);
+            Add(0.3f, null, "a03_signing_in");
+            Add(0f, () => Flow().Settings.ShowSignInFailed(), null);
+            Add(0.5f, null, "a04_signin_failed");
+            Add(0f, () => Settings(signedIn), null);
+            Add(0.6f, () => Flow().Settings.OpenSignOutConfirm(), null);
+            Add(0.6f, null, "a05_signout_confirm");
+            Add(0f, () => { Settings(signedIn); }, null);
+            Add(0.6f, () => Flow().Settings.OpenDeleteConfirm(), null);
+            Add(0.6f, null, "a06_delete_confirm");
+            Add(0f, () => Flow().Settings.Dialog.SetBusy(true), null);
+            Add(0.3f, null, "a07_delete_busy");
+            Add(0f, () => { var d = Flow().Settings.Dialog; d.SetBusy(false); d.ShowError(); }, null);
+            Add(0.3f, null, "a08_delete_error");
+            Add(0f, () => { Clear(); SettingsScreen.Fake = null; Flow().ShowTracking(null); }, null);
+            Add(0.7f, null, "a09_att_preprompt");
+            Add(0f, () => { Clear(); Flow().ShowSaveNudge(null); }, null);
+            Add(0.7f, null, "a10_save_nudge");
+            Add(0f, () => { Clear(); Flow().ShowCloudRestore(new SaveSummary(42, 96), new SaveSummary(12, 30), _ => { }); }, null);
+            Add(0.7f, null, "a11_cloud_restore");
+            Add(0f, () => { Clear(); Flow().ShowWelcomeBack(new SaveSummary(42, 96)); }, null);
+            Add(0.6f, null, "a12_welcome_back");
+            Add(0f, () => { Clear(); LoaderScreen.ShowStatic(bv.transform, kit, 0.66f); }, null);
+            Add(0.4f, null, "a13_loader_online");
+            Add(0f, () => { Clear(); call("ShowHome", new object[0]); Flow().ShowOffline(); }, null);
+            Add(0.6f, null, "a14_loader_offline");
+            Add(0f, () => { Clear(); SettingsScreen.Fake = null; }, null);
+        }
+
+        static void Start()
+        {
             _next = EditorApplication.timeSinceStartup;
             EditorApplication.update -= Tick;
             EditorApplication.update += Tick;

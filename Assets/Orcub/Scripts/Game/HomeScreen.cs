@@ -155,6 +155,88 @@ namespace Orcub.Game
             }
         }
 
+        // ------------------------------------------------------------------ status card (welcome back / offline)
+
+        RectTransform _status;
+        Coroutine _statusRun;
+
+        /// <summary>
+        /// Temporary nonmodal card in the workshop strip (approved welcome_back_B / loader_v2_offline_B):
+        /// icon | title over one line (optionally ending in a star). The workshop task returns afterwards,
+        /// and nothing else on home moves.
+        /// </summary>
+        public void ShowStatus(Action<RectTransform> icon, string title, string line, bool lineStar, float seconds = 4f)
+        {
+            if (_statusRun != null) StopCoroutine(_statusRun);
+            if (_status != null) Destroy(_status.gameObject);
+            var kit = _kit;
+            _status = UiKit.Rect("Status", _safe);
+            UiKit.Anchor(_status, _taskArea.anchorMin.x, _taskArea.anchorMin.y, _taskArea.anchorMax.x, _taskArea.anchorMax.y);
+            var card = kit.Card(_status, 0.6f);
+            UiKit.Anchor(card.rectTransform, 0, 0, 1, 1);
+            var iconArea = UiKit.Rect("Icon", _status);
+            UiKit.Anchor(iconArea, 0.04f, 0.1f, 0.27f, 0.9f);
+            icon?.Invoke(iconArea);
+            var divider = kit.Divider(_status);
+            UiKit.Anchor(divider.rectTransform, 0.305f, 0.2f, 0.31f, 0.8f);
+            // title over line as one block, centred on the card face (the lip sits below it)
+            var name = kit.MakeText(_status, title, UiKit.Body, UiKit.Ink, TextAnchor.LowerLeft);
+            UiKit.Anchor(name.rectTransform, 0.35f, 0.53f, 0.97f, 0.9f);
+            var sub = kit.MakeText(_status, line, UiKit.Label, UiKit.Ink, TextAnchor.UpperLeft);
+            UiKit.Anchor(sub.rectTransform, 0.35f, 0.12f, 0.97f, 0.5f);
+            if (lineStar)
+            {
+                var star = kit.MakeImage(_status, kit.Art.uiStarClay, UiKit.StarGold);
+                var srt = star.rectTransform;
+                srt.anchorMin = srt.anchorMax = new Vector2(0.35f, 0.5f);
+                srt.pivot = new Vector2(0f, 1f);
+                srt.sizeDelta = new Vector2(46f, 46f);
+                srt.anchoredPosition = new Vector2(sub.preferredWidth + 8f, 0f);
+            }
+            _statusRun = StartCoroutine(StatusLife(seconds));
+        }
+
+        // Leaving home ends the status card early; the workshop strip is always intact on return.
+        void OnDisable()
+        {
+            _statusRun = null;
+            if (_status != null) { Destroy(_status.gameObject); _status = null; }
+            var task = _taskArea != null ? _taskArea.GetComponent<CanvasGroup>() : null;
+            if (task != null) { task.alpha = 1f; task.blocksRaycasts = true; }
+        }
+
+        IEnumerator StatusLife(float seconds)
+        {
+            var task = _taskArea.GetComponent<CanvasGroup>();
+            if (task == null) task = _taskArea.gameObject.AddComponent<CanvasGroup>();
+            var status = _status.gameObject.AddComponent<CanvasGroup>();
+            status.blocksRaycasts = false;
+            float t = 0f;
+            while (t < 1f)   // swap in: ease-out 220ms
+            {
+                t += Time.unscaledDeltaTime / 0.22f;
+                float e = UiKit.EaseOut(Mathf.Clamp01(t));
+                status.alpha = e;
+                task.alpha = 1f - e;
+                yield return null;
+            }
+            task.blocksRaycasts = false;
+            yield return new WaitForSecondsRealtime(seconds);
+            task.blocksRaycasts = true;
+            t = 0f;
+            while (t < 1f)   // back to the workshop task, a touch quicker
+            {
+                t += Time.unscaledDeltaTime / 0.18f;
+                float e = UiKit.EaseOut(Mathf.Clamp01(t));
+                status.alpha = 1f - e;
+                task.alpha = e;
+                yield return null;
+            }
+            Destroy(_status.gameObject);
+            _status = null;
+            _statusRun = null;
+        }
+
         void Restore(WorkshopTask task)
         {
             if (!Workshop.TryRestore(task.Id)) return;
