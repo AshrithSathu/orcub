@@ -1,0 +1,1621 @@
+{
+  "version": 1,
+  "blender": "5.3.0",
+  "conventions": {
+    "ppu": 200,
+    "units": "1 Blender unit = 1 Unity world unit",
+    "tubeWidth": 0.46,
+    "tubeHeight": 0.3,
+    "ringRadii": [
+      1.0,
+      1.2,
+      1.4
+    ],
+    "tube": "At top of ring: anchor=center+(0,R), local X=tangent right, local Y=radial out. Rotate by angle-90 degrees. Decals follow exact radius; do not scale tube width with radius.",
+    "clamp": "Exact build_parts pivot, tube X, stem -Y. Replacement variants use original clamp scale. Coating is overlay at same pivot.",
+    "badges": "Offset moves/ID base radially outward by .48 world units; clamp countdown at (0,-1.22). Numbers and IDs supplied by UI.",
+    "normal": "Raw tangent RGB=n*.5+.5; alpha silhouette identical to albedo. Unity normal texture: sRGB off. When flipping arrow X, flip normal red too.",
+    "boss": "No unique board accent in approved concept; compose existing mechanics."
+  },
+  "sprites": [
+    {
+      "file": "ratchet_arrow_r100.png",
+      "normal": "ratchet_arrow_r100_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.8,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Flush curved inlay; left arrow at top = CCW. Flip X for CW; also flip normal X.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_triangle_r100.png",
+      "normal": "ring_stamp_triangle_r100_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.7,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_square_r100.png",
+      "normal": "ring_stamp_square_r100_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.7,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_circle_r100.png",
+      "normal": "ring_stamp_circle_r100_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.7,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_star_r100.png",
+      "normal": "ring_stamp_star_r100_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.7,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_diamond_r100.png",
+      "normal": "ring_stamp_diamond_r100_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.7,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_heart_r100.png",
+      "normal": "ring_stamp_heart_r100_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.7,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ratchet_arrow_r120.png",
+      "normal": "ratchet_arrow_r120_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.6666666666666667,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Flush curved inlay; left arrow at top = CCW. Flip X for CW; also flip normal X.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_triangle_r120.png",
+      "normal": "ring_stamp_triangle_r120_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.5833333333333334,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_square_r120.png",
+      "normal": "ring_stamp_square_r120_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.5833333333333334,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_circle_r120.png",
+      "normal": "ring_stamp_circle_r120_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.5833333333333334,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_star_r120.png",
+      "normal": "ring_stamp_star_r120_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.5833333333333334,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_diamond_r120.png",
+      "normal": "ring_stamp_diamond_r120_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.5833333333333334,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_heart_r120.png",
+      "normal": "ring_stamp_heart_r120_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.5833333333333334,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ratchet_arrow_r140.png",
+      "normal": "ratchet_arrow_r140_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5714285714285715,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Flush curved inlay; left arrow at top = CCW. Flip X for CW; also flip normal X.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_triangle_r140.png",
+      "normal": "ring_stamp_triangle_r140_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_square_r140.png",
+      "normal": "ring_stamp_square_r140_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_circle_r140.png",
+      "normal": "ring_stamp_circle_r140_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_star_r140.png",
+      "normal": "ring_stamp_star_r140_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_diamond_r140.png",
+      "normal": "ring_stamp_diamond_r140_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "ring_stamp_heart_r140.png",
+      "normal": "ring_stamp_heart_r140_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Matching ring shape; assign same symbol to equal palette index.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clamp_triangle.png",
+      "normal": "clamp_triangle_n.png",
+      "px": [
+        220,
+        220
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.1,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Replacement original clamp with dark identity stamp; tint pale base.",
+      "width": 220,
+      "height": 220,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clamp_square.png",
+      "normal": "clamp_square_n.png",
+      "px": [
+        220,
+        220
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.1,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Replacement original clamp with dark identity stamp; tint pale base.",
+      "width": 220,
+      "height": 220,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clamp_circle.png",
+      "normal": "clamp_circle_n.png",
+      "px": [
+        220,
+        220
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.1,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Replacement original clamp with dark identity stamp; tint pale base.",
+      "width": 220,
+      "height": 220,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clamp_star.png",
+      "normal": "clamp_star_n.png",
+      "px": [
+        220,
+        220
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.1,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Replacement original clamp with dark identity stamp; tint pale base.",
+      "width": 220,
+      "height": 220,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clamp_diamond.png",
+      "normal": "clamp_diamond_n.png",
+      "px": [
+        220,
+        220
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.1,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Replacement original clamp with dark identity stamp; tint pale base.",
+      "width": 220,
+      "height": 220,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clamp_heart.png",
+      "normal": "clamp_heart_n.png",
+      "px": [
+        220,
+        220
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.1,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Replacement original clamp with dark identity stamp; tint pale base.",
+      "width": 220,
+      "height": 220,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "linked_pair_mark.png",
+      "normal": "linked_pair_mark_n.png",
+      "px": [
+        140,
+        140
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_center",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.7,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Repeat on both paired rings; positive group identifier may be UI text.",
+      "width": 140,
+      "height": 140,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "linked_teeth.png",
+      "normal": "linked_teeth_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "pair_contact",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.8,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Contact midpoint; +X points from first ring toward partner. Use where original teeth do not touch.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "key.png",
+      "normal": "key_n.png",
+      "px": [
+        260,
+        260
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "tube",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.3,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Carrier pickup; draw matching KeyId on identifier base.",
+      "width": 260,
+      "height": 260,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "padlock_locked.png",
+      "normal": "padlock_locked_n.png",
+      "px": [
+        220,
+        220
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "tube",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.1,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Unlocked when matching key carrier is removed.",
+      "width": 220,
+      "height": 220,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "padlock_unlocked.png",
+      "normal": "padlock_unlocked_n.png",
+      "px": [
+        220,
+        220
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "tube",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.1,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Unlocked when matching key carrier is removed.",
+      "width": 220,
+      "height": 220,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "oil_can.png",
+      "normal": "oil_can_n.png",
+      "px": [
+        260,
+        260
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "tube",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.3,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Oil collected only when carrier is pulled; matching OilId drawn by UI.",
+      "width": 260,
+      "height": 260,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "moves_badge.png",
+      "normal": "moves_badge_n.png",
+      "px": [
+        144,
+        144
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "tube_badge",
+      "anchorOffset": [
+        0,
+        0.48
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.72,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Draw max(0,RustAfter-Moves) on centre; no baked numeral.",
+      "width": 144,
+      "height": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "identifier_badge.png",
+      "normal": "identifier_badge_n.png",
+      "px": [
+        144,
+        144
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "tube_badge",
+      "anchorOffset": [
+        0,
+        0.48
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.72,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Shared key/padlock and oil/rust ID base; UI draws positive ID.",
+      "width": 144,
+      "height": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "spring_closed.png",
+      "normal": "spring_closed_n.png",
+      "px": [
+        424,
+        424
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 2.12,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Replacement clamp; coil extends down stem. Open while inactive until K further moves.",
+      "width": 424,
+      "height": 424,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "spring_countdown.png",
+      "normal": "spring_countdown_n.png",
+      "px": [
+        144,
+        144
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp_badge",
+      "anchorOffset": [
+        0,
+        -1.22
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.72,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Draw max(0,SpringMoves-(Moves-ReleasedAt)); release gesture is move zero.",
+      "width": 144,
+      "height": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "boss_badge.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 120.0,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 2.0,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Top-bar Boss badge. Approved boss board uses ordinary mechanic pieces, no extra accent.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "intro_ratchet.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 58.53658536585366,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 4.1,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Pre-lit intro-card illustration, no baked UI text.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "intro_key_padlock.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 58.53658536585366,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 4.1,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Pre-lit intro-card illustration, no baked UI text.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "intro_mix.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 58.53658536585366,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 4.1,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Pre-lit intro-card illustration, no baked UI text.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_patch1_r100.png",
+      "normal": "rust_patch1_r100_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.8,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Curved rust freckles, does not imply frozen yet.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_patch2_r100.png",
+      "normal": "rust_patch2_r100_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.8,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Curved rust freckles, does not imply frozen yet.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_seized_r100.png",
+      "normal": "rust_seized_r100_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 0.8,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Dense rust with crossed seizure mark; frozen is irreversible.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_patch1_r120.png",
+      "normal": "rust_patch1_r120_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.6666666666666667,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Curved rust freckles, does not imply frozen yet.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_patch2_r120.png",
+      "normal": "rust_patch2_r120_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.6666666666666667,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Curved rust freckles, does not imply frozen yet.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_seized_r120.png",
+      "normal": "rust_seized_r120_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.2
+      ],
+      "referenceRingRadius": 1.2,
+      "scaleRelativeToRingRadius": 0.6666666666666667,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Dense rust with crossed seizure mark; frozen is irreversible.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_patch1_r140.png",
+      "normal": "rust_patch1_r140_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5714285714285715,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Curved rust freckles, does not imply frozen yet.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_patch2_r140.png",
+      "normal": "rust_patch2_r140_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5714285714285715,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Curved rust freckles, does not imply frozen yet.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "rust_seized_r140.png",
+      "normal": "rust_seized_r140_n.png",
+      "px": [
+        160,
+        160
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ring_surface",
+      "anchorOffset": [
+        0,
+        1.4
+      ],
+      "referenceRingRadius": 1.4,
+      "scaleRelativeToRingRadius": 0.5714285714285715,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Dense rust with crossed seizure mark; frozen is irreversible.",
+      "width": 160,
+      "height": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "spring_open.png",
+      "normal": "spring_open_n.png",
+      "px": [
+        424,
+        424
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 2.12,
+      "tintable": true,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Replacement clamp; coil extends down stem. Open while inactive until K further moves.",
+      "width": 424,
+      "height": 424,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clay_intact.png",
+      "normal": "clay_intact_n.png",
+      "px": [
+        260,
+        260
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.3,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Overlay original clamp: Passes=1 cracked; Passes=0 intact.",
+      "width": 260,
+      "height": 260,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clay_cracked.png",
+      "normal": "clay_cracked_n.png",
+      "px": [
+        260,
+        260
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.3,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Overlay original clamp: Passes=1 cracked; Passes=0 intact.",
+      "width": 260,
+      "height": 260,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "clay_gone.png",
+      "normal": "clay_gone_n.png",
+      "px": [
+        260,
+        260
+      ],
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "clamp",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 1.3,
+      "tintable": false,
+      "lighting": "white dome albedo + tangent normal; Unity URP 2D",
+      "description": "Transparent shell; show bare original clamp after second distinct gap entry.",
+      "width": 260,
+      "height": 260,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "intro_linked.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 58.53658536585366,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 4.1,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Pre-lit intro-card illustration, no baked UI text.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "intro_colour_clamp.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 58.53658536585366,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 4.1,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Pre-lit intro-card illustration, no baked UI text.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "intro_rust_oil.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 58.53658536585366,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 4.1,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Pre-lit intro-card illustration, no baked UI text.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "intro_spring.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 58.53658536585366,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 4.1,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Pre-lit intro-card illustration, no baked UI text.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    },
+    {
+      "file": "intro_clay.png",
+      "normal": null,
+      "px": [
+        240,
+        240
+      ],
+      "ppu": 58.53658536585366,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "anchor": "ui",
+      "anchorOffset": [
+        0,
+        0
+      ],
+      "referenceRingRadius": 1.0,
+      "scaleRelativeToRingRadius": 4.1,
+      "tintable": false,
+      "lighting": "prelit UI",
+      "description": "Pre-lit intro-card illustration, no baked UI text.",
+      "width": 240,
+      "height": 240,
+      "pivotX": 0.5,
+      "pivotY": 0.5
+    }
+  ],
+  "validation": {
+    "contact": "ArtSource/ui_concepts/features_v1/mech_kit_contact.png",
+    "boardPixelsPerUnit": 70,
+    "normalAlpha": "exactly copied from paired albedo after Cycles rendering",
+    "errors": []
+  }
+}
