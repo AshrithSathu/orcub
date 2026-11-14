@@ -19,13 +19,18 @@ namespace Orcub.Daily
             Context = new DailyContext(state, clock ?? new SystemDailyClock(), () => DailyPersistence.Save(canonicalPlayerId, state), ClientGateway.Track);
             var wallet = new DailyWalletClient();
             Wallet = wallet;
-            Puzzle = new DailyPuzzleService(Context, wallet); Gift = new DailyGiftService(Context, wallet);
+            Puzzle = new DailyPuzzleService(Context, wallet, () => Orcub.Net.ClientServices.Instance?.Flush() ?? System.Threading.Tasks.Task.CompletedTask); Gift = new DailyGiftService(Context, wallet);
             Wins = new WinStreakService(Context); Notifications = new NotificationService(Context, notifications);
         }
         public DailyWalletClient Wallet { get; }
         // Call once for a new foreground session; refresh schedules separately after lives/completion changes.
         public void OnAppOpen(DateTimeOffset? livesFullAt)
-        { Notifications.SessionOpened(); Notifications.TrackOpen(); Reschedule(livesFullAt); }
+        { Notifications.SessionOpened(); Notifications.TrackOpen(); Reschedule(livesFullAt); RetryPendingRewards(); }
+        async void RetryPendingRewards()
+        {
+            try { await Puzzle.RetryRewards(); }
+            catch (Exception error) { UnityEngine.Debug.LogWarning("Daily rewards remain pending: " + error.Message); }
+        }
         public void Reschedule(DateTimeOffset? livesFullAt)
         {
             var list = new List<NotificationCandidate>();

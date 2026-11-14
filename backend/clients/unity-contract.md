@@ -111,7 +111,7 @@ Products array contains all six products (example abbreviated). ltv_iap uses App
 
 Use `interstitial_` placement prefixes for interstitial shown/paid events, `rewarded_` for offers/rewards/paid. Default policy requires all gates; payers/Remove Ads disable interstitials, rewarded acceptance >=0.6 lowers cap to 3/240s, churn >=0.25 lowers cap to 2/300s. Rewards remain available in each case. Apply no policy change mid-attempt.
 
-Link merge: guest grant gold is excluded from portable value. Portable gold = current negative balance if in debt, otherwise max(0, current gold - cumulative daily_gift/level_reward credits). If any such grants exist, guest booster inventory and unlimited time are also excluded, preventing conversion of farmed grants into portable items. This deliberately conservative rule can forfeit mixed-source guest inventory; purchase entitlements still move. Without grants, remaining purchased inventory and unlimited time transfer. Canonical lives win; free refill lives never merge. A zero/negative merge adjustment records excluded value without rewriting historical balance_after. Keys/purchases remain deduplicated. Daily caps count all merged history, so linking never resets them. Direct linking without a canonical account keeps its wallet and existing daily caps. Grant limits: one daily gift and 20 winning-event rewards per player/install per UTC day. Telemetry is not attestation; DeviceCheck/App Check remains future work.
+Link merge: remaining purchased value survives; level reward gold is excluded. Daily rewards carry only for dates not already claimed by the account; duplicate dates are excluded. Canonical lives win. Keys and purchase ownership remain deduplicated. See the daily merge rules below.
 
 `POST /v1/wallet/consume`:
 ```json
@@ -145,8 +145,8 @@ be today's date; old receipts remain replayable indefinitely. Puzzle claims
 require owned daily_puzzle_end telemetry with metric_success=true, metric_day
 equal to the epoch-day ordinal, and server receipt on that day or the next.
 Unknown-kind numeric metrics remain in raw_events. Flush telemetry before retry;
-missing evidence returns 409 daily completion pending, or 410 daily completion
-expired once outside RETENTION_DAYS. Evidence is client-reported, not attestation.
+missing evidence returns 409 daily completion pending through day+1, or 410 daily_completion_expired
+after day+1. Evidence is client-reported, not attestation.
 New puzzle claims must follow date order; a missing earlier day cannot be
 inserted behind the last awarded day.
 
@@ -157,7 +157,7 @@ to one. A freeze is earned once ever on first reaching seven. Rewards at streak
 ordinal modulo three: 20 gold / one hint / 30 minutes unlimited lives. Unlimited
 time stacks from max(now, existing expiry). All rewards, including zero-gold
 awards, write the ledger and durable receipt atomically. Guest daily_puzzle and
-daily_gift grants are excluded from portable merge value, including booster and
+daily_gift rewards carry only for dates the canonical account has not claimed. Duplicate dates are excluded, including booster and
 unlimited awards. Histories union by reason/date with canonical receipts winning;
 streaks rebuild without minting rewards or summing streak integers.
 
@@ -174,3 +174,8 @@ device-local notification opt-out and require local OS permission.
 
 Account exports include daily_claims and daily_streaks. Account deletion cascades
 both; telemetry retention never removes claim tombstones.
+
+
+Daily error policy: 410 daily_completion_expired means no proof arrived within day..day+1; 410 daily_history_out_of_order means the server has advanced beyond this unclaimed date. Both are permanent. The client removes permanent 4xx entries (except 408/409/429) and continues with later dates. Network errors, 408, pending 409, 429 and 5xx remain queued. Flush telemetry before claims and retry on boot, foreground resume and successful telemetry flush.
+
+Merge subtracts receipt-recorded daily booster quantities and unlimited minutes from the guest remainder, bounded at zero, preserving purchased inventory/time. It credits full daily rewards only for (reason, utc_day) newly claimed by the canonical account. Existing canonical dates retain their original receipts, and replays describe the credited reward. Level-reward gold remains excluded. Daily save history and pending queues are unioned on merge; absent daily sections from older clients preserve the cloud section. Restored streak counts are zero after breakage; LastPuzzleDay includes the newest pending date.

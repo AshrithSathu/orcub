@@ -15,15 +15,24 @@ namespace Orcub.Daily
     {
         readonly DailyContext c;
         readonly IDailyWallet wallet;
+        readonly Func<Task> flush;
         Task<DailyPuzzle> preparing;
         string preparingDay;
         bool granting;
         string startedDay;
         public event Action Changed;
         public event Action<string> RewardGranted;
-        public DailyPuzzleService(DailyContext context, IDailyWallet wallet)
-        { c = context; this.wallet = wallet; c.Changed += () => Changed?.Invoke(); }
-        public int Streak => c.State.PuzzleStreak;
+        public DailyPuzzleService(DailyContext context, IDailyWallet wallet, Func<Task> flush = null)
+        { c = context; this.wallet = wallet; this.flush = flush ?? (() => Task.CompletedTask); c.Changed += () => Changed?.Invoke(); }
+        public int Streak
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(c.State.LastPuzzleDay)) return 0;
+                int gap = (int)(DailyContext.Parse(c.Today) - DailyContext.Parse(c.State.LastPuzzleDay)).TotalDays;
+                return gap > 2 || (gap == 2 && !c.State.Freeze) ? 0 : c.State.PuzzleStreak;
+            }
+        }
         public bool HasFreeze => c.State.Freeze;
         public static DailyReward MilestoneReward(int streak)
         {
@@ -92,9 +101,14 @@ namespace Orcub.Daily
             granting = true;
             try
             {
+                if (c.State.PendingPuzzleGrants.Count == 0) return;
+                await flush();
+                c.State.PendingPuzzleGrants.Sort(StringComparer.Ordinal);
                 foreach (string day in c.State.PendingPuzzleGrants.ToArray())
                 {
-                    await wallet.Grant("daily_puzzle", day, DailyContext.GrantKey("daily_puzzle", day));
+                    try { await wallet.Grant("daily_puzzle", day, DailyContext.GrantKey("daily_puzzle", day)); }
+                    catch (DailyGrantException error) when (error.Permanent)
+                    { c.State.PendingPuzzleGrants.Remove(day); c.Save(); continue; }
                     c.State.PendingPuzzleGrants.Remove(day); c.Save(); RewardGranted?.Invoke(day);
                 }
             }

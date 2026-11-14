@@ -721,9 +721,9 @@ async fn revoke(pool: &PgPool, v: &Value) -> Result<()> {
 pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> {
     lock(tx, canonical).await?;
     lock(tx, guest).await?;
-    daily::merge(tx, canonical, guest).await?;
+    let carried = daily::merge(tx, canonical, guest).await?;
     let mut g = snapshot(tx, guest).await?;
-    // Client-proven rewards are spendable on the original wallet, never portable between installs.
+    // Remove guest grant value, then credit only daily dates newly owned by the account.
     let grants:i64=sqlx::query_scalar("SELECT COALESCE(sum(delta),0)::bigint FROM wallet_ledger WHERE player_id=$1 AND reason IN ('daily_gift','daily_puzzle','level_reward')").bind(guest).fetch_one(&mut **tx).await?;
     let gold = g["gold"].as_i64().unwrap();
     let portable = if gold < 0 {
@@ -731,10 +731,27 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
     } else {
         (gold - grants).max(0)
     };
-    let has_grants: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wallet_ledger WHERE player_id=$1 AND reason IN ('daily_gift','daily_puzzle','level_reward'))").bind(guest).fetch_one(&mut **tx).await?;
-    if has_grants {
-        g["inventory"] = json!({});
-        g["unlimited_until"] = Value::Null;
+    let rewards: Vec<Value> =
+        sqlx::query_scalar("SELECT receipt->'reward' FROM daily_claims WHERE player_id=$1")
+            .bind(guest)
+            .fetch_all(&mut **tx)
+            .await?;
+    let mut minutes = 0;
+    for reward in rewards {
+        if let Some(items) = reward["inventory"].as_object() {
+            for (kind, n) in items {
+                let remaining =
+                    g["inventory"][kind].as_i64().unwrap_or(0) - n.as_i64().unwrap_or(0);
+                g["inventory"][kind] = json!(remaining.max(0));
+            }
+        }
+        minutes += reward["unlimited_minutes"].as_i64().unwrap_or(0);
+    }
+    if let Some(expiry) =
+        serde_json::from_value::<Option<DateTime<Utc>>>(g["unlimited_until"].clone())
+            .map_err(|_| ApiError::unavailable())?
+    {
+        g["unlimited_until"] = json!((expiry - chrono::Duration::minutes(minutes)).max(Utc::now()));
     }
     entry(
         tx,
@@ -751,7 +768,28 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
         .bind(portable)
         .execute(&mut **tx)
         .await?;
-    sqlx::query("UPDATE wallets SET inventory=(SELECT COALESCE(jsonb_object_agg(k,n),'{}') FROM (SELECT k,sum(v::int) n FROM (SELECT key k,value v FROM jsonb_each_text(inventory) UNION ALL SELECT key,value FROM jsonb_each_text($2::jsonb)) x GROUP BY k) a), unlimited_until=GREATEST(unlimited_until,$3) WHERE player_id=$1").bind(canonical).bind(&g["inventory"]).bind(serde_json::from_value::<Option<DateTime<Utc>>>(g["unlimited_until"].clone()).map_err(|_|ApiError::unavailable())?).execute(&mut **tx).await?;
+    sqlx::query("UPDATE wallets SET inventory=(SELECT COALESCE(jsonb_object_agg(k,n),'{}') FROM (SELECT k,sum(v::int) n FROM (SELECT key k,value v FROM jsonb_each_text(inventory) UNION ALL SELECT key,value FROM jsonb_each_text($2::jsonb)) x GROUP BY k) a), unlimited_until=CASE WHEN $3::timestamptz IS NULL THEN unlimited_until ELSE GREATEST(COALESCE(unlimited_until,now()),now())+GREATEST($3::timestamptz-now(),interval '0 seconds') END WHERE player_id=$1").bind(canonical).bind(&g["inventory"]).bind(serde_json::from_value::<Option<DateTime<Utc>>>(g["unlimited_until"].clone()).map_err(|_|ApiError::unavailable())?).execute(&mut **tx).await?;
+    for reward in carried {
+        entry(
+            tx,
+            canonical,
+            reward["gold"].as_i64().unwrap_or(0),
+            "merge_daily_reward",
+            &guest.to_string(),
+            &Uuid::new_v4().to_string(),
+            &json!({}),
+        )
+        .await?;
+        if let Some(items) = reward["inventory"].as_object() {
+            for (kind, n) in items {
+                sqlx::query("UPDATE wallets SET inventory=jsonb_set(inventory,ARRAY[$2],to_jsonb(COALESCE((inventory->>$2)::int,0)+$3)) WHERE player_id=$1").bind(canonical).bind(kind).bind(n.as_i64().unwrap_or(0) as i32).execute(&mut **tx).await?;
+            }
+        }
+        let minutes = reward["unlimited_minutes"].as_i64().unwrap_or(0);
+        if minutes > 0 {
+            sqlx::query("UPDATE wallets SET unlimited_until=greatest(coalesce(unlimited_until,now()),now())+$2 * interval '1 minute' WHERE player_id=$1").bind(canonical).bind(minutes as f64).execute(&mut **tx).await?;
+        }
+    }
     sqlx::query("UPDATE wallet_ledger SET player_id=$1,idempotency_key=$2::uuid::text || ':' || idempotency_key WHERE player_id=$2")
         .bind(canonical)
         .bind(guest)
@@ -1206,7 +1244,7 @@ mod authority_tests {
             assert!(grant(State(s.clone()), h, Json(b)).await.is_err());
             let mut tx = pool.begin().await.unwrap();
             merge(&mut tx, canonical, guest).await.unwrap();
-            assert_eq!(snapshot(&mut tx, canonical).await.unwrap()["gold"], 0);
+            assert_eq!(snapshot(&mut tx, canonical).await.unwrap()["gold"], 20);
             tx.commit().await.unwrap();
         }
         let (guest, _) = player(&pool).await;
@@ -1215,7 +1253,7 @@ mod authority_tests {
         let v = json!({"transactionId":"bought","originalTransactionId":"bought","productId":"com.orcub.puzzle.gold_small","environment":"Sandbox","appAccountToken":guest,"purchaseDate":Utc::now().timestamp_millis()});
         apply(&mut tx, guest, &v).await.unwrap();
         merge(&mut tx, canonical, guest).await.unwrap();
-        assert_eq!(snapshot(&mut tx, canonical).await.unwrap()["gold"], 100);
+        assert_eq!(snapshot(&mut tx, canonical).await.unwrap()["gold"], 120);
         tx.commit().await.unwrap();
     }
     #[sqlx::test(migrations = "./migrations")]

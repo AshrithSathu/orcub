@@ -19,9 +19,11 @@ namespace Orcub.Daily.Tests
             public readonly HashSet<string> Keys = new HashSet<string>();
             public int Calls, Awards;
             public bool LoseResponse;
+            public readonly Dictionary<string, Exception> Errors = new Dictionary<string, Exception>();
             public Task Grant(string reason, string day, string key)
             {
-                Calls++; if (Keys.Add(key)) Awards++;
+                Calls++; if (Errors.TryGetValue(day, out var error)) throw error;
+                if (Keys.Add(key)) Awards++;
                 if (LoseResponse) { LoseResponse = false; throw new TimeoutException(); }
                 return Task.CompletedTask;
             }
@@ -42,6 +44,33 @@ namespace Orcub.Daily.Tests
         Wallet wallet;
         [SetUp] public void Setup()
         { clock = new Clock(); state = new DailySaveSection(); c = new DailyContext(state, clock, () => { }, (k, v) => { }); wallet = new Wallet(); }
+        [Test] public async Task PermanentExpiredDayIsDroppedAndNextDayIsClaimedAfterFlush()
+        {
+            state.PendingPuzzleGrants.AddRange(new[] { "2026-11-13", "2026-11-15" });
+            wallet.Errors["2026-11-13"] = new DailyGrantException(410, "daily_completion_expired");
+            bool flushed = false;
+            var service = new DailyPuzzleService(c, wallet, () => { Assert.AreEqual(0, wallet.Calls); flushed = true; return Task.CompletedTask; });
+            await service.RetryRewards();
+            Assert.IsTrue(flushed); Assert.AreEqual(2, wallet.Calls);
+            Assert.AreEqual(1, wallet.Awards); Assert.IsEmpty(state.PendingPuzzleGrants);
+        }
+        [TestCase(409)] [TestCase(429)] [TestCase(503)]
+        public void TransientErrorsKeepQueue(int status)
+        {
+            state.PendingPuzzleGrants.AddRange(new[] { "2026-11-14", "2026-11-15" });
+            wallet.Errors["2026-11-14"] = new DailyGrantException(status, "pending");
+            Assert.ThrowsAsync<DailyGrantException>(async () => await new DailyPuzzleService(c, wallet).RetryRewards());
+            Assert.AreEqual(2, state.PendingPuzzleGrants.Count); Assert.AreEqual(1, wallet.Calls);
+        }
+        [Test] public void RestoredStreakReflectsBreakage()
+        {
+            state.LastPuzzleDay = "2026-11-12"; state.PuzzleStreak = 12; state.Freeze = true;
+            Assert.AreEqual(0, new DailyPuzzleService(c, wallet).Streak);
+            state.LastPuzzleDay = "2026-11-13";
+            Assert.AreEqual(12, new DailyPuzzleService(c, wallet).Streak);
+            state.Freeze = false;
+            Assert.AreEqual(0, new DailyPuzzleService(c, wallet).Streak);
+        }
         [Test] public void DailyIdentityIsStableAndSeparateFromSaga()
         {
             var a = DailyPuzzleService.Generate(c.Today); var b = DailyPuzzleService.Generate(c.Today);

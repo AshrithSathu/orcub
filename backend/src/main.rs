@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .acquire_timeout(Duration::from_secs(5))
         .connect(&url)
         .await?;
-    sqlx::migrate!().run(&pool).await?;
+    orcub_backend::migrator().run(&pool).await?;
     if std::env::args().any(|a| a == "retention") {
         tracing::info!(deleted = retain(&pool, days).await?, "retention completed");
         return Ok(());

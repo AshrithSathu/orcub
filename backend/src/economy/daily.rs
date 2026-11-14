@@ -20,7 +20,7 @@ impl Streak {
     fn advance(&mut self, day: NaiveDate) -> Result<()> {
         let gap = self.last.map(|last| (day - last).num_days());
         if gap.is_some_and(|g| g <= 0) {
-            return Err(ApiError(StatusCode::CONFLICT, "daily history out of order"));
+            return Err(ApiError(StatusCode::GONE, "daily_history_out_of_order"));
         }
         self.count = match gap {
             Some(1) => self.count.checked_add(1),
@@ -100,19 +100,9 @@ pub(super) async fn claim(tx: &mut Tx<'_>, id: Uuid, b: &Action) -> Result<Value
     let today: NaiveDate = sqlx::query_scalar("SELECT (now() AT TIME ZONE 'UTC')::date")
         .fetch_one(&mut **tx)
         .await?;
-    let retention = std::env::var("RETENTION_DAYS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(395);
-    claim_on(tx, id, b, today, retention).await
+    claim_on(tx, id, b, today).await
 }
-async fn claim_on(
-    tx: &mut Tx<'_>,
-    id: Uuid,
-    b: &Action,
-    today: NaiveDate,
-    retention: i64,
-) -> Result<Value> {
+async fn claim_on(tx: &mut Tx<'_>, id: Uuid, b: &Action, today: NaiveDate) -> Result<Value> {
     if !matches!(b.reason.as_str(), "daily_gift" | "daily_puzzle") || b.booster.is_some() {
         return Err(ApiError::bad("utc_day only allowed for daily grants"));
     }
@@ -135,15 +125,21 @@ async fn claim_on(
     let mut streak = Streak::default();
     if b.reason == "daily_gift" {
         if day != today {
-            return Err(ApiError(StatusCode::CONFLICT, "daily date expired"));
+            return Err(ApiError(StatusCode::GONE, "daily_date_expired"));
+        }
+        let legacy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wallet_ledger WHERE player_id=$1 AND reason='daily_gift' AND (created_at AT TIME ZONE 'UTC')::date=$2)")
+            .bind(id).bind(day).fetch_one(&mut **tx).await?;
+        if legacy {
+            legacy_receipt(tx, id).await?;
+            return Ok(sqlx::query_scalar("SELECT receipt FROM daily_claims WHERE player_id=$1 AND reason='daily_gift' AND utc_day=$2").bind(id).bind(day).fetch_one(&mut **tx).await?);
         }
     } else {
         let ordinal = (day - date("1970-01-01")?).num_days();
         // Future-kind metrics are stored in raw_events by the existing ingestion contract.
         let evidence: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events e LEFT JOIN raw_events r USING(event_id) WHERE e.player_id=$1 AND e.kind='daily_puzzle_end' AND COALESCE(r.payload,e.payload)->'metric_success'='true'::jsonb AND COALESCE(r.payload,e.payload)->'metric_day'=to_jsonb($2::bigint) AND (e.received_at AT TIME ZONE 'UTC')::date BETWEEN $3 AND $3+1)").bind(id).bind(ordinal).bind(day).fetch_one(&mut **tx).await?;
         if !evidence {
-            return Err(if (today - day).num_days() > retention {
-                ApiError(StatusCode::GONE, "daily completion expired")
+            return Err(if (today - day).num_days() > 1 {
+                ApiError(StatusCode::GONE, "daily_completion_expired")
             } else {
                 ApiError(StatusCode::CONFLICT, "daily completion pending")
             });
@@ -186,7 +182,8 @@ async fn claim_on(
     }
     Ok(v)
 }
-pub(super) async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> {
+pub(super) async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<Vec<Value>> {
+    let rewards: Vec<Value> = sqlx::query_scalar("SELECT g.receipt->'reward' FROM daily_claims g WHERE g.player_id=$2 AND NOT EXISTS(SELECT 1 FROM daily_claims c WHERE c.player_id=$1 AND c.reason=g.reason AND c.utc_day=g.utc_day)").bind(canonical).bind(guest).fetch_all(&mut **tx).await?;
     let earned: bool = sqlx::query_scalar("SELECT COALESCE(bool_or(freeze_earned),false) FROM daily_streaks WHERE player_id IN ($1,$2)").bind(canonical).bind(guest).fetch_one(&mut **tx).await?;
     sqlx::query("INSERT INTO daily_claims(player_id,reason,utc_day,receipt,created_at) SELECT $1,reason,utc_day,receipt,created_at FROM daily_claims WHERE player_id=$2 ON CONFLICT DO NOTHING").bind(canonical).bind(guest).execute(&mut **tx).await?;
     let days: Vec<NaiveDate> = sqlx::query_scalar("SELECT utc_day FROM daily_claims WHERE player_id=$1 AND reason='daily_puzzle' ORDER BY utc_day").bind(canonical).fetch_all(&mut **tx).await?;
@@ -195,15 +192,28 @@ pub(super) async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Resu
         state.advance(day)?;
     }
     state.earned |= earned;
-    state.store(tx, canonical).await
+    state.store(tx, canonical).await?;
+    Ok(rewards)
 }
 pub(super) async fn save_fields(tx: &mut Tx<'_>, id: Uuid, data: &mut SaveData) -> Result<()> {
     if let Some(d) = data.daily.as_mut() {
         let state = Streak::load(tx, id).await?;
-        d["PuzzleStreak"] = json!(state.count);
+        let today: NaiveDate = sqlx::query_scalar("SELECT (now() AT TIME ZONE 'UTC')::date")
+            .fetch_one(&mut **tx)
+            .await?;
+        let broken = state.last.is_none_or(|last| {
+            let gap = (today - last).num_days();
+            gap > 2 || (gap == 2 && !state.freeze)
+        });
+        d["PuzzleStreak"] = json!(if broken { 0 } else { state.count });
         d["Freeze"] = json!(state.freeze);
         d["FreezeEarned"] = json!(state.earned);
-        d["LastPuzzleDay"] = json!(state.last.map(|d| d.to_string()).unwrap_or_default());
+        let server_day = state.last.map(|d| d.to_string()).unwrap_or_default();
+        let pending = d["PendingPuzzleGrants"]
+            .as_array()
+            .and_then(|a| a.iter().filter_map(Value::as_str).max())
+            .unwrap_or("");
+        d["LastPuzzleDay"] = json!(server_day.as_str().max(pending));
     }
     Ok(())
 }
@@ -233,7 +243,7 @@ mod tests {
     async fn run(pool: &PgPool, b: &Action, today: NaiveDate) -> Result<Value> {
         let mut tx = pool.begin().await?;
         lock(&mut tx, b.player_id).await?;
-        let v = claim_on(&mut tx, b.player_id, b, today, 395).await?;
+        let v = claim_on(&mut tx, b.player_id, b, today).await?;
         tx.commit().await?;
         Ok(v)
     }
@@ -242,6 +252,126 @@ mod tests {
         sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,received_at,payload) VALUES($1,$2,'daily_puzzle_end',$3,$3,'{}')").bind(event).bind(id).bind(received.and_hms_opt(12,0,0).unwrap().and_utc()).execute(pool).await.unwrap();
         sqlx::query("INSERT INTO raw_events(event_id,payload) VALUES($1,$2)").bind(event).bind(json!({"metric_day":(day-date("1970-01-01").unwrap()).num_days(),"metric_success":true})).execute(pool).await.unwrap();
     }
+    #[sqlx::test(migrations = "./migrations")]
+    async fn expired_and_out_of_order_are_permanent(pool: PgPool) {
+        let id = player(&pool).await;
+        let day = date("2026-11-15").unwrap();
+        let err = run(
+            &pool,
+            &action(id, "daily_puzzle", day),
+            day + chrono::Duration::days(2),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (err.0, err.1),
+            (StatusCode::GONE, "daily_completion_expired")
+        );
+        evidence(&pool, id, day, day).await;
+        run(&pool, &action(id, "daily_puzzle", day), day)
+            .await
+            .unwrap();
+        let older = day - chrono::Duration::days(1);
+        evidence(&pool, id, older, older).await;
+        let err = run(&pool, &action(id, "daily_puzzle", older), day)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (err.0, err.1),
+            (StatusCode::GONE, "daily_history_out_of_order")
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn overlap_legacy_gift_is_replayed(pool: PgPool) {
+        let id = player(&pool).await;
+        let day = Utc::now().date_naive();
+        let mut tx = pool.begin().await.unwrap();
+        lock(&mut tx, id).await.unwrap();
+        entry(
+            &mut tx,
+            id,
+            20,
+            "daily_gift",
+            "legacy",
+            &Uuid::new_v4().to_string(),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let v = run(&pool, &action(id, "daily_gift", day), day)
+            .await
+            .unwrap();
+        assert_eq!(v["reward"]["gold"], 20);
+        let gold: i64 = sqlx::query_scalar("SELECT gold FROM wallets WHERE player_id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(gold, 20);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn starter_contents_survive_and_daily_dates_carry_once(pool: PgPool) {
+        let canonical = player(&pool).await;
+        let day = date("2026-11-16").unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        lock(&mut tx, canonical).await.unwrap();
+        sqlx::query(
+            "UPDATE wallets SET unlimited_until=now()+interval '1 hour' WHERE player_id=$1",
+        )
+        .bind(canonical)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        for round in 0..2 {
+            let guest = player(&pool).await;
+            let mut tx = pool.begin().await.unwrap();
+            lock(&mut tx, guest).await.unwrap();
+            let purchase = json!({"transactionId":Uuid::new_v4().to_string(),"originalTransactionId":Uuid::new_v4().to_string(),"productId":"com.orcub.puzzle.starter_pack","environment":"Sandbox","appAccountToken":guest,"purchaseDate":Utc::now().timestamp_millis()});
+            super::super::apply(&mut tx, guest, &purchase)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            evidence(&pool, guest, day, day).await;
+            run(&pool, &action(guest, "daily_puzzle", day), day)
+                .await
+                .unwrap();
+            run(&pool, &action(guest, "daily_gift", day), day)
+                .await
+                .unwrap();
+            let mut tx = pool.begin().await.unwrap();
+            super::super::merge(&mut tx, canonical, guest)
+                .await
+                .unwrap();
+            let w = snapshot(&mut tx, canonical).await.unwrap();
+            assert_eq!(w["inventory"]["hint"], 3 * (round + 1) + 1);
+            assert_eq!(w["inventory"]["undo"], 3 * (round + 1));
+            assert_eq!(w["inventory"]["unclamp"], 3 * (round + 1));
+            let expiry: DateTime<Utc> =
+                serde_json::from_value(w["unlimited_until"].clone()).unwrap();
+            assert!(expiry > Utc::now() + chrono::Duration::minutes(59 + 60 * (round as i64 + 1)));
+            tx.commit().await.unwrap();
+            let replay = run(&pool, &action(canonical, "daily_gift", day), day)
+                .await
+                .unwrap();
+            assert_eq!(replay["reward"]["inventory"]["hint"], 1);
+        }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn rollback_migrator_ignores_unknown_but_checks_known_versions(pool: PgPool) {
+        sqlx::query("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(9999,'future',true,decode('00','hex'),0)").execute(&pool).await.unwrap();
+        crate::migrator().run(&pool).await.unwrap();
+        sqlx::query("UPDATE _sqlx_migrations SET checksum=decode('01','hex') WHERE version=5")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(crate::migrator().run(&pool).await.is_err());
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     async fn parallel_replay_dates_fingerprints_and_interop(pool: PgPool) {
         let id = player(&pool).await;
@@ -256,7 +386,15 @@ mod tests {
                 .is_ok()
         );
         let mut wrong = action(id, "daily_gift", day + chrono::Duration::days(1));
-        wrong.idempotency_key = a.idempotency_key;
+        wrong.idempotency_key = sqlx::query_scalar::<_, String>(
+            "SELECT idempotency_key FROM wallet_ledger WHERE player_id=$1 LIMIT 1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .parse()
+        .unwrap();
         assert_eq!(
             run(&pool, &wrong, day + chrono::Duration::days(1))
                 .await
@@ -410,7 +548,7 @@ mod tests {
                 .await
                 .unwrap_err()
                 .1,
-            "daily history out of order"
+            "daily_history_out_of_order"
         );
         let expired = first - chrono::Duration::days(500);
         assert_eq!(
@@ -431,7 +569,7 @@ mod tests {
             .await
             .is_err()
         );
-        // A longer gap resets even an unused freeze; it cannot be earned again.
+        // A longer gap resets the count but preserves an unused freeze; once spent it cannot be earned again.
         let mut s = Streak {
             last: Some(first),
             count: 7,
@@ -440,6 +578,7 @@ mod tests {
         };
         s.advance(first + chrono::Duration::days(3)).unwrap();
         assert_eq!(s.count, 1);
+        assert!(s.freeze);
         s.freeze = false;
         for n in 4..11 {
             s.advance(first + chrono::Duration::days(n)).unwrap();
@@ -473,7 +612,7 @@ mod tests {
         let w = snapshot(&mut tx, canonical).await.unwrap();
         assert_eq!(w["gold"], 0);
         assert_eq!(w["inventory"], json!({}));
-        assert!(w["unlimited_until"].is_null());
+        assert!(!w["unlimited_until"].is_null());
         tx.commit().await.unwrap();
         assert!(
             run(&pool, &action(canonical, "daily_gift", day), day)
@@ -637,7 +776,7 @@ mod tests {
             ..Default::default()
         };
         save_fields(&mut tx, id, &mut save).await.unwrap();
-        assert_eq!(save.daily.as_ref().unwrap()["PuzzleStreak"], 10);
+        assert_eq!(save.daily.as_ref().unwrap()["PuzzleStreak"], 0);
         assert_eq!(save.daily.as_ref().unwrap()["WinStreak"], 2);
         tx.commit().await.unwrap();
         // Receipt tombstones survive event retention and remain included in account export.

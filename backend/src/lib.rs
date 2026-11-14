@@ -1301,3 +1301,11 @@ mod abuse_tests {
         }
     }
 }
+
+// Ignore newer, already-applied versions when starting an older compatible binary.
+// Known migration checksums are still validated.
+pub fn migrator() -> sqlx::migrate::Migrator {
+    let mut migrator = sqlx::migrate!();
+    migrator.set_ignore_missing(true);
+    migrator
+}
