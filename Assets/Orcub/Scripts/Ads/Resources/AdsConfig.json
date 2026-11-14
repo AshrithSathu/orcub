@@ -1,0 +1,14 @@
+{
+  "iosAppId": "ca-app-pub-3940256099942544~1458002511",
+  "rewardedUnitId": "ca-app-pub-3940256099942544/1712485313",
+  "interstitialUnitId": "ca-app-pub-3940256099942544/4411468910",
+  "trackingUsageDescription": "Your permission helps us show relevant ads and measure how well they work. You can keep playing if you choose not to allow tracking.",
+  "adsEnabled": true,
+  "firstInterstitialLevel": 8,
+  "interstitialIntervalSeconds": 150,
+  "levelsBetweenInterstitials": 3,
+  "maxInterstitialsPerSession": 6,
+  "rewardedCooldownSeconds": 60,
+  "reloadDelaySeconds": 30,
+  "editorAdDelaySeconds": 1.4
+}

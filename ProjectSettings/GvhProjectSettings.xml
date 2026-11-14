@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<projectSettings>
+  <projectSetting name="Google.IOSResolver.AutoPodToolInstallInEditor" value="False" />
+  <projectSetting name="Google.IOSResolver.PodToolOverridePath" value="/opt/homebrew/bin/pod" />
+  <projectSetting name="Google.IOSResolver.PodToolPathEnabled" value="True" />
+  <projectSetting name="Google.IOSResolver.SwiftPackageManagerEnabled" value="False" />
+</projectSettings>

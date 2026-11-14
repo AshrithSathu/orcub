@@ -1,0 +1,36 @@
+# Orcub ads
+
+Installed Google's official `com.google.ads.mobile` 11.7.0 from the OpenUPM scoped registry (`com.google`). Its dependency `com.unity.external-dependency-manager` 2.1.1 comes from Unity's registry. Both are pinned in Packages/manifest.json and packages-lock.json; no plugin binaries need copying into Assets.
+
+## Replace IDs
+
+Edit only `Assets/Orcub/Scripts/Ads/Resources/AdsConfig.json`:
+
+- `iosAppId`: AdMob iOS app ID (contains `~`).
+- `rewardedUnitId`: iOS rewarded unit ID.
+- `interstitialUnitId`: iOS interstitial unit ID.
+- `trackingUsageDescription`: ATT purpose string.
+
+All checked-in IDs are Google's official iOS test IDs. The build preprocessor copies the app ID and purpose string into Google's settings asset before its plist postprocessor runs. Google's plugin adds its bundled SKAdNetworkItems list automatically. Do not edit generated Info.plist or GoogleMobileAdsSettings to replace IDs.
+
+## Policy
+
+The same JSON owns the kill switch (`adsEnabled`) and all policy numbers: level 8 minimum, wins only, 150 seconds and 3 completed levels between interstitials, 6 per session, and a 60-second exclusion after rewarded ads. The first interstitial also requires 150 seconds in-session and 3 wins. Replay wins count as completed levels. Counters are session-only and use monotonic real time. No ad state is read by puzzle generation or difficulty logic.
+
+## Consent and rewards
+
+On the first completed level, ATT requests permission only while iOS status is undetermined, then UMP updates consent and shows a form if required. On later launches UMP refreshes consent again. If ATT is still undetermined after an interrupted prompt, privacy waits for another completed level rather than requesting ATT at launch. Play never waits for these operations. No SDK initialization or ad request happens until UMP CanRequestAds is true. Network/consent failures leave ads unavailable without granting anything. Once a required UMP privacy entry point exists, the existing Settings card's Done control becomes Privacy choices and opens the native UMP form; no new visual component is added.
+
+Editor and non-iOS play use a delayed simulation, never device network failure fallback. On iOS, only the SDK earned-reward callback grants a reward, at most once. Close/failure callbacks restore the existing card. Interstitials run only on win-card Next, and next-level loading waits for dismissal. Load failures retry after 30 seconds; consumed ads reload automatically.
+
+`AdsGateway` is the SDK-free interface in Orcub.Runtime. Orcub.Ads references Runtime and Google's precompiled assemblies, preventing a circular assembly reference from BoardView. The native ATT bridge links AppTrackingTransparency.
+
+## Build and verification
+
+Use Orcub/Build iOS (Xcode project), which calls OrcubBuild.BuildIOS and exports Builds/iOS-v2. EDM is configured for CocoaPods workspace integration and runs pod install on export. OrcubAdsBuild adds a post_install hook at callback order 45 (between EDM generation at 40 and installation at 50) to set every pod target to iOS 15, as required by Xcode 27. Wait for the full Unity build to finish (including lib_burst_generated.cpp) before xcodebuild. Build the Unity-iPhone workspace scheme with DEVELOPMENT_TEAM=3HB3HKUZ4Q and -allowProvisioningUpdates.
+
+Run all EditMode tests through MCP run_tests, including AdPolicyTests. Device ad presentation, ATT behaviour after a fresh install, UMP region-specific messages, and reward callbacks still require a phone run. Publish the appropriate UMP messages in the real AdMob account when swapping IDs. Disable the account's UMP IDFA explainer if using this native ATT prompt, so its timing remains owned here.
+
+Sources: https://developers.google.com/admob/unity/quick-start, https://developers.google.com/admob/unity/privacy, https://developers.google.com/admob/unity/test-ads.
+
+Verified 2026-11-15: MCP EditMode run 67/67 passed (including 14 AdPolicy tests and all 44 original tests). OrcubBuild.BuildIOS exported successfully; EDM installed both pods automatically. The Xcode 27 pod deployment-target fix was applied to that export with the same checked-in hook and pod install rerun. Signed Debug workspace build with team 3HB3HKUZ4Q ended BUILD SUCCEEDED. No phone installation or on-device ad presentation was performed. Xcode output: Builds/dd/Build/Products/Debug-iphoneos/Orcub.app.

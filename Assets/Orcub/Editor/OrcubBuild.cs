@@ -158,6 +158,11 @@ namespace Orcub.EditorTools
         {
 #if UNITY_IOS
             if (target != BuildTarget.iOS) return;
+            string projectPath = PBXProject.GetPBXProjectPath(path);
+            var project = new PBXProject();
+            project.ReadFromFile(projectPath);
+            project.AddFrameworkToProject(project.GetUnityFrameworkTargetGuid(), "AppTrackingTransparency.framework", false);
+            project.WriteToFile(projectPath);
             string plistPath = Path.Combine(path, "Info.plist");
             var plist = new PlistDocument();
             plist.ReadFromFile(plistPath);

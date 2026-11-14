@@ -560,7 +560,13 @@ namespace Orcub.Game
             Title(card, "Settings", 0.76f, 0.92f, 80);
             Toggle(card, _art.uiSound, "Sound", GameSettings.SoundOn, on => GameSettings.SoundOn = on, 0.56f, 0.68f);
             Toggle(card, _art.uiHaptics, "Haptics", GameSettings.HapticsOn, on => GameSettings.HapticsOn = on, 0.42f, 0.54f);
-            var done = _kit.Pill(card, "Done", UiKit.Mint, UiKit.Title, () => { ClosePopup(); onClose(); });
+            bool privacyRequired = AdsGateway.Service?.PrivacyOptionsRequired == true;
+            var done = _kit.Pill(card, privacyRequired ? "Privacy choices" : "Done", UiKit.Mint, UiKit.Title, () =>
+            {
+                ClosePopup();
+                if (privacyRequired) AdsGateway.Service?.ShowPrivacyOptions();
+                onClose();
+            });
             UiKit.Anchor(done, 0.18f, 0.16f, 0.82f, 0.32f);
         }
 

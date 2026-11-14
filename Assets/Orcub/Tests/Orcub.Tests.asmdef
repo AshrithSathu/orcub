@@ -1,7 +1,7 @@
 {
     "name": "Orcub.Tests",
     "rootNamespace": "Orcub.Tests",
-    "references": ["Orcub.Runtime", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "references": ["Orcub.Runtime", "Orcub.Ads", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

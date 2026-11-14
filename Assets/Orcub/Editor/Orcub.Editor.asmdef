@@ -1,7 +1,7 @@
 {
     "name": "Orcub.Editor",
     "rootNamespace": "Orcub.EditorTools",
-    "references": ["Orcub.Runtime", "Unity.RenderPipelines.Universal.Runtime", "Unity.RenderPipelines.Universal.2D.Runtime", "UnityEditor.TestRunner", "UnityEngine.TestRunner"],
+    "references": ["Orcub.Runtime", "Orcub.Ads", "Unity.RenderPipelines.Universal.Runtime", "Unity.RenderPipelines.Universal.2D.Runtime", "UnityEditor.TestRunner", "UnityEngine.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

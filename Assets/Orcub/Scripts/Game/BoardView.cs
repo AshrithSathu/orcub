@@ -189,7 +189,7 @@ namespace Orcub.Game
             if (Lives.Count <= 0)
             {
                 _hud.ShowOutOfLives(
-                    onRefillAd: () => _hud.ShowAdPlaceholder(1.4f, () => { Lives.Refill(); PlayLevel(index); }),
+                    onRefillAd: () => ShowRewarded("refill_lives", () => { Lives.Refill(); PlayLevel(index); }, () => PlayLevel(index)),
                     onRefillCogs: null,
                     onBack: () => { });
                 return;
@@ -374,7 +374,11 @@ namespace Orcub.Game
                 _winAt = -1f;
                 _wreath?.Show();
                 _hud?.ShowWin(_levelIndex + 1, _winStars,
-                    onNext: () => LoadLevel(_levelIndex + 1),
+                    onNext: () =>
+                    {
+                        if (AdsGateway.Service != null) AdsGateway.Service.MaybeShowInterstitial("level_end", () => LoadLevel(_levelIndex + 1));
+                        else LoadLevel(_levelIndex + 1);
+                    },
                     onHome: () => GoHome(costsLife: false));
             }
             if (_failCheckAt > 0f && Time.time >= _failCheckAt && _spins.Count == 0 && _active < 0)
@@ -593,13 +597,36 @@ namespace Orcub.Game
             return false;
         }
 
+        void ShowRewarded(string placement, Action onReward, Action onUnavailable = null)
+        {
+            var ads = AdsGateway.Service;
+            if (ads == null || !ads.RewardedReady)
+            {
+                _hud.ShowToast("No video available right now");
+                if (onUnavailable != null) onUnavailable();
+                else if (_levelOver && MovesLeft <= 0) CheckOutOfMovesAgain();
+                return;
+            }
+            int level = _levelIndex;
+            ads.ShowRewarded(placement, () =>
+            {
+                if (this != null && _levelIndex == level) onReward();
+            }, () =>
+            {
+                if (this == null) return;
+                _hud.ShowToast("Video not completed");
+                if (onUnavailable != null) onUnavailable();
+                else if (_levelOver && MovesLeft <= 0) CheckOutOfMovesAgain();
+            });
+        }
+
         void CheckOutOfMoves()
         {
             if (_levelOver || _model.IsSolved || MovesLeft > 0 || !HasActiveLinks()) return;
             _levelOver = true;
             _wreath?.Show();
             _hud?.ShowOutOfMoves(ContinueMoves, !_usedAdContinue,
-                onWatchAd: () => _hud.ShowAdPlaceholder(1.4f, () =>
+                onWatchAd: () => ShowRewarded("continue_moves", () =>
                 {
                     _wreath?.Hide();
                     _usedAdContinue = true;
@@ -657,11 +684,11 @@ namespace Orcub.Game
             }
             _wreath?.Show(frame: false);
             _hud.ShowOutOfLives(
-                onRefillAd: () => _hud.ShowAdPlaceholder(1.4f, () =>
+                onRefillAd: () => ShowRewarded("refill_lives", () =>
                 {
                     Lives.Refill();
                     if (Lives.TrySpend()) action();
-                }),
+                }, () => SpendLifeThen(action, reopen)),
                 onRefillCogs: null,   // enabled once Brass Cogs exist (step 4)
                 onBack: reopen);
         }
@@ -797,6 +824,7 @@ namespace Orcub.Game
             _fx?.Cleared();
             _winStars = _rules.StarsFor(_movesUsed);
             Progress.RecordWin(_levelIndex, _winStars);
+            AdsGateway.Service?.RecordWin(_levelIndex + 1);
             EndAttempt(AttemptOutcome.Win);
             _winAt = Time.time + 1.0f;   // let the last ring fly off and the chime ring first
         }
