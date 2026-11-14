@@ -173,7 +173,8 @@ namespace Orcub.Tests
             ConsumableGateway.Spend = k => { if (counts[k] <= 0) return false; counts[k]--; return true; };
             try
             {
-                for (int i = 0; i < 3; i++) Assert.True(BoosterInventory.TrySpend(kind));
+                for (int i = 0; i < 3; i++)
+                { Assert.True(BoosterInventory.TrySpend(kind)); Assert.AreEqual(2 - i, BoosterInventory.Count(kind)); }
                 Assert.False(BoosterInventory.TrySpend(kind));
                 BoosterInventory.Add(kind, 5);
                 Assert.AreEqual(0, BoosterInventory.Count(kind), "Local grants cannot overwrite the wallet");
@@ -183,6 +184,9 @@ namespace Orcub.Tests
             finally { ConsumableGateway.Count = null; ConsumableGateway.Spend = null; }
 
         }
+
+        [Test] public void InitialBoosterCountMatchesBackendEmptyInventory()
+        { Assert.AreEqual(0, BoosterInventory.StartCount); }
 
         void ResetMeta()
         {

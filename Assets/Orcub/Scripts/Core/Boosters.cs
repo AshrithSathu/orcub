@@ -18,7 +18,7 @@ namespace Orcub.Core
 
     public static class BoosterInventory
     {
-        public const int StartCount = 3;
+        public const int StartCount = 0; // backend wallets.inventory defaults to {}
 
         public static int Count(BoosterKind k) => ConsumableGateway.Count?.Invoke("booster_" + k.ToString().ToLowerInvariant()) ?? 0;
 

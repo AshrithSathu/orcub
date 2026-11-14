@@ -61,11 +61,11 @@ namespace Orcub.Store
             catch (Newtonsoft.Json.JsonException) { }
             IsCached = true;
         }
-        internal void Apply(JObject value, bool cached = false)
+        internal void Apply(JObject value, bool cached = false, Action afterPersist = null)
         {
             if ((string)value["player_id"] != backend.PlayerId) throw new InvalidOperationException("wallet_account_mismatch");
             Snapshot = (JObject)value.DeepClone(); Balance = (long)value["gold"]; RemoveAds = (bool)value["remove_ads"];
-            IsCached = cached; cache.Write("wallet." + backend.PlayerId, value.ToString()); Changed?.Invoke();
+            IsCached = cached; cache.Write("wallet." + backend.PlayerId, value.ToString()); afterPersist?.Invoke(); Changed?.Invoke();
         }
         public async Task Refresh()
         {
@@ -83,14 +83,14 @@ namespace Orcub.Store
             }
             finally { gate.Release(); }
         }
-        internal async Task Consume(JObject item, string owner)
+        internal async Task Consume(JObject item, string owner, Action acknowledged)
         {
             await gate.WaitAsync();
             try
             {
                 if (backend.PlayerId != owner) throw new InvalidOperationException("account_changed");
                 var response = await backend.Request("/v1/wallet/consume", "POST", new { player_id = owner, kind = (string)item["kind"], count = (int)item["count"], attempt_ref = (string)item["attempt_ref"], idempotency_key = (string)item["idempotency_key"] });
-                Apply((JObject)response["wallet"]);
+                Apply((JObject)response["wallet"], afterPersist: acknowledged);
             }
             finally { gate.Release(); }
         }

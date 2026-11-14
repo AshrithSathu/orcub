@@ -11,7 +11,7 @@ namespace Orcub.Core
     {
         public const int Max = 5;
         public const int RegenSeconds = 30 * 60;
-        public static int Count => ConsumableGateway.Count?.Invoke("life") ?? 0;
+        public static int Count => ConsumableGateway.Count?.Invoke("life") ?? Max;
 
         /// <summary>Seconds until the next life comes back (0 when full).</summary>
         public static int SecondsToNext

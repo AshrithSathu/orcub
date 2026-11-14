@@ -16,7 +16,8 @@ namespace Orcub.Tests
             Lives.Refill();
             Assert.AreEqual(Lives.Max, Lives.Count);
             Assert.AreEqual(0, Lives.SecondsToNext, "full lives: no timer");
-            for (int i = 0; i < Lives.Max; i++) Assert.IsTrue(Lives.TrySpend());
+            for (int i = 0; i < Lives.Max; i++)
+            { Assert.IsTrue(Lives.TrySpend()); Assert.AreEqual(Lives.Max - i - 1, Lives.Count); }
             Assert.AreEqual(0, Lives.Count);
             Assert.IsFalse(Lives.TrySpend(), "cannot spend below zero");
             Assert.Greater(Lives.SecondsToNext, Lives.RegenSeconds - 5, "regen timer started when dropping below full");
@@ -25,6 +26,9 @@ namespace Orcub.Tests
         }
 
         [TearDown] public void Reset() { ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; }
+        [Test] public void BeforeStoreBootNewPlayerHasFiveLives()
+        { ConsumableGateway.Count = null; Assert.AreEqual(5, Lives.Count); }
+
         [Test]
         public void TimerFormat() => Assert.AreEqual("24:31", Lives.FormatTimer(24 * 60 + 31));
     }

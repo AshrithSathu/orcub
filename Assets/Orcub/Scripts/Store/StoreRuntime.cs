@@ -30,7 +30,7 @@ namespace Orcub.Store
             ConsumableGateway.SecondsToNext = () => consumption.SecondsToNext(DateTimeOffset.UtcNow);
             ConsumableGateway.Refill = Refill;
             Service.Wallet.Changed += () => { if (AdService.Instance != null) AdService.Instance.RemoveAds = Service.Wallet.RemoveAds; };
-            try { await Service.Initialize(); } catch (Exception) { Debug.LogWarning("Store unavailable; retry on foreground"); }
+            try { await Service.Initialize(); await consumption.Reconcile(); } catch (Exception) { Debug.LogWarning("Store unavailable; retry on foreground"); }
         }
         async void Refill()
         {
@@ -71,6 +71,7 @@ namespace Orcub.Store
         {
             if (!focused || Service == null) return;
             try { await PrepareAccount(); await Service.Initialize(); } catch (Exception) { }
+            await consumption.Reconcile();
         }
         void OnDestroy() { Consumption = null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
     }

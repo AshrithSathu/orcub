@@ -22,7 +22,7 @@ namespace Orcub.Net
         public static ClientServices Instance { get; private set; }
         public const string ProductionUrl = "https://api-production-08259b35.up.railway.app";
         public static string BaseUrl => Application.isEditor || Debug.isDebugBuild
-            ? PlayerPrefs.GetString("orcub.dev.api", "http://127.0.0.1:8081") : ProductionUrl;
+            ? PlayerPrefs.GetString("orcub.dev.api", ProductionUrl) : ProductionUrl;
         public AccountService Account { get; private set; }
         public string PlayerId => (string)credentials?["player_id"];
         public bool Stopped => stopped;
