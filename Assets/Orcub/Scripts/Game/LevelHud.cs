@@ -93,7 +93,11 @@ namespace Orcub.Game
             img.sprite = sprite;
             img.color = color;
             img.raycastTarget = false;
-            if (sliced) img.type = Image.Type.Sliced;
+            if (sliced)
+            {
+                img.type = Image.Type.Sliced;
+                img.gameObject.AddComponent<RoundCaps>();
+            }
             else img.preserveAspect = true;
             return img;
         }
@@ -106,6 +110,7 @@ namespace Orcub.Game
             img.sprite = _art.uiPill;
             img.type = Image.Type.Sliced;
             img.color = tint;
+            rt.gameObject.AddComponent<RoundCaps>();
             var btn = rt.gameObject.AddComponent<Button>();
             btn.transition = Selectable.Transition.None;
             btn.onClick.AddListener(() => { Haptics.Play(Haptics.Impact.Light, 0.6f); onClick(); });
@@ -219,6 +224,7 @@ namespace Orcub.Game
             img.sprite = _art.uiPill;
             img.type = Image.Type.Sliced;
             img.color = new Color(1f, 1f, 1f, 0.12f);
+            rt.gameObject.AddComponent<RoundCaps>();
             var btn = rt.gameObject.AddComponent<Button>();
             btn.onClick.AddListener(() => onClick());
             var t = Label(rt, label, 52, new Color(1f, 1f, 1f, 0.6f));
@@ -414,6 +420,31 @@ namespace Orcub.Game
         {
             yield return new WaitForSecondsRealtime(seconds);
             a();
+        }
+    }
+
+    /// <summary>
+    /// Keeps a horizontally-sliced pill/slab's rounded ends circular at any height. A sliced Image keeps its
+    /// border at the sprite's pixel size; when the rect is shorter than the sprite, the caps squash into ovals.
+    /// Scaling the border with the rect height (via pixelsPerUnitMultiplier) keeps them true semicircles.
+    /// </summary>
+    [RequireComponent(typeof(Image))]
+    public sealed class RoundCaps : MonoBehaviour
+    {
+        Image _img;
+        float _lastH = -1f;
+
+        void LateUpdate()
+        {
+            if (_img == null) _img = GetComponent<Image>();
+            var sp = _img.sprite;
+            float h = ((RectTransform)transform).rect.height;
+            if (sp == null || h <= 1f || Mathf.Approximately(h, _lastH)) return;
+            _lastH = h;
+            var canvas = _img.canvas;
+            float refPpu = canvas != null ? canvas.referencePixelsPerUnit : 100f;
+            // on-screen border = borderPx * refPpu / (spritePpu * multiplier); we want it = h * borderPx / spriteHeightPx
+            _img.pixelsPerUnitMultiplier = sp.rect.height * refPpu / (sp.pixelsPerUnit * h);
         }
     }
 
