@@ -312,7 +312,7 @@ namespace Orcub.Game
                 view.SetLifted(true);
                 _fx?.Pick(ring.Radius);
             }
-            else if (_model.CanRotate(_active) && MovesLeft <= 0)
+            else if (MovesLeft <= 0)   // no moves left: any turn attempt (right or wrong ring) opens the card
             {
                 _mode = DragMode.None;
                 _active = -1;
@@ -332,6 +332,9 @@ namespace Orcub.Game
                 _fx?.Locked();
                 foreach (var h in view.OwnedHolders)
                     if (_model.Links[h.LinkId].Active) h.Flash();
+                // Touching a ring that is still holding another is a wrong move: it costs a move too.
+                CountMove();
+                _failCheckAt = Time.time + 0.45f;
             }
             view.SetPicked(_mode != DragMode.Locked);
         }
