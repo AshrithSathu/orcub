@@ -97,10 +97,32 @@ namespace Orcub.Game
         /// <summary>Hint booster: the ring nods twice the way it should turn (visual only), with a pulse.</summary>
         public void ShowHint(float deltaDegrees)
         {
+            HintActive = true;
+            _hintPull = false;
             _hintTime = 0f;
-            _hintDelta = Mathf.Clamp(deltaDegrees, -35f, 35f);
+            float sign = deltaDegrees < 0f ? -1f : 1f;
+            _hintDelta = sign * Mathf.Clamp(Mathf.Abs(deltaDegrees), 16f, 28f);
             Pulse();
         }
+
+        /// <summary>Hint booster on a free ring: it lifts and keeps tugging outward until touched.</summary>
+        public void ShowPullHint()
+        {
+            HintActive = true;
+            _hintPull = true;
+            _hintTime = 0f;
+            Pulse();
+        }
+
+        public void ClearHint()
+        {
+            HintActive = false;
+            _hintTime = -1f;
+        }
+
+        /// <summary>True while a hint keeps replaying on this ring (cleared when the player touches any ring).</summary>
+        public bool HintActive { get; private set; }
+        bool _hintPull;
         public void Pulse() => _pulseTime = 0.45f;
         public void SetPicked(bool picked)
         {
@@ -251,12 +273,23 @@ namespace Orcub.Game
                 shakeAngle += Mathf.Sin((1f - k) * Mathf.PI * 4f) * 5f * k;
             }
 
-            if (_hintTime >= 0f)
+            // Hint: a one-way nod the direction the ring should turn (or a tug outward for a free
+            // ring), replayed every cycle with a pulse until the player touches a ring.
+            if (HintActive && _hintTime >= 0f && !IsHeld)
             {
+                const float cycle = 1.5f, nod = 0.9f;
+                float prev = _hintTime;
                 _hintTime += dt;
-                float k = Mathf.Clamp01(_hintTime / 1.6f);
-                shakeAngle += Mathf.Sin(k * Mathf.PI * 2f) * Mathf.Sin(k * Mathf.PI) * _hintDelta;
-                if (k >= 1f) _hintTime = -1f;
+                if (Mathf.Floor(_hintTime / cycle) > Mathf.Floor(prev / cycle)) Pulse();
+                float k = Mathf.Clamp01((_hintTime % cycle) / nod);
+                float amount = Mathf.Sin(k * Mathf.PI);
+                amount *= amount;
+                if (_hintPull)
+                {
+                    Vector2 outward = _ring.Center.sqrMagnitude > 0.01f ? _ring.Center.normalized : Vector2.up;
+                    shake += outward * 0.32f * amount;
+                }
+                else shakeAngle += _hintDelta * amount;
             }
 
             float pulse = 0f;
@@ -271,7 +304,7 @@ namespace Orcub.Game
             Vector2 worldOffset = _pullOffset + shake;
             _visual.localPosition = Quaternion.Inverse(transform.localRotation) * worldOffset;
             _visual.localRotation = Quaternion.Euler(0f, 0f, shakeAngle);
-            _lift = Mathf.MoveTowards(_lift, _picked || IsHeld ? 1f : 0f, dt * 7f);
+            _lift = Mathf.MoveTowards(_lift, _picked || IsHeld || HintActive ? 1f : 0f, dt * 7f);
             var sc = _liftShadow.color;
             sc.a = 0.38f * _lift;
             _liftShadow.color = sc;

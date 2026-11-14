@@ -157,7 +157,7 @@ namespace Orcub.Game
                 }
             }
             var d = _dim.color;
-            d.a = 0.86f * alpha;   // the board fades well back so the card reads cleanly
+            d.a = 0.975f * alpha;   // linear-space blend: needs ~0.97 to read as "well back" so the card stands alone
             _dim.color = d;
             foreach (var sr in new[] { _arcA, _arcB, _clamps[0], _clamps[1] })
             {

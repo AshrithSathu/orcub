@@ -40,6 +40,9 @@ namespace Orcub.Game
         Text _level, _moves, _movesLabel, _info, _lives, _goalText;
         readonly List<Image> _goalGears = new List<Image>();
         readonly Dictionary<BoosterKind, (Image button, Text badge)> _boosters = new Dictionary<BoosterKind, (Image, Text)>();
+        readonly Dictionary<BoosterKind, int> _boosterCounts = new Dictionary<BoosterKind, int>();
+        readonly Dictionary<BoosterKind, bool> _boosterReady = new Dictionary<BoosterKind, bool>();
+        RectTransform _toast;
         float _livesRefresh;
         readonly List<RectTransform> _hitAreas = new List<RectTransform>();
         float _targetAlpha = 1f;
@@ -209,8 +212,9 @@ namespace Orcub.Game
 
         void Update()
         {
-            _group.alpha = Mathf.MoveTowards(_group.alpha, _targetAlpha, Time.unscaledDeltaTime * 3f);
-            _group.interactable = _group.blocksRaycasts = _targetAlpha > 0.5f;
+            float target = _popup != null ? 0f : _targetAlpha;   // a card owns the screen: top bar and tray step back
+            _group.alpha = Mathf.MoveTowards(_group.alpha, target, Time.unscaledDeltaTime * 5f);
+            _group.interactable = _group.blocksRaycasts = target > 0.5f;
 
             _movesBump = Mathf.MoveTowards(_movesBump, 0f, Time.unscaledDeltaTime * 3f);
             bool low = _movesLeft <= 3;
@@ -287,9 +291,60 @@ namespace Orcub.Game
 
         public void SetBoosterCount(BoosterKind kind, int count)
         {
+            _boosterCounts[kind] = count;
+            RefreshBooster(kind);
+        }
+
+        /// <summary>Greys a booster out while it can't do anything (e.g. Undo before the first move).</summary>
+        public void SetBoosterReady(BoosterKind kind, bool ready)
+        {
+            _boosterReady[kind] = ready;
+            RefreshBooster(kind);
+        }
+
+        void RefreshBooster(BoosterKind kind)
+        {
             if (!_boosters.TryGetValue(kind, out var b)) return;
+            int count = _boosterCounts.TryGetValue(kind, out var c) ? c : 0;
+            bool ready = !_boosterReady.TryGetValue(kind, out var r) || r;
             b.badge.text = count > 0 ? count.ToString() : "+";
-            b.button.color = count > 0 ? UiKit.Coral : UiKit.Dim;
+            b.button.color = count > 0 && ready ? UiKit.Coral : UiKit.Dim;
+            var glyph = b.button.transform.childCount > 0 ? b.button.transform.GetChild(0).GetComponent<Image>() : null;
+            if (glyph != null) glyph.color = new Color(UiKit.Cream.r, UiKit.Cream.g, UiKit.Cream.b, ready ? 1f : 0.55f);
+        }
+
+        /// <summary>Short message just above the booster tray; replaces any toast already showing.</summary>
+        public void ShowToast(string message)
+        {
+            if (_toast != null) Destroy(_toast.gameObject);
+            float y0 = (_devTools ? DevBandFraction : 0f) + 0.008f + TrayFraction + 0.012f;
+            _toast = UiKit.Rect("Toast", _safe);
+            UiKit.Anchor(_toast, 0.5f, y0, 0.5f, y0);
+            _toast.pivot = new Vector2(0.5f, 0f);
+            var label = _kit.MakeText(_toast, message, UiKit.Caption, UiKit.Ink);
+            float w = label.preferredWidth + 96f;
+            _toast.sizeDelta = new Vector2(w, 96f);
+            var pill = _kit.MakeImage(_toast, _art.uiPill, UiKit.CardCream, sliced: true);
+            UiKit.Anchor(pill.rectTransform, 0f, 0f, 1f, 1f);
+            pill.transform.SetAsFirstSibling();
+            UiKit.Anchor(label.rectTransform, 0f, 0.06f, 1f, 0.94f);
+            StartCoroutine(ToastLife(_toast, _toast.gameObject.AddComponent<CanvasGroup>()));
+        }
+
+        IEnumerator ToastLife(RectTransform rt, CanvasGroup g)
+        {
+            g.blocksRaycasts = false;
+            float t = 0f;
+            while (rt != null && t < 1.9f)
+            {
+                t += Time.unscaledDeltaTime;
+                float a = t < 0.16f ? t / 0.16f : t > 1.6f ? 1f - (t - 1.6f) / 0.3f : 1f;
+                g.alpha = a;
+                float rise = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / 0.2f), 3f);   // ease-out
+                rt.anchoredPosition = new Vector2(0f, Mathf.Lerp(-16f, 0f, rise));
+                yield return null;
+            }
+            if (rt != null) Destroy(rt.gameObject);
         }
 
         public void SetVisible(bool visible, bool instant = false)
@@ -302,7 +357,7 @@ namespace Orcub.Game
         public bool Covers(Vector2 screenPoint)
         {
             if (_popup != null) return true;
-            if (_group.alpha < 0.5f) return false;
+            if (_targetAlpha < 0.5f) return false;
             foreach (var rt in _hitAreas)
                 if (rt != null && RectTransformUtility.RectangleContainsScreenPoint(rt, screenPoint, null)) return true;
             return false;
@@ -438,10 +493,10 @@ namespace Orcub.Game
             Title(card, "Paused", 0.82f, 0.96f, 80);
             Toggle(card, _art.uiSound, "Sound", GameSettings.SoundOn, on => GameSettings.SoundOn = on, 0.67f, 0.78f);
             Toggle(card, _art.uiHaptics, "Haptics", GameSettings.HapticsOn, on => GameSettings.HapticsOn = on, 0.54f, 0.65f);
-            var restart = _kit.Pill(card, "−1   Restart", UiKit.Coral, UiKit.Body, () => { ClosePopup(); onRestart(); }, _art.uiHeartClay, UiKit.Cream);
-            UiKit.Anchor(restart, 0.1f, 0.37f, 0.9f, 0.5f);
             var resume = _kit.Pill(card, "Resume", UiKit.Mint, UiKit.Title, () => { ClosePopup(); onResume(); });
-            UiKit.Anchor(resume, 0.14f, 0.19f, 0.86f, 0.35f);
+            UiKit.Anchor(resume, 0.12f, 0.33f, 0.88f, 0.49f);
+            var restart = _kit.Pill(card, "Restart  −1", UiKit.Coral, UiKit.Body, () => { ClosePopup(); onRestart(); }, _art.uiHeartClay, UiKit.Cream);
+            UiKit.Anchor(restart, 0.2f, 0.19f, 0.8f, 0.3f);
             var home = _kit.Link(card, "Home", OnCard, () => { ClosePopup(); onHome(); });
             UiKit.Anchor(home, 0.32f, 0.05f, 0.68f, 0.17f);
         }

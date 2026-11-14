@@ -117,7 +117,7 @@ namespace Orcub.Game
 
             _fx = Feedback.Create(transform, art);
             _crumbs = ClayCrumbs.Create(transform, art.spriteMaterial);
-            _hud = LevelHud.Create(transform, art, devTools);
+            _hud = LevelHud.Create(transform, art, devTools && Application.isEditor);   // never on a phone
             _wreath = WreathView.Create(transform, art, cam);
             _hud.Pause += OpenPause;
             GameSettings.Apply();
@@ -270,6 +270,7 @@ namespace Orcub.Game
             _hud.SetGoal(colours);
             foreach (var r in _model.Rings) if (r.Removed) _hud.MarkGoalFreed(r.Id);
             foreach (BoosterKind k in Enum.GetValues(typeof(BoosterKind))) _hud.SetBoosterCount(k, BoosterInventory.Count(k));
+            _hud.SetBoosterReady(BoosterKind.Undo, _undo.Count > 0);
         }
 
         public void Build(LevelDef level)
@@ -388,6 +389,7 @@ namespace Orcub.Game
         {
             _active = Pick(p);
             if (_active < 0) return;
+            ClearHints();   // the player is acting; the hint has done its job
 
             _pressWorld = p;
             _lastPointer = p;
@@ -531,6 +533,7 @@ namespace Orcub.Game
             _pendingSnap = null;
             _movesUsed++;
             _hud?.SetMoves(Mathf.Max(0, MovesLeft), bump: true);
+            _hud?.SetBoosterReady(BoosterKind.Undo, true);
         }
 
         /// <summary>
@@ -642,22 +645,26 @@ namespace Orcub.Game
 
         void UseBooster(BoosterKind kind)
         {
-            if (_model == null || _levelOver || _inputLocked || _hud.PopupOpen || _active >= 0 || _spins.Count > 0) return;
+            if (_model == null || _levelOver || _inputLocked || _hud.PopupOpen) return;
+            if (_active >= 0 || _spins.Count > 0) return;   // a ring is mid-turn; the tap is ignored silently
             if (BoosterInventory.Count(kind) <= 0)
             {
-                Haptics.Notify(Haptics.Notice.Warning);   // shop arrives with the currency step
+                Haptics.Notify(Haptics.Notice.Warning);
+                _hud.ShowToast($"No {BoosterName(kind)}s left");   // shop arrives with the currency step
                 return;
             }
-            bool used = false;
+            string refusal = null;
             switch (kind)
             {
                 case BoosterKind.Hint:
                     if (Hints.TryFind(_model, out var hint) && _rings[hint.Ring] != null)
                     {
-                        if (hint.PullOut) { _rings[hint.Ring].FreeHint = true; _rings[hint.Ring].Pulse(); }
+                        ClearHints();
+                        if (hint.PullOut) _rings[hint.Ring].ShowPullHint();
                         else _rings[hint.Ring].ShowHint(hint.Delta);
-                        used = true;
+                        _hud.ShowToast(hint.PullOut ? "Pull this gear out" : "Turn this gear");
                     }
+                    else refusal = "No hint for this board";
                     break;
                 case BoosterKind.Undo:
                     if (_undo.Count > 0)
@@ -668,22 +675,38 @@ namespace Orcub.Game
                         _movesUsed = moves;
                         BuildViews();
                         UpdateHud();
-                        used = true;
+                        foreach (var r in _rings) if (r != null) r.Pulse();
                     }
+                    else refusal = "Nothing to undo yet";
                     break;
                 case BoosterKind.Unclamp:
                     int linkId = Unclamp.PickLink(_model);
-                    if (linkId >= 0) used = _model.ReleaseLink(linkId);
+                    if (linkId < 0 || !_model.ReleaseLink(linkId)) refusal = "No clamps left";
+                    else ClearHints();
                     break;
             }
-            if (!used)
+            if (refusal != null)
             {
                 Haptics.Notify(Haptics.Notice.Warning);
+                _hud.ShowToast(refusal);
                 return;
             }
             BoosterInventory.TrySpend(kind);
             Haptics.Play(Haptics.Impact.Medium, 0.8f);
             _hud.SetBoosterCount(kind, BoosterInventory.Count(kind));
+            _hud.SetBoosterReady(BoosterKind.Undo, _undo.Count > 0);
+        }
+
+        static string BoosterName(BoosterKind kind) => kind switch
+        {
+            BoosterKind.Hint => "hint",
+            BoosterKind.Undo => "undo",
+            _ => "unclamp",
+        };
+
+        void ClearHints()
+        {
+            foreach (var r in _rings) if (r != null) r.ClearHint();
         }
 
         void OnSolved()

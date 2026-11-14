@@ -139,13 +139,19 @@ namespace Orcub.Game
             rt.gameObject.AddComponent<RoundCaps>();
             Tap(rt.gameObject, onClick);
             var text = MakeText(rt, label, fontSize, Ink);
+            Anchor(text.rectTransform, 0f, 0.06f, 1f, 0.94f);
             if (glyph != null)
             {
-                Anchor(text.rectTransform, 0.28f, 0.06f, 0.95f, 0.94f);
+                // Glyph + label read as one centred group, not an icon pinned to the far edge.
+                float glyphW = fontSize * 1.15f, gap = fontSize * 0.35f, textW = text.preferredWidth;
+                float g0 = -(glyphW + gap + textW) * 0.5f;
+                text.rectTransform.anchoredPosition = new Vector2((glyphW + gap) * 0.5f, 0f);
                 var g = MakeImage(rt, glyph, glyphTint ?? Ink);
-                Anchor(g.rectTransform, 0.08f, 0.22f, 0.28f, 0.80f);
+                var grt = g.rectTransform;
+                grt.anchorMin = grt.anchorMax = new Vector2(0.5f, 0.5f);
+                grt.sizeDelta = new Vector2(glyphW, glyphW);
+                grt.anchoredPosition = new Vector2(g0 + glyphW * 0.5f, 0f);
             }
-            else Anchor(text.rectTransform, 0f, 0.06f, 1f, 0.94f);
             return rt;
         }
 
@@ -171,9 +177,13 @@ namespace Orcub.Game
             hit.color = new Color(0, 0, 0, 0);
             Tap(rt.gameObject, onClick, 0.5f);
             var t = MakeText(rt, label, Label, color);
-            Anchor(t.rectTransform, 0f, 0.2f, 1f, 1f);
-            var line = MakeImage(rt, null, new Color(color.r, color.g, color.b, 0.7f));
-            Anchor(line.rectTransform, 0.3f, 0.12f, 0.7f, 0.16f);
+            Anchor(t.rectTransform, 0f, 0f, 1f, 1f);
+            // Underline hugs the word: as wide as the label, just under its baseline.
+            var line = MakeImage(rt, null, new Color(color.r, color.g, color.b, 0.55f));
+            var lrt = line.rectTransform;
+            lrt.anchorMin = lrt.anchorMax = new Vector2(0.5f, 0.5f);
+            lrt.sizeDelta = new Vector2(t.preferredWidth, 4f);
+            lrt.anchoredPosition = new Vector2(0f, -Label * 0.62f);
             return rt;
         }
 
