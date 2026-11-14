@@ -1,0 +1,237 @@
+{
+  "samples": 96,
+  "ppu": 200,
+  "sprites": {
+    "gear_ring": {
+      "file": "gear_ring.png",
+      "width": 600,
+      "height": 600,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "note": "Closed ten-tooth ring; hole radius 55% of band outer radius."
+    },
+    "bead": {
+      "file": "bead.png",
+      "width": 160,
+      "height": 160,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "note": "Round path bead with a soft dome."
+    },
+    "lock": {
+      "file": "lock.png",
+      "width": 320,
+      "height": 360,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "note": "Chunky padlock with an open shackle centre and recessed keyhole."
+    },
+    "icon_hint": {
+      "file": "icon_hint.png",
+      "width": 380,
+      "height": 460,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "note": "Puffy light bulb with three short rays."
+    },
+    "icon_undo": {
+      "file": "icon_undo.png",
+      "width": 400,
+      "height": 360,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "note": "Back-left curved arrow with a rounded chevron head."
+    },
+    "icon_unclamp": {
+      "file": "icon_unclamp.png",
+      "width": 360,
+      "height": 380,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "note": "Open U clamp with broad separated jaws."
+    },
+    "bench": {
+      "file": "bench.png",
+      "width": 840,
+      "height": 560,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Warm tan workbench with chunky legs, apron and two wooden plugs."
+    },
+    "lamp": {
+      "file": "lamp.png",
+      "width": 440,
+      "height": 520,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Coral articulated desk lamp."
+    },
+    "lamp_broken": {
+      "file": "lamp_broken.png",
+      "width": 440,
+      "height": 520,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Desaturated askew lamp with fractured shade and missing diffuser."
+    },
+    "clock": {
+      "file": "clock.png",
+      "width": 460,
+      "height": 460,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Mint clock with cream dial and raised hands."
+    },
+    "clock_broken": {
+      "file": "clock_broken.png",
+      "width": 460,
+      "height": 460,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Grey-tan tilted clock with cracked dial and missing minute hand."
+    },
+    "toolbox": {
+      "file": "toolbox.png",
+      "width": 500,
+      "height": 400,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Lavender carry toolbox with open handle and brass latch."
+    },
+    "toolbox_broken": {
+      "file": "toolbox_broken.png",
+      "width": 500,
+      "height": 400,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Dull tilted toolbox with cracked lid and missing latch."
+    },
+    "musicbox": {
+      "file": "musicbox.png",
+      "width": 520,
+      "height": 400,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Butter-yellow music box with raised note and little crank."
+    },
+    "musicbox_broken": {
+      "file": "musicbox_broken.png",
+      "width": 520,
+      "height": 400,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "note": "Grey-tan askew music box with cracked case and missing crank knob."
+    }
+  },
+  "workshop_layout": {
+    "reference_size": [
+      1000,
+      900
+    ],
+    "origin": "bottom-left",
+    "position": "sprite centre",
+    "background": "#2C101A",
+    "pieces": [
+      {
+        "name": "bench",
+        "x": 500,
+        "y": 290,
+        "width": 840,
+        "height": 560,
+        "layer": 0
+      },
+      {
+        "name": "lamp",
+        "x": 290,
+        "y": 580,
+        "width": 308,
+        "height": 364,
+        "layer": 1
+      },
+      {
+        "name": "clock",
+        "x": 530,
+        "y": 760,
+        "width": 276,
+        "height": 276,
+        "layer": 0
+      },
+      {
+        "name": "toolbox",
+        "x": 325,
+        "y": 225,
+        "width": 300,
+        "height": 240,
+        "layer": 1
+      },
+      {
+        "name": "musicbox",
+        "x": 735,
+        "y": 542,
+        "width": 312,
+        "height": 240,
+        "layer": 1
+      }
+    ]
+  }
+}
