@@ -83,7 +83,44 @@ namespace Orcub.EditorTools
             }
             for (int i = 0; i < levels.Count; i++) levels[i].id = i + 1;
 
-            var pack = new LevelPack { levels = levels.ToArray() };
+            // Preserve shipped canonical geometry across v2 upgrades.
+            if (File.Exists(PackPath))
+            {
+                var previous = LevelPack.FromJson(File.ReadAllText(PackPath));
+                if (previous.levels?.Length == count) levels = previous.levels.ToList();
+            }
+            foreach (var candidate in pool) candidate.rating = LevelRating.For(candidate);
+            var variants = new LevelVariants[levels.Count];
+            for (int i = 0; i < levels.Count; i++)
+            {
+                var canonical = levels[i];
+                canonical.rating = LevelRating.For(canonical);
+                canonical.solver = SolverMeasure.Search(canonical.ToDef());
+                var choices = new List<LevelData> { canonical };
+                foreach (float offset in new[] { -140f, -70f, 70f, 140f })
+                {
+                    if (i < 3)
+                    {
+                        var small = JsonUtility.FromJson<LevelData>(JsonUtility.ToJson(canonical));
+                        small.seed = -100 - i * 5 - choices.Count;
+                        for (int ring = 0; ring < small.rings.Length; ring++)
+                            small.rings[ring].gap += choices.Count * 12f;
+                        small.rating = LevelRating.For(small);
+                        small.solver = SolverMeasure.Search(small.ToDef());
+                        choices.Add(small);
+                        continue;
+                    }
+                    var candidate = pool.Where(c => !choices.Any(x => x.seed == c.seed))
+                        .OrderBy(c => Mathf.Abs(c.rating - canonical.rating - offset)).First();
+                    // Clone: candidates can be reused by different saga slots.
+                    var copy = JsonUtility.FromJson<LevelData>(JsonUtility.ToJson(candidate));
+                    copy.id = i + 1;
+                    copy.solver = SolverMeasure.Search(copy.ToDef());
+                    choices.Add(copy);
+                }
+                variants[i] = new LevelVariants { choices = choices.ToArray() };
+            }
+            var pack = new LevelPack { levels = levels.ToArray(), variants = variants };
             Directory.CreateDirectory(Path.GetDirectoryName(PackPath));
             File.WriteAllText(PackPath, pack.ToJson());
 
@@ -92,6 +129,7 @@ namespace Orcub.EditorTools
                 csv.AppendLine($"{l.id},{l.rings.Length},{l.links.Length},{l.extraLinks},{l.depth},{l.parTaps},{l.parRotation:F0},{l.difficulty:F1},{l.symmetric},{l.seed}");
             File.WriteAllText("ArtSource/levels_report.csv", csv.ToString()); // outside Resources: not shipped
             AssetDatabase.ImportAsset(PackPath);
+            LevelLibrary.Reload();
 
             string summary = $"level pack: {levels.Count} levels from {pool.Count} candidates, difficulty {minD:F1}-{maxD:F1}";
             Debug.Log("[Orcub] " + summary);

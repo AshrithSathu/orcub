@@ -10,6 +10,8 @@ namespace Orcub.Core
     {
         public int id;
         public int seed;
+        public float rating;
+        public SolverMeasure solver;
         public float difficulty;
         public int depth;            // longest forced chain: how many "rounds" of unlocking
         public int extraLinks;       // links beyond a spanning tree (more crossing constraints)
@@ -45,12 +47,16 @@ namespace Orcub.Core
     [Serializable]
     public sealed class LevelPack
     {
-        public int version = 1;
+        public int version = 2;
+        public LevelVariants[] variants;
         public LevelData[] levels;
 
         public static LevelPack FromJson(string json) => JsonUtility.FromJson<LevelPack>(json);
         public string ToJson(bool pretty = false) => JsonUtility.ToJson(this, pretty);
     }
+
+    [Serializable]
+    public sealed class LevelVariants { public LevelData[] choices; }
 
     /// <summary>Solution metrics computed by simulation.</summary>
     public static class LevelMetrics

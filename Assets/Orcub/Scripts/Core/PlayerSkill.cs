@@ -10,6 +10,7 @@ namespace Orcub.Core
         public const string DefaultPrefix = "orcub.skill.";
         public const int WindowSize = 8;
         readonly string key;
+        Tuning tuning;
         readonly State state;
 
         [Serializable]
@@ -29,27 +30,30 @@ namespace Orcub.Core
             public int Boosters, Continues;
         }
 
-        public PlayerSkill(string keyPrefix = DefaultPrefix)
+        public PlayerSkill(string keyPrefix = DefaultPrefix, Tuning tuning = null)
         {
+            this.tuning = (tuning ?? new Tuning()).Snapshot();
             key = keyPrefix + "state";
             try { state = JsonUtility.FromJson<State>(PlayerPrefs.GetString(key, "")); }
             catch (ArgumentException) { state = null; }
-            if (state == null) state = new State();
-            if (float.IsNaN(state.Rating) || float.IsInfinity(state.Rating)) state.Rating = 1000f;
-            state.Rating = Mathf.Clamp(state.Rating, 100f, 2500f);
+            if (state == null) state = new State { Rating = this.tuning.InitialRating };
+            if (float.IsNaN(state.Rating) || float.IsInfinity(state.Rating)) state.Rating = this.tuning.InitialRating;
+            state.Rating = Mathf.Clamp(state.Rating, this.tuning.MinimumRating, this.tuning.MaximumRating);
             state.Games = Mathf.Max(0, state.Games);
             if (state.Recent == null) state.Recent = new List<Sample>();
             Trim();
         }
+
+        internal void UseTuning(Tuning value) => tuning = value.Snapshot();
 
         public float Rating => state.Rating;
         public int Games => state.Games;
         /// <summary>0: learning (&lt;900), 1: developing, 2: fluent (1100+), 3: expert (1250+).</summary>
         public int Tier => Rating < 900 ? 0 : Rating < 1100 ? 1 : Rating < 1250 ? 2 : 3;
         /// <summary>Evidence coverage, not a statistical probability; saturates after 24 attempts.</summary>
-        public float Confidence => Mathf.Clamp01(Games / 24f);
+        public float Confidence => Mathf.Clamp01(Games / tuning.ConfidenceGames);
         public IReadOnlyList<Sample> Recent => state.Recent.AsReadOnly();
-        public float KFactor => 12f + 12f / (1f + Games / 20f);
+        public float KFactor => tuning.EloKBase + tuning.EloKBonus / (1f + Games / tuning.EloDecayGames);
 
         public static float ExpectedScore(float playerRating, float levelRating) =>
             (float)(1.0 / (1.0 + Math.Pow(10.0, (levelRating - playerRating) / 400.0)));
@@ -62,7 +66,7 @@ namespace Orcub.Core
             bool won = result.Outcome == AttemptOutcome.Win;
             float delta = KFactor * ((won ? 1f : 0f) - ExpectedScore(Rating, levelRating));
             // Even an unexpected accidental loss can remove at most 12 points; tiers span 150+.
-            state.Rating = Mathf.Clamp(Rating + Mathf.Max(-12f, delta), 100f, 2500f);
+            state.Rating = Mathf.Clamp(Rating + Mathf.Max(-tuning.MaxRatingLoss, delta), tuning.MinimumRating, tuning.MaximumRating);
             if (state.Games < int.MaxValue) state.Games++;
             state.Recent.Add(new Sample
             {

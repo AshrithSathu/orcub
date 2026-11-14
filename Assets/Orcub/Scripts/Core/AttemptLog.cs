@@ -30,7 +30,12 @@ namespace Orcub.Core
     [Serializable]
     public sealed class AttemptRecord
     {
-        public int Version = 1;
+        public int Version = 2;
+        public int Variant;
+        public string TuningVersion, ModelVersion;
+        public EarlyFeatures Features;
+        public float ModelPrediction;
+        public float SkillEstimate, SkillConfidence;
         public int LevelIndex;
         public string StartedUtc;
         public AttemptPlan Plan;
@@ -44,16 +49,18 @@ namespace Orcub.Core
     {
         public const int Capacity = 500;
         readonly string path;
+        readonly bool persist;
         readonly Records records;
         [Serializable]
         sealed class Records { public List<AttemptRecord> Attempts = new List<AttemptRecord>(); }
 
-        public AttemptLog(string filePath = null)
+        public AttemptLog(string filePath = null, bool persist = true)
         {
+            this.persist = persist;
             path = filePath ?? Path.Combine(Application.persistentDataPath, "orcub-attempts.json");
             try
             {
-                if (File.Exists(path)) records = JsonUtility.FromJson<Records>(File.ReadAllText(path));
+                if (persist && File.Exists(path)) records = JsonUtility.FromJson<Records>(File.ReadAllText(path));
             }
             catch (Exception) { /* Telemetry must never prevent play, including corrupt or inaccessible files. */ }
             if (records == null || records.Attempts == null) records = new Records();
@@ -68,6 +75,7 @@ namespace Orcub.Core
             if (record == null) return false;
             records.Attempts.Add(record);
             Trim();
+            if (!persist) return true;
             try
             {
                 string directory = Path.GetDirectoryName(path);

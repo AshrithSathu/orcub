@@ -1,0 +1,11 @@
+{
+  "test_job": "7720f77af05347e5a4cd8d6295ee59b3",
+  "passed": 67,
+  "failed": 0,
+  "skipped": 0,
+  "seconds": 27.6337807,
+  "pack_bytes": 1753501,
+  "pack_gzip_bytes": 288481,
+  "canonical_geometry_preserved": true,
+  "target_calibration_met": false
+}

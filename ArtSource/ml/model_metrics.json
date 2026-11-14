@@ -1,0 +1,11 @@
+{
+  "train": 6133,
+  "held_out": 1534,
+  "accuracy": 0.9178617992177314,
+  "brier": 0.05993861292761323,
+  "log_loss": 0.20378089420790937,
+  "observed_win_rate": 0.9139504563233377,
+  "mean_prediction": 0.9137217590866678,
+  "baseline_brier": 0.07864501970970048,
+  "source_sha256": "b7118aba68025ddd9d7c1d7fef5629e97e3bac8c4ddaf09c959c42f52aa541a6"
+}
