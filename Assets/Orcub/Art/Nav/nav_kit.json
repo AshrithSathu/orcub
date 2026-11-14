@@ -1,0 +1,246 @@
+{
+  "samples": 96,
+  "ppu": 200,
+  "border_order": [
+    "left",
+    "bottom",
+    "right",
+    "top"
+  ],
+  "sprites": {
+    "btn_square": {
+      "file": "btn_square.png",
+      "width": 220,
+      "height": 220,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Soft rounded square; near-white cream for runtime tint."
+    },
+    "glyph_back": {
+      "file": "glyph_back.png",
+      "width": 180,
+      "height": 180,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Puffy rounded back glyph."
+    },
+    "glyph_close": {
+      "file": "glyph_close.png",
+      "width": 180,
+      "height": 180,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Puffy rounded close glyph."
+    },
+    "glyph_chevron": {
+      "file": "glyph_chevron.png",
+      "width": 180,
+      "height": 180,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Puffy rounded chevron glyph."
+    },
+    "glyph_path": {
+      "file": "glyph_path.png",
+      "width": 300,
+      "height": 200,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Four coral beads ending at a coral flag."
+    },
+    "map_node": {
+      "file": "map_node.png",
+      "width": 320,
+      "height": 320,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Ten-tooth tintable gear rim. Layer map_node_center at identical bounds."
+    },
+    "map_node_center": {
+      "file": "map_node_center.png",
+      "width": 320,
+      "height": 320,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Untinted cream number disc; aligned with map_node."
+    },
+    "star_socket": {
+      "file": "star_socket.png",
+      "width": 220,
+      "height": 220,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Recessed star cavity with a cream rolled lip and lower clay floor."
+    },
+    "bubble": {
+      "file": "bubble.png",
+      "width": 340,
+      "height": 200,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "border": [
+        170,
+        0,
+        100,
+        0
+      ],
+      "note": "Stretch horizontally; downward tail protected inside the left slice cap."
+    },
+    "sheet": {
+      "file": "sheet.png",
+      "width": 680,
+      "height": 500,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        132,
+        0,
+        132,
+        132
+      ],
+      "note": "Cream sheet; large top corners and flat flush bottom. Bottom alpha intentionally reaches canvas edge."
+    },
+    "home_hero": {
+      "file": "home_hero.png",
+      "width": 700,
+      "height": 700,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Four real build_parts C-rings joined with real tan clamps, mounts and stems."
+    },
+    "chapter_lamp": {
+      "file": "chapter_lamp.png",
+      "width": 320,
+      "height": 320,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Restored coral articulated lamp with a small coral gear leaning beside its foot."
+    },
+    "node_glow": {
+      "file": "node_glow.png",
+      "width": 420,
+      "height": 420,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "White radial halo; smooth alpha reaches zero before the canvas edge; no shadow."
+    }
+  }
+}
