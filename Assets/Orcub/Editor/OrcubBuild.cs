@@ -120,8 +120,31 @@ namespace Orcub.EditorTools
             });
         }
 
+        /// <summary>
+        /// Clear a previous build folder before building. Unity's own replace step fails with "Directory not empty"
+        /// when macOS Finder drops a .DS_Store into the folder mid-delete, so retry a few times.
+        /// </summary>
+        static void CleanOutput(string path)
+        {
+            if (!Directory.Exists(path)) return;
+            for (int attempt = 0; attempt < 6; attempt++)
+            {
+                try
+                {
+                    Directory.Delete(path, true);
+                    return;
+                }
+                catch (IOException)
+                {
+                    System.Threading.Thread.Sleep(250);
+                }
+            }
+            Debug.LogWarning("[Orcub] could not fully clear " + path + "; Unity will try to replace it");
+        }
+
         static void Run(BuildPlayerOptions options)
         {
+            if (options.target == BuildTarget.iOS) CleanOutput(options.locationPathName);
             var report = BuildPipeline.BuildPlayer(options);
             var summary = report.summary;
             Debug.Log($"[Orcub] build {summary.result}: {summary.outputPath} ({summary.totalSize / (1024 * 1024)} MB, {summary.totalErrors} errors)");
