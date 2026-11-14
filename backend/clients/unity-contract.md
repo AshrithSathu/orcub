@@ -179,3 +179,17 @@ both; telemetry retention never removes claim tombstones.
 Daily error policy: 410 daily_completion_expired means no proof arrived within day..day+1; 410 daily_history_out_of_order means the server has advanced beyond this unclaimed date. Both are permanent. The client removes permanent 4xx entries (except 408/409/429) and continues with later dates. Network errors, 408, pending 409, 429 and 5xx remain queued. Flush telemetry before claims and retry on boot, foreground resume and successful telemetry flush.
 
 Merge subtracts receipt-recorded daily booster quantities and unlimited minutes from the guest remainder, bounded at zero, preserving purchased inventory/time. It credits full daily rewards only for (reason, utc_day) newly claimed by the canonical account. Existing canonical dates retain their original receipts, and replays describe the credited reward. Level-reward gold remains excluded. Daily save history and pending queues are unioned on merge; absent daily sections from older clients preserve the cloud section. Restored streak counts are zero after breakage; LastPuzzleDay includes the newest pending date.
+
+## Tutorial booster unlock grants
+
+POST /v1/wallet/grant accepts:
+```json
+{"player_id":"UUID","source":"booster_unlock","kind":"hint","ref_id":"UUID","idempotency_key":"UUID"}
+```
+Use kind hint / undo / unclamp, unlocked at displayed level 5 / 8 / 12 respectively. Each grants exactly three of that booster once per player and kind forever, with no gold or revenue. source and kind are aliases for the existing reason and booster fields; send one spelling only. Do not send utc_day. UUID keys retain the existing request-fingerprint rules.
+
+Response: {"wallet":WALLET,"grant":{"source":"booster_unlock","kind":"hint","reward":{"gold":0,"inventory":{"hint":3},"unlimited_minutes":0}}}. Replays, including new request keys, return the original grant receipt and current wallet without replenishing spent inventory. A mismatched reused key still conflicts.
+
+Where progress is known, require the unlock level: cloud highest_level and level_start/level_end LevelIndex are zero-based and converted to displayed levels by adding one; use the highest known value. A known lower level returns 409 booster_unlock_locked. If neither saves nor retained level events provide progress, accept the claim; this client-reported fallback is bounded to three items once per kind. This is a tutorial allowance, not gameplay attestation.
+
+At account merge, subtract receipt-recorded unlock quantities from the guest remainder, bounded at zero, preserving purchased items. Carry the full grant only for kinds the canonical account has not claimed; existing canonical receipts win. Permanent claim tombstones survive event retention, are exported, and cascade on account deletion. Ledger reason booster_unlock has delta zero and never counts as purchase revenue.

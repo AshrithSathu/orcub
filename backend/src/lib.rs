@@ -708,7 +708,7 @@ async fn account_export(
             if !guest { return Err(ApiError::unauthorized()); }
         }
         let mut out=Vec::new();
-        for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","daily_claims","daily_streaks","purchases","purchase_revocations","economy_offers","wallet_aliases","entitlement_transfers","player_value_cache","event_quotas","raw_events"] {
+        for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","daily_claims","daily_streaks","booster_unlock_claims","purchases","purchase_revocations","economy_offers","wallet_aliases","entitlement_transfers","player_value_cache","event_quotas","raw_events"] {
             let filter=if table=="players" {"id"} else {"player_id"};
             let sql=if table=="raw_events" {"SELECT to_jsonb(r) AS data FROM raw_events r JOIN events e USING(event_id) WHERE e.player_id=$1".to_string()} else {format!("SELECT to_jsonb(t)-'credential_hash' AS data FROM {table} t WHERE {filter}=$1")};
             use futures_util::TryStreamExt;

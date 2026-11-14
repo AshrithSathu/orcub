@@ -1,4 +1,5 @@
 mod daily;
+mod unlock;
 pub(crate) fn daily_date(s: &str) -> bool {
     daily::date(s).is_ok()
 }
@@ -159,9 +160,10 @@ pub async fn consume(
 pub struct Action {
     player_id: Uuid,
     idempotency_key: Uuid,
+    #[serde(alias = "source")]
     reason: String,
     ref_id: Uuid,
-    #[serde(default)]
+    #[serde(default, alias = "kind")]
     booster: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     utc_day: Option<String>,
@@ -278,12 +280,20 @@ pub async fn grant(
     h: HeaderMap,
     Json(b): Json<Action>,
 ) -> Result<Json<Value>> {
-    if b.booster.is_some() {
-        return Err(ApiError::bad("booster only allowed for booster sink"));
+    if b.booster.is_some() && b.reason != "booster_unlock" {
+        return Err(ApiError::bad(
+            "booster only allowed for booster sink or unlock",
+        ));
     }
     let id = owner(&s, &h, b.player_id).await?;
     let mut tx = s.pool.begin().await?;
     lock(&mut tx, id).await?;
+    if b.reason == "booster_unlock" {
+        let receipt = unlock::claim(&mut tx, id, &b).await?;
+        let wallet = snapshot(&mut tx, id).await?;
+        tx.commit().await?;
+        return Ok(Json(json!({"wallet":wallet,"grant":receipt})));
+    }
     if b.utc_day.is_some() {
         let receipt = daily::claim(&mut tx, id, &b).await?;
         let wallet = snapshot(&mut tx, id).await?;
@@ -721,7 +731,8 @@ async fn revoke(pool: &PgPool, v: &Value) -> Result<()> {
 pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> {
     lock(tx, canonical).await?;
     lock(tx, guest).await?;
-    let carried = daily::merge(tx, canonical, guest).await?;
+    let mut carried = daily::merge(tx, canonical, guest).await?;
+    carried.extend(unlock::merge(tx, canonical, guest).await?);
     let mut g = snapshot(tx, guest).await?;
     // Remove guest grant value, then credit only daily dates newly owned by the account.
     let grants:i64=sqlx::query_scalar("SELECT COALESCE(sum(delta),0)::bigint FROM wallet_ledger WHERE player_id=$1 AND reason IN ('daily_gift','daily_puzzle','level_reward')").bind(guest).fetch_one(&mut **tx).await?;
@@ -732,7 +743,7 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
         (gold - grants).max(0)
     };
     let rewards: Vec<Value> =
-        sqlx::query_scalar("SELECT receipt->'reward' FROM daily_claims WHERE player_id=$1")
+        sqlx::query_scalar("SELECT receipt->'reward' FROM daily_claims WHERE player_id=$1 UNION ALL SELECT receipt->'reward' FROM booster_unlock_claims WHERE player_id=$1")
             .bind(guest)
             .fetch_all(&mut **tx)
             .await?;
@@ -774,7 +785,7 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
             tx,
             canonical,
             reward["gold"].as_i64().unwrap_or(0),
-            "merge_daily_reward",
+            "merge_reward",
             &guest.to_string(),
             &Uuid::new_v4().to_string(),
             &json!({}),

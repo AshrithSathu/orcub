@@ -69,3 +69,5 @@ bounded client-generated strings; this backend sends no notifications and stores
 no APNs token. Cloud preferences do not authorise notification delivery on a new
 device. Daily telemetry uses existing retained numeric/bool metric_* payloads
 (including metric_day and metric_success), rather than new personal identifiers.
+
+booster_unlock_claims stores one tutorial grant receipt per player and booster kind, with creation timestamp. It enforces lifetime caps across replay and merge, survives telemetry retention, is included in account exports and cascades on account deletion. It contains no payment or additional personal identifiers.
