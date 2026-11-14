@@ -65,6 +65,20 @@ namespace Orcub.Game
         public Sprite wreathArcB;
         public float wreathRadius = 3f;
 
+        [Header("Home, map, boosters (Blender home kit)")]
+        public Sprite homeGearRing;      // closed clay gear ring: loader progress + map nodes + goal icons
+        public Sprite homeBead;          // map path dots
+        public Sprite homeLock;
+        public Sprite iconHint, iconUndo, iconUnclamp;
+        public Sprite workshopBench;
+        public Vector2 workshopBenchPos, workshopBenchSize;
+        public string[] workshopIds = new string[0];
+        public Sprite[] workshopRestored = new Sprite[0];
+        public Sprite[] workshopBroken = new Sprite[0];
+        public Vector2[] workshopPos = new Vector2[0];
+        public Vector2[] workshopSize = new Vector2[0];
+        public Vector2 workshopBox = new Vector2(1000, 900);
+
         [Header("Background")]
         [Tooltip("Optional full-screen backdrop, scaled to cover the camera view.")]
         public Sprite backgroundSprite;

@@ -63,6 +63,14 @@ namespace Orcub.Game
             return sr;
         }
 
+        /// <summary>Show the holder already retracted (board rebuilt after Undo).</summary>
+        public void ReleaseInstant()
+        {
+            _released = true;
+            _releaseT = 1f;
+            Layout(1f);
+        }
+
         public void Release()
         {
             if (_released) return;

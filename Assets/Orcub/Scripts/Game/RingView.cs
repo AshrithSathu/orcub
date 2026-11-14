@@ -33,6 +33,8 @@ namespace Orcub.Game
         readonly List<Color> _introColors = new List<Color>();
         public System.Action<RingView> Landed;
 
+        float _hintTime = -1f, _hintDelta;
+
         float _shakeTime;
         float _pulseTime;
         float _pickScale = 1f;
@@ -91,6 +93,14 @@ namespace Orcub.Game
         }
 
         public void Shake() => _shakeTime = 0.35f;
+
+        /// <summary>Hint booster: the ring nods twice the way it should turn (visual only), with a pulse.</summary>
+        public void ShowHint(float deltaDegrees)
+        {
+            _hintTime = 0f;
+            _hintDelta = Mathf.Clamp(deltaDegrees, -35f, 35f);
+            Pulse();
+        }
         public void Pulse() => _pulseTime = 0.45f;
         public void SetPicked(bool picked)
         {
@@ -239,6 +249,14 @@ namespace Orcub.Game
                 _wobbleTime -= dt;
                 float k = Mathf.Clamp01(_wobbleTime / 0.55f);
                 shakeAngle += Mathf.Sin((1f - k) * Mathf.PI * 4f) * 5f * k;
+            }
+
+            if (_hintTime >= 0f)
+            {
+                _hintTime += dt;
+                float k = Mathf.Clamp01(_hintTime / 1.6f);
+                shakeAngle += Mathf.Sin(k * Mathf.PI * 2f) * Mathf.Sin(k * Mathf.PI) * _hintDelta;
+                if (k >= 1f) _hintTime = -1f;
             }
 
             float pulse = 0f;

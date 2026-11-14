@@ -68,6 +68,41 @@ MonoBehaviour:
   wreathArcA: {fileID: 21300000, guid: d2941f9db6cf54ca589a7b8bbc99dce3, type: 3}
   wreathArcB: {fileID: 21300000, guid: 197f53fe9f51b4c26bff25b321f584cd, type: 3}
   wreathRadius: 3
+  homeGearRing: {fileID: 21300000, guid: 37ef0fd5ecf544839bcb4c909d2f954c, type: 3}
+  homeBead: {fileID: 21300000, guid: 32c1674249bb743e6b9884c3477db2cb, type: 3}
+  homeLock: {fileID: 21300000, guid: 75a1a235b2b574d3ab006a228ed44c7b, type: 3}
+  iconHint: {fileID: 21300000, guid: c2de00f54496a4a669063b9f72b0e8d8, type: 3}
+  iconUndo: {fileID: 21300000, guid: a54e4f9f5b6fd42acbaeaae146e9a0ed, type: 3}
+  iconUnclamp: {fileID: 21300000, guid: b88132307153649a88953ccf06d7ad0e, type: 3}
+  workshopBench: {fileID: 21300000, guid: 765c0ddfdce0d44fda5fd2b52d093839, type: 3}
+  workshopBenchPos: {x: 500, y: 290}
+  workshopBenchSize: {x: 840, y: 560}
+  workshopIds:
+  - lamp
+  - clock
+  - toolbox
+  - musicbox
+  workshopRestored:
+  - {fileID: 21300000, guid: bc34fd4e7b320445c8ac7e7918fcc2e6, type: 3}
+  - {fileID: 21300000, guid: 92467dadd441b404aae13d87ce54b825, type: 3}
+  - {fileID: 21300000, guid: a433fed3a4c324c6a838405d5cd2abd0, type: 3}
+  - {fileID: 21300000, guid: 608a7581b68224804bf51b8b4cc9bbdf, type: 3}
+  workshopBroken:
+  - {fileID: 21300000, guid: 02b70c0c41142452bbe021d28281f547, type: 3}
+  - {fileID: 21300000, guid: 1d3e1f992c84b4eccbf4addc95916ec9, type: 3}
+  - {fileID: 21300000, guid: e24da46b8870f4cfa8c3a8af7048e5dd, type: 3}
+  - {fileID: 21300000, guid: d3f5a4228f11b4131b23955d5be7c1cd, type: 3}
+  workshopPos:
+  - {x: 290, y: 580}
+  - {x: 530, y: 760}
+  - {x: 325, y: 225}
+  - {x: 735, y: 542}
+  workshopSize:
+  - {x: 308, y: 364}
+  - {x: 276, y: 276}
+  - {x: 300, y: 240}
+  - {x: 312, y: 240}
+  workshopBox: {x: 1000, y: 900}
   backgroundSprite: {fileID: 21300000, guid: df0554ba07329439e838f42117425bde, type: 3}
   masterVolume: 0.9
   sfxTick: {fileID: 8300000, guid: 39b060b59b52e4aa4a82be142c4cb7cc, type: 3}

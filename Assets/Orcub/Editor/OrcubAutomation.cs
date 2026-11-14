@@ -223,6 +223,7 @@ namespace Orcub.EditorTools
             ImportIcon();
             art.uiFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/Orcub/Fonts/Fredoka-Bold.ttf");
             ImportUiKit(art);
+            ImportHomeKit(art);
             // Soft-clay palette: saturated enough to read on navy, chalky enough to feel like clay.
             art.ringPalette = new[]
             {
@@ -398,6 +399,52 @@ namespace Orcub.EditorTools
             art.wreathArcA = ImportLitSprite($"{dir}/wreath_arc_a.png", $"{dir}/wreath_arc_a_n.png", 200f);
             art.wreathArcB = ImportLitSprite($"{dir}/wreath_arc_b.png", $"{dir}/wreath_arc_b_n.png", 200f);
             art.wreathRadius = 3f;
+        }
+
+        [Serializable] class KitPiece { public string name; public float x, y, width, height; }
+        [Serializable] class KitLayout { public float[] reference_size; public KitPiece[] pieces; }
+        [Serializable] class HomeKitMeta { public KitLayout workshop_layout; }
+
+        /// <summary>Home / map / booster art from build_home_kit.py (pre-lit UI images + the workshop layout).</summary>
+        static void ImportHomeKit(OrcubArt art)
+        {
+            const string dir = "Assets/Orcub/Art/Home";
+            var jsonPath = Path.Combine(ProjectRoot, dir, "home_kit.json");
+            if (!File.Exists(jsonPath)) { Debug.LogWarning("[Orcub] home_kit.json missing"); return; }
+            Sprite S(string n) => ImportUiIcon($"{dir}/{n}.png");
+            art.homeGearRing = S("gear_ring");
+            art.homeBead = S("bead");
+            art.homeLock = S("lock");
+            art.iconHint = S("icon_hint");
+            art.iconUndo = S("icon_undo");
+            art.iconUnclamp = S("icon_unclamp");
+            var layout = JsonUtility.FromJson<HomeKitMeta>(File.ReadAllText(jsonPath)).workshop_layout;
+            art.workshopBox = new Vector2(layout.reference_size[0], layout.reference_size[1]);
+            var ids = new List<string>();
+            var restored = new List<Sprite>();
+            var broken = new List<Sprite>();
+            var pos = new List<Vector2>();
+            var size = new List<Vector2>();
+            foreach (var p in layout.pieces)
+            {
+                if (p.name == "bench")
+                {
+                    art.workshopBench = S("bench");
+                    art.workshopBenchPos = new Vector2(p.x, p.y);
+                    art.workshopBenchSize = new Vector2(p.width, p.height);
+                    continue;
+                }
+                ids.Add(p.name);
+                restored.Add(S(p.name));
+                broken.Add(S(p.name + "_broken"));
+                pos.Add(new Vector2(p.x, p.y));
+                size.Add(new Vector2(p.width, p.height));
+            }
+            art.workshopIds = ids.ToArray();
+            art.workshopRestored = restored.ToArray();
+            art.workshopBroken = broken.ToArray();
+            art.workshopPos = pos.ToArray();
+            art.workshopSize = size.ToArray();
         }
 
         static Sprite ImportUiIcon(string path)

@@ -24,7 +24,7 @@ namespace Orcub.Game
         [SerializeField] float tapSpin = -60f;
         [SerializeField] float tapSpinSpeed = 420f;
         [SerializeField] float pullOutDistance = 1.0f;
-        [SerializeField] float framePadding = 0.8f;
+        [SerializeField] float framePadding = 0.45f;
         [Tooltip("Play the animated logo splash before the first board.")]
         [SerializeField] bool playSplash = true;
         [Tooltip("Show DEV level skip buttons + level stats in the HUD (turn off for release).")]
@@ -41,6 +41,11 @@ namespace Orcub.Game
         LevelData _levelData;
         LevelHud _hud;
         WreathView _wreath;
+        UiKit _kit;
+        HomeScreen _home;
+        MapScreen _map;
+        readonly Stack<(ModelSnapshot snap, int moves)> _undo = new Stack<(ModelSnapshot, int)>();
+        ModelSnapshot _pendingSnap;
 
         PuzzleModel _model;
         readonly List<RingView> _rings = new List<RingView>();
@@ -116,18 +121,78 @@ namespace Orcub.Game
             _wreath = WreathView.Create(transform, art, cam);
             _hud.Pause += OpenPause;
             GameSettings.Apply();
-            _hud.Prev += () => LoadLevel(_levelIndex - 1);
-            _hud.Next += () => LoadLevel(_levelIndex + 1);
-            Build();
+            _hud.Prev += () => DevJump(-1);
+            _hud.Next += () => DevJump(+1);
+            _hud.Booster += UseBooster;
+            _kit = new UiKit(art);
+            _home = HomeScreen.Create(transform, _kit, _fx, onPlay: () => PlayLevel(Frontier), onMap: ShowMap,
+                onSettings: () => _hud.ShowSettings(onClose: () => { }));
+            _map = MapScreen.Create(transform, _kit, onPlayLevel: PlayLevel, onBack: ShowHome);
+            _home.Hide();
 
+            // The frontier board is built (hidden) so the felt backdrop is there for the splash.
+            Build(Frontier);
+            HideRingsForIntro();
+            _hud.SetVisible(false, instant: true);
             if (playSplash && art.logoLetters != null && art.logoLetters.Length > 0)
             {
-                HideRingsForIntro();
-                _hud.SetVisible(false, instant: true);
                 _splash = SplashView.Play(transform, art, cam, _fx, _crumbs,
-                    onReveal: () => { DropInRings(); _hud.SetVisible(true); },
+                    onReveal: () => LoaderScreen.Show(transform, _kit, onDone: ShowHome),
                     onDone: () => _splash = null);
             }
+            else ShowHome();
+        }
+
+        // ------------------------------------------------------------------ screens
+
+        /// <summary>The next level the player hasn't beaten (home's Play button).</summary>
+        static int Frontier => Mathf.Clamp(Progress.HighestUnlocked, 0, Mathf.Max(0, LevelLibrary.Count - 1));
+
+        void ShowHome()
+        {
+            _inputLocked = true;
+            _hud.ClosePopup();
+            _hud.SetVisible(false, instant: true);
+            _wreath?.Hide();
+            _map.Hide();
+            _home.Show();
+        }
+
+        void ShowMap()
+        {
+            _home.Hide();
+            _map.Show();
+        }
+
+        /// <summary>Start a level from home or the map. Needs at least one life to start.</summary>
+        void PlayLevel(int index)
+        {
+            if (Lives.Count <= 0)
+            {
+                _hud.ShowOutOfLives(
+                    onRefillAd: () => _hud.ShowAdPlaceholder(1.4f, () => { Lives.Refill(); PlayLevel(index); }),
+                    onRefillCogs: null,
+                    onBack: () => { });
+                return;
+            }
+            _home.Hide();
+            _map.Hide();
+            _hud.SetVisible(true);
+            LoadLevel(index);
+        }
+
+        /// <summary>Leave the current level for home. Mid-level quits and abandoned fails cost a life.</summary>
+        void GoHome(bool costsLife)
+        {
+            if (costsLife) Lives.TrySpend();
+            ShowHome();
+        }
+
+        void DevJump(int delta)
+        {
+            int target = Mathf.Clamp(_levelIndex + delta, 0, Mathf.Max(0, LevelLibrary.Count - 1));
+            Progress.HighestUnlocked = target;   // dev: unlock as you skip so the map follows
+            LoadLevel(target);
         }
 
         // ------------------------------------------------------------------ intro
@@ -135,13 +200,13 @@ namespace Orcub.Game
         void HideRingsForIntro()
         {
             _inputLocked = true;
-            foreach (var r in _rings) r.HideForIntro();
+            foreach (var r in _rings) if (r != null) r.HideForIntro();
         }
 
         /// <summary>Rings land one after another, top of the board first, each with a soft tick.</summary>
         void DropInRings()
         {
-            var order = new List<RingView>(_rings);
+            var order = _rings.FindAll(r => r != null);
             order.Sort((a, b) => _model.Rings[b.RingId].Center.y.CompareTo(_model.Rings[a.RingId].Center.y));
             int remaining = order.Count;
             for (int i = 0; i < order.Count; i++)
@@ -158,9 +223,11 @@ namespace Orcub.Game
 
         public int LevelIndex => _levelIndex;
 
-        public void Build()
+        public void Build() => Build(Frontier);
+
+        public void Build(int index)
         {
-            _levelIndex = Progress.CurrentLevel;
+            _levelIndex = index;
             _levelData = LevelLibrary.Get(_levelIndex);
             var def = _levelData != null ? _levelData.ToDef() : Levels.Basic10();
             Build(def);
@@ -170,6 +237,8 @@ namespace Orcub.Game
             _usedAdContinue = false;
             _levelOver = false;
             _winAt = _failCheckAt = -1f;
+            _undo.Clear();
+            _pendingSnap = null;
             if (_hud != null) _hud.ClosePopup();
             if (_wreath != null) _wreath.Hide();
             UpdateHud();
@@ -180,8 +249,7 @@ namespace Orcub.Game
         {
             int count = Mathf.Max(1, LevelLibrary.Count);
             _levelIndex = ((index % count) + count) % count;
-            Progress.CurrentLevel = _levelIndex;
-            Build();
+            Build(_levelIndex);
             if (Application.isPlaying)
             {
                 HideRingsForIntro();
@@ -197,6 +265,11 @@ namespace Orcub.Game
                 $"best {_rules.MinMoves} · 3★ ≤{_rules.ThreeStar} · 2★ ≤{_rules.TwoStar} · limit {_rules.MoveLimit} · diff {_levelData.difficulty:F1}";
             _hud.SetLevel(_levelIndex + 1, info);
             _hud.SetMoves(MovesLeft);
+            var colours = new List<Color>();
+            foreach (var r in _model.Rings) colours.Add(art.RingColor(r.Color));
+            _hud.SetGoal(colours);
+            foreach (var r in _model.Rings) if (r.Removed) _hud.MarkGoalFreed(r.Id);
+            foreach (BoosterKind k in Enum.GetValues(typeof(BoosterKind))) _hud.SetBoosterCount(k, BoosterInventory.Count(k));
         }
 
         public void Build(LevelDef level)
@@ -204,8 +277,14 @@ namespace Orcub.Game
             Clear();
             _model = new PuzzleModel(level);
             _model.LinkReleased += OnLinkReleased;
+            _model.RingRemoved += r => _hud?.MarkGoalFreed(r.Id);
             _model.Solved += OnSolved;
+            BuildViews();
+        }
 
+        /// <summary>(Re)create every view from the model's current state (used after Undo too).</summary>
+        void BuildViews()
+        {
             _content = new GameObject("Board").transform;
             _content.SetParent(transform, false);
 
@@ -214,6 +293,7 @@ namespace Orcub.Game
 
             foreach (var ring in _model.Rings)
             {
+                if (ring.Removed) { _rings.Add(null); continue; }
                 var view = new GameObject().AddComponent<RingView>();
                 view.transform.SetParent(_content, false);
                 view.Init(ring, art);
@@ -222,18 +302,24 @@ namespace Orcub.Game
             foreach (var link in _model.Links)
             {
                 var owner = _rings[link.Owner];
+                if (owner == null) { _holders.Add(null); continue; }
                 var holder = new GameObject().AddComponent<HolderView>();
                 holder.Init(link, _model, owner, art);
+                if (!link.Active) holder.ReleaseInstant();
                 owner.OwnedHolders.Add(holder);
                 _holders.Add(holder);
             }
+            for (int i = 0; i < _rings.Count; i++)
+                if (_rings[i] != null && _model.IsFree(i)) _rings[i].FreeHint = true;
 
             _bounds = ComputeBounds();
             _fitAspect = -1f;
             FitCamera();
         }
 
-        public void Clear()
+        public void Clear() => ClearViews();
+
+        void ClearViews()
         {
             _spins.Clear();
             _spinSpeed.Clear();
@@ -264,7 +350,7 @@ namespace Orcub.Game
                 _wreath?.Show();
                 _hud?.ShowWin(_levelIndex + 1, _winStars,
                     onNext: () => LoadLevel(_levelIndex + 1),
-                    onReplay: () => LoadLevel(_levelIndex));
+                    onHome: () => GoHome(costsLife: false));
             }
             if (_failCheckAt > 0f && Time.time >= _failCheckAt && _spins.Count == 0 && _active < 0)
             {
@@ -330,11 +416,13 @@ namespace Orcub.Game
             {
                 _mode = DragMode.Rotate;
                 _spins.Remove(_active);
+                _pendingSnap = _model.Capture();   // pushed onto the undo stack if this becomes a move
                 _fx?.Pick(ring.Radius);
             }
             else
             {
                 _mode = DragMode.Locked;
+                _pendingSnap = _model.Capture();
                 view.Shake();
                 _fx?.Locked();
                 foreach (var h in view.OwnedHolders)
@@ -439,6 +527,8 @@ namespace Orcub.Game
 
         void CountMove()
         {
+            _undo.Push((_pendingSnap ?? _model.Capture(), _movesUsed));
+            _pendingSnap = null;
             _movesUsed++;
             _hud?.SetMoves(Mathf.Max(0, MovesLeft), bump: true);
         }
@@ -491,7 +581,8 @@ namespace Orcub.Game
                     _hud.SetMoves(MovesLeft, bump: true);
                     Haptics.Play(Haptics.Impact.Medium, 0.8f);
                 }),
-                onRetry: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain));
+                onRetry: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain),
+                onHome: () => GoHome(costsLife: true));
         }
 
         // ------------------------------------------------------------------ pause, lives
@@ -500,20 +591,23 @@ namespace Orcub.Game
         {
             if (_levelOver || _hud == null || _hud.PopupOpen) return;
             _wreath?.Show();
-            _hud.ShowPause(
-                onRestart: () => _hud.ShowRestartConfirm(
-                    onRestart: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: OpenPause),
-                    onCancel: OpenPauseAgain),
-                onResume: () => _wreath?.Hide());
+            ShowPauseCard();
         }
 
-        void OpenPauseAgain()
+        void ShowPauseCard()
         {
             _hud.ShowPause(
-                onRestart: () => _hud.ShowRestartConfirm(
-                    onRestart: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: OpenPauseAgain),
-                    onCancel: OpenPauseAgain),
-                onResume: () => _wreath?.Hide());
+                onRestart: () => _hud.ShowLifeConfirm("Restart level?", "Restart",
+                    onConfirm: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: ShowPauseCard),
+                    onCancel: ShowPauseCard),
+                onResume: () => _wreath?.Hide(),
+                onHome: () =>
+                {
+                    if (_movesUsed == 0) { GoHome(costsLife: false); return; }   // nothing played yet: free
+                    _hud.ShowLifeConfirm("Leave level?", "Leave",
+                        onConfirm: () => GoHome(costsLife: true),
+                        onCancel: ShowPauseCard);
+                });
         }
 
         void CheckOutOfMovesAgain()
@@ -542,6 +636,54 @@ namespace Orcub.Game
                 }),
                 onRefillCogs: null,   // enabled once Brass Cogs exist (step 4)
                 onBack: reopen);
+        }
+
+        // ------------------------------------------------------------------ boosters
+
+        void UseBooster(BoosterKind kind)
+        {
+            if (_model == null || _levelOver || _inputLocked || _hud.PopupOpen || _active >= 0 || _spins.Count > 0) return;
+            if (BoosterInventory.Count(kind) <= 0)
+            {
+                Haptics.Notify(Haptics.Notice.Warning);   // shop arrives with the currency step
+                return;
+            }
+            bool used = false;
+            switch (kind)
+            {
+                case BoosterKind.Hint:
+                    if (Hints.TryFind(_model, out var hint) && _rings[hint.Ring] != null)
+                    {
+                        if (hint.PullOut) { _rings[hint.Ring].FreeHint = true; _rings[hint.Ring].Pulse(); }
+                        else _rings[hint.Ring].ShowHint(hint.Delta);
+                        used = true;
+                    }
+                    break;
+                case BoosterKind.Undo:
+                    if (_undo.Count > 0)
+                    {
+                        var (snap, moves) = _undo.Pop();
+                        ClearViews();
+                        _model.Restore(snap);
+                        _movesUsed = moves;
+                        BuildViews();
+                        UpdateHud();
+                        used = true;
+                    }
+                    break;
+                case BoosterKind.Unclamp:
+                    int linkId = Unclamp.PickLink(_model);
+                    if (linkId >= 0) used = _model.ReleaseLink(linkId);
+                    break;
+            }
+            if (!used)
+            {
+                Haptics.Notify(Haptics.Notice.Warning);
+                return;
+            }
+            BoosterInventory.TrySpend(kind);
+            Haptics.Play(Haptics.Impact.Medium, 0.8f);
+            _hud.SetBoosterCount(kind, BoosterInventory.Count(kind));
         }
 
         void OnSolved()
@@ -587,7 +729,7 @@ namespace Orcub.Game
 
         void OnLinkReleased(Link link)
         {
-            _holders[link.Id].Release();
+            if (_holders[link.Id] != null) _holders[link.Id].Release();
             _fx?.Release();
             if (_crumbs != null)
             {
@@ -597,7 +739,7 @@ namespace Orcub.Game
             }
             foreach (int id in new[] { link.Target, link.Owner })
             {
-                if (!_model.IsFree(id)) continue;
+                if (!_model.IsFree(id) || _rings[id] == null) continue;
                 _rings[id].Pulse();
                 _rings[id].FreeHint = true;
             }
@@ -690,7 +832,11 @@ namespace Orcub.Game
             // Fit the board inside the device safe area (notch, Dynamic Island, home indicator).
             Rect safe = SafeViewportRect();
             if (_hud != null && cam.targetTexture == null)
-                safe.height *= 1f - LevelHud.TopBandFraction; // leave the HUD band at the top free
+            {
+                // keep the top bar + goal pill and the booster tray clear; the board fills what's between
+                float top = LevelHud.TopReserve, bottom = _hud.BottomReserve;
+                safe = new Rect(safe.x, safe.y + safe.height * bottom, safe.width, safe.height * (1f - top - bottom));
+            }
             if (Mathf.Approximately(_fitAspect, cam.aspect) && safe == _fitSafeArea) return;
             _fitAspect = cam.aspect;
             _fitSafeArea = safe;
