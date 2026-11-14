@@ -1,0 +1,1 @@
+{"name":"Orcub.Daily.iOS","references":["Orcub.Daily","Unity.Notifications.iOS"],"includePlatforms":["iOS","Editor"],"defineConstraints":["ORCUB_MOBILE_NOTIFICATIONS"],"versionDefines":[{"name":"com.unity.mobile.notifications","expression":"2.4.0","define":"ORCUB_MOBILE_NOTIFICATIONS"}],"autoReferenced":true}

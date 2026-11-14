@@ -1,0 +1,1 @@
+{"name":"Orcub.Daily.Tests","references":["Orcub.Daily","Orcub.Runtime","UnityEngine.TestRunner","UnityEditor.TestRunner"],"includePlatforms":["Editor"],"overrideReferences":true,"precompiledReferences":["nunit.framework.dll"],"defineConstraints":["UNITY_INCLUDE_TESTS"],"autoReferenced":false}
