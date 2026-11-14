@@ -1,0 +1,210 @@
+{
+  "samples": 96,
+  "ppu": 200,
+  "border_order": [
+    "left",
+    "bottom",
+    "right",
+    "top"
+  ],
+  "sprites": {
+    "gold_bar": {
+      "file": "gold_bar.png",
+      "width": 256,
+      "height": 256,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Three gold clay ingots, two below one; independently rendered at native resolution."
+    },
+    "gold_bar_small": {
+      "file": "gold_bar_small.png",
+      "width": 96,
+      "height": 96,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Three gold clay ingots, two below one; independently rendered at native resolution."
+    },
+    "gold_particle": {
+      "file": "gold_particle.png",
+      "width": 64,
+      "height": 64,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Single rounded clay gold ingot for bursts."
+    },
+    "pack_100": {
+      "file": "pack_100.png",
+      "width": 280,
+      "height": 280,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "One small pyramid stack of three bars."
+    },
+    "pack_600": {
+      "file": "pack_600.png",
+      "width": 280,
+      "height": 280,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Loose six-bar gold pile."
+    },
+    "pack_1400": {
+      "file": "pack_1400.png",
+      "width": 280,
+      "height": 280,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Open tan clay crate filled with stacked gold ingots."
+    },
+    "pack_3200": {
+      "file": "pack_3200.png",
+      "width": 280,
+      "height": 280,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Open overflowing clay treasure chest, gold straps and spilled bars."
+    },
+    "starter_bundle": {
+      "file": "starter_bundle.png",
+      "width": 420,
+      "height": 360,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Gold pile, Home hint/undo and rounded-cap unclamp sculpts, plus unlimited-lives heart."
+    },
+    "remove_ads": {
+      "file": "remove_ads.png",
+      "width": 240,
+      "height": 240,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Friendly lavender television with a peach clay slash; no red prohibition ring."
+    },
+    "infinity_heart": {
+      "file": "infinity_heart.png",
+      "width": 160,
+      "height": 160,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Exact inflated ui_heart sculpt in coral with a raised cream infinity."
+    },
+    "ribbon": {
+      "file": "ribbon.png",
+      "width": 360,
+      "height": 120,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": true,
+      "border": [
+        68,
+        48,
+        68,
+        48
+      ],
+      "note": "Near-white puffy badge; 9-slice badge; horizontal stretching is preferred. Text is a separate Unity layer."
+    }
+  }
+}
