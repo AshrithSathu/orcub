@@ -1,3 +1,5 @@
 /target/
 /.env
 /.pg-test/
+
+/node_modules/
