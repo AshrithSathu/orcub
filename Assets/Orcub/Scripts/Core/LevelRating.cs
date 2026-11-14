@@ -18,7 +18,17 @@ namespace Orcub.Core
                 throw new ArgumentException("Adaptive attempts require a solvable level.", nameof(def));
             int extra = Mathf.Max(0, def.Links.Count - Mathf.Max(0, def.Rings.Count - 1));
             float difficulty = LevelMetrics.Difficulty(def.Rings.Count, depth, extra, rotation);
-            return Mathf.Clamp(650f + 12f * difficulty + 8f * LevelRules.For(def).MinMoves, 650f, 1800f);
+            float mechanics = 0;
+            foreach (var r in def.Rings)
+            {
+                if (r.Ratchet != 0) mechanics += 1.5f;
+                if (r.GearGroup > 0) mechanics += 1.25f;
+                if (r.PadlockId > 0) mechanics += 3;
+                if (r.RustAfter > 0) mechanics += 4;
+            }
+            foreach (var l in def.Links)
+                mechanics += (l.Tinted ? 1.5f : 0) + (l.Clay ? 3 : 0) + (l.SpringMoves > 0 ? 4f / l.SpringMoves : 0);
+            return Mathf.Clamp(650f + 12f * mechanics + 12f * difficulty + 8f * LevelRules.For(def).MinMoves, 650f, 1800f);
         }
 
         public static float For(LevelData data) => For((data ?? throw new ArgumentNullException(nameof(data))).ToDef());

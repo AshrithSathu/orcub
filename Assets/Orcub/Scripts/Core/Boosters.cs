@@ -63,13 +63,20 @@ namespace Orcub.Core
                 foreach (int id in m.Rings[i].Incoming)
                 {
                     var link = m.Links[id];
-                    if (!link.Active) continue;
+                    if (!link.Active || (link.Tinted && link.Color != m.Rings[i].Color)) continue;
                     float delta = Mathf.DeltaAngle(m.Rings[i].GapAngle, link.ClampAngle);
                     float need = Mathf.Abs(delta) -
                         (PuzzleModel.GapHalfAngle - link.ClampHalfAngle) + 3f;
+                    float turn = Mathf.Sign(delta) * Mathf.Max(3f, need);
+                    int mate = m.LinkedPartner(i);
+                    if (link.Clay) turn = turn < 0 ? -720 : 720;
+                    if (!m.DirectionAllowed(i, turn) || (mate >= 0 && !m.DirectionAllowed(mate, -turn)))
+                        turn = turn < 0 ? turn + (link.Clay ? 1440 : 360) : turn - (link.Clay ? 1440 : 360);
+                    if (!m.DirectionAllowed(i, turn) || (mate >= 0 && !m.DirectionAllowed(mate, -turn))) continue;
+                    need = Mathf.Abs(turn);
                     if (need >= best) continue;
                     best = need;
-                    hint = new Hint(false, i, Mathf.Sign(delta) * need);
+                    hint = new Hint(false, i, turn);
                     found = true;
                 }
             }

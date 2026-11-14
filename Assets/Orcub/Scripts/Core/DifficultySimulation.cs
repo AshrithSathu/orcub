@@ -18,7 +18,7 @@ namespace Orcub.Core
                 var useful = new List<int>();
                 for (int i = 0; i < puzzle.Rings.Count; i++)
                     if (puzzle.CanRotate(i) && !puzzle.IsFree(i) && !puzzle.Rings[i].Removed) useful.Add(i);
-                if (useful.Count == 0) throw new InvalidOperationException("Solver-validated bot board stuck");
+                if (useful.Count == 0) break; // a player can reach a rust dead end on a solvable board
                 // Action accuracy varies with challenge and latent player ability, not the target win rate.
                 double accuracy = .50 + .48 / (1 + Math.Exp((data.rating - ability - 100) / 180));
                 bool deliberate = rng.NextDouble() < accuracy;
@@ -26,7 +26,11 @@ namespace Orcub.Core
                 float before = Adaptive.RequiredRotation(puzzle);
                 bool locked = !puzzle.CanRotate(ring), undo = !deliberate && rng.NextDouble() < .15;
                 var snapshot = puzzle.Capture();
-                puzzle.Rotate(ring, deliberate ? 360 : (float)(rng.NextDouble() * 90 - 45));
+                float sweep = puzzle.Rings[ring].Ratchet < 0 ? -720 : 720;
+                int mate = puzzle.LinkedPartner(ring);
+                if (mate >= 0 && puzzle.Rings[mate].Ratchet > 0) sweep = -720;
+                puzzle.Rotate(ring, deliberate ? sweep : (float)(rng.NextDouble() * 90 - 45));
+                puzzle.CompleteMove();
                 if (undo) puzzle.Restore(snapshot);
                 float think = (float)(Math.Exp((1200 - ability) / 600) * (1 + 3 * rng.NextDouble()));
                 features.Add(new MoveFeature(Adaptive.RequiredRotation(puzzle) < before, think, locked ? 1 : 0, undo), tuning);

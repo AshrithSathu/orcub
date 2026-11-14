@@ -11,6 +11,12 @@ namespace Orcub.Core
         // Constraints are monotone: each initially clamped target needs exactly one sweep.
         public static SolverMeasure Search(LevelDef def)
         {
+            if (MechanicSolver.HasMechanics(def))
+            {
+                if (!MechanicSolver.Solve(def, out var measured, out _)) throw new ArgumentException("Unsolvable board");
+                return new SolverMeasure { MinimumMoves = measured.MinimumMoves, States = measured.States,
+                    DeadEnds = measured.DeadEnds, BlockedChoices = measured.BlockedChoices, Branching = measured.Branching };
+            }
             if (!PuzzleModel.IsSolvable(def, out _)) throw new ArgumentException("Unsolvable board");
             if (def.Rings.Count > 20) throw new ArgumentException("Search supports at most 20 rings");
             var m = new PuzzleModel(def);

@@ -113,7 +113,13 @@ namespace Orcub.Tests
                     float need = Mathf.Max(0f, Mathf.Abs(d) - (PuzzleModel.GapHalfAngle - l.ClampHalfAngle)) + 3f;
                     if (need < best) { best = need; delta = Mathf.Sign(d) * need; }
                 }
+                foreach (var id in r.Incoming)
+                    if (m.Links[id].Active && m.Links[id].Clay && m.Links[id].InGap) delta = 360;
+                if (!m.DirectionAllowed(ring, delta)) delta += delta < 0 ? 360 : -360;
+                int mate = m.LinkedPartner(ring);
+                if (mate >= 0 && !m.DirectionAllowed(mate, -delta)) delta += delta < 0 ? 360 : -360;
                 m.Rotate(ring, delta);
+                m.CompleteMove();
                 moves++;
             }
             return moves;

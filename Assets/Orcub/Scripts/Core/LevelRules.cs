@@ -35,10 +35,15 @@ namespace Orcub.Core
             foreach (var l in def.Links) turned[l.Target] = true;
             int min = 0;
             foreach (bool t in turned) if (t) min++;
+            if (MechanicSolver.HasMechanics(def))
+            {
+                if (!MechanicSolver.Solve(def, out var measured, out _)) throw new System.ArgumentException("Unsolvable board");
+                min = measured.MinimumMoves;
+            }
             int links = def.Links.Count;
 
             int buffer = tutorial ? 5 : Mathf.Max(2, Mathf.CeilToInt(links * 0.3f));
-            int limit = links + buffer + Mathf.Max(0, extraMoves);
+            int limit = Mathf.Max(min, links) + buffer + (def.IsBoss ? 8 : 0) + Mathf.Max(0, extraMoves);
             int three = min + Mathf.FloorToInt(min * 0.15f);
             int two = Mathf.Max(three + 1, links + 1);
             return new LevelRules(min, links, limit, three, two);

@@ -9,6 +9,9 @@ namespace Orcub.Core
     public sealed class LevelData
     {
         public int id;
+        public string mechanic_intro;
+        public bool is_boss;
+        public string[] mechanics;
         public int seed;
         public float rating;
         public SolverMeasure solver;
@@ -23,9 +26,11 @@ namespace Orcub.Core
 
         public LevelDef ToDef()
         {
-            var def = new LevelDef { Name = $"Level {id}" };
-            foreach (var r in rings) def.Rings.Add(new RingDef(r.x, r.y, r.r, r.color, r.gap));
-            foreach (var l in links) def.Links.Add(new LinkDef(l.owner, l.target));
+            var def = new LevelDef { Name = $"Level {id}", IsBoss = is_boss, MechanicIntro = mechanic_intro, Mechanics = mechanics };
+            foreach (var r in rings) def.Rings.Add(new RingDef(r.x, r.y, r.r, r.color, r.gap) {
+                Ratchet = r.ratchet, GearGroup = r.gearGroup, KeyId = r.keyId, PadlockId = r.padlockId,
+                OilId = r.oilId, RustOilId = r.rustOilId, RustAfter = r.rustAfter });
+            foreach (var l in links) def.Links.Add(new LinkDef(l.owner, l.target) { Tinted = l.tinted, Color = l.color, Clay = l.clay, SpringMoves = l.springMoves });
             return def;
         }
     }
@@ -35,6 +40,7 @@ namespace Orcub.Core
     {
         public float x, y, r;
         public int color;
+        public int ratchet, gearGroup, keyId, padlockId, oilId, rustOilId, rustAfter;
         public float gap;            // world angle of the gap centre at the start
     }
 
@@ -42,6 +48,8 @@ namespace Orcub.Core
     public struct LinkData
     {
         public int owner, target;
+        public bool tinted, clay;
+        public int color, springMoves;
     }
 
     [Serializable]
@@ -67,6 +75,12 @@ namespace Orcub.Core
         /// </summary>
         public static bool Evaluate(LevelDef def, out int depth, out float rotation, out int taps)
         {
+            if (MechanicSolver.HasMechanics(def))
+            {
+                bool solved = MechanicSolver.Solve(def, out var result, out _);
+                depth = result.MinimumMoves; rotation = result.Rotation; taps = result.Taps;
+                return solved;
+            }
             var m = new PuzzleModel(def);
             depth = 0;
             rotation = 0f;
