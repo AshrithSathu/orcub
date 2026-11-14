@@ -122,3 +122,55 @@ Kinds: `booster_hint`, `booster_undo`, `booster_unclamp`, `life`; count 1–100.
 Wallet includes `lives_updated_at` (UTC RFC3339). Regeneration: n=floor((server_now-lives_updated_at)/1800 seconds); lives=min(5,lives+n). Below 5 advance the anchor by n*1800 seconds; when reaching 5 reset it to server_now. Consuming from 5 starts the timer now, consuming below 5 preserves fractional progress. Refill sets 5 and resets the anchor. Mirror for display, then reconcile with server responses. SaveData omits inventory/lives; never apply them from saves.
 
 Production accepts Apple-signed Production and Sandbox purchases/notifications. Both grant wallet benefits. Purchases and associated ledger rows retain environment; only Production contributes to ltv_iap, payer, and admin IAP revenue. Sandbox Remove Ads still suppresses ads. Xcode unsigned testing requires APP_ENV=development, APPLE_ALLOW_XCODE=true, APPLE_ENVIRONMENT=Sandbox; unsafe combinations refuse startup. Refund reversal restores benefits idempotently. Consumption-request notifications are acknowledged without automatic submission of unverifiable gameplay data. Default interstitial caps are 6/session and 6/day, rewarded 20/day. Player value caches for up to one hour (purchase mutations invalidate it); ad_offer means button shown, not button tapped. Churn requires no session restart within five minutes after an ad-adjacent end.
+
+## Daily loop (v2)
+
+POST /v1/wallet/grant accepts daily_puzzle or daily_gift with player_id,
+idempotency_key, ref_id (UUIDs), and utc_day (exact yyyy-MM-dd). Booster must be
+absent/null. Authentication, canonical ownership, rate limits and no-store match
+the other wallet routes. Client deterministic UUIDs use the first 16 SHA256 bytes
+of UTF8 orcub/daily/v1/<reason>/<date> via .NET Guid(byte[]). The server deduplicates
+by canonical player/reason/date regardless of those UUIDs. A reused ledger key
+with a changed request returns 409; a date replay returns the original daily
+receipt and current wallet. No client amount, streak or freeze is accepted.
+utc_day is rejected on spending and non-daily grants; absent utc_day preserves
+legacy 20-gold daily_gift and its UTC cap. Legacy and v2 share durable caps,
+including backfilled historical gifts and merged histories.
+
+Response: {"wallet":WALLET,"daily":{"utc_day":"2026-11-15","reason":"daily_puzzle","streak":3,"freeze":false,"reward":{"gold":30,"inventory":{},"unlimited_minutes":0}}}.
+Unity must require daily.utc_day on success and refresh balances from wallet.
+
+The database UTC date is authoritative. Future dates return 409. New gifts must
+be today's date; old receipts remain replayable indefinitely. Puzzle claims
+require owned daily_puzzle_end telemetry with metric_success=true, metric_day
+equal to the epoch-day ordinal, and server receipt on that day or the next.
+Unknown-kind numeric metrics remain in raw_events. Flush telemetry before retry;
+missing evidence returns 409 daily completion pending, or 410 daily completion
+expired once outside RETENTION_DAYS. Evidence is client-reported, not attestation.
+New puzzle claims must follow date order; a missing earlier day cannot be
+inserted behind the last awarded day.
+
+Consecutive puzzle days advance streaks; exactly one skipped day can consume a
+freeze, with no completion or increment for the skipped day. Longer gaps reset
+to one. A freeze is earned once ever on first reaching seven. Rewards at streak
+3/7/14/30 are 30 gold / one hint / two undo / 100 gold. Gifts rotate by epoch
+ordinal modulo three: 20 gold / one hint / 30 minutes unlimited lives. Unlimited
+time stacks from max(now, existing expiry). All rewards, including zero-gold
+awards, write the ledger and durable receipt atomically. Guest daily_puzzle and
+daily_gift grants are excluded from portable merge value, including booster and
+unlimited awards. Histories union by reason/date with canonical receipts winning;
+streaks rebuild without minting rewards or summing streak integers.
+
+SaveData.daily is an optional DailySaveSection v1 PascalCase JSON object.
+Unknown fields fail validation. Version must be 1; dates must be empty or exact
+keys; Completed/PendingPuzzleGrants are unique bounded arrays (3660), with pending
+a subset of completed. Counters/timestamps are nonnegative, WinStreak<=3,
+BonusRotation<=2, strings<=128 bytes. Accepted revisions preserve the section
+except authoritative PuzzleStreak/Freeze/FreezeEarned/LastPuzzleDay reconciliation.
+Stale revisions return server mutable state; clients union completion/pending
+IDs when retrying. This backup never grants wallet value. NotificationsEnabled
+and permission/scheduling metadata are backup data only: restore must preserve
+device-local notification opt-out and require local OS permission.
+
+Account exports include daily_claims and daily_streaks. Account deletion cascades
+both; telemetry retention never removes claim tombstones.

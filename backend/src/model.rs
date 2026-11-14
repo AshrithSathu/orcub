@@ -373,6 +373,8 @@ fn clamp(v: &mut Value, key: &str) {
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SaveData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily: Option<Value>,
     pub highest_level: u32,
     pub stars: BTreeMap<u32, u8>,
     #[serde(default, skip_serializing)]
@@ -416,6 +418,9 @@ pub struct Sample {
 }
 impl SaveData {
     pub fn validate(&mut self) -> Result<()> {
+        if let Some(d) = &self.daily {
+            validate_daily(d)?;
+        }
         if self.stars.len() > 100000
             || self.inventory.len() > 64
             || self.workshop.len() > 64
@@ -453,6 +458,60 @@ impl SaveData {
         }
     }
 }
+fn validate_daily(v: &Value) -> Result<()> {
+    let obj = v.as_object().ok_or(ApiError::bad("daily object"))?;
+    if v["Version"] != 1 {
+        return Err(ApiError::bad("daily version"));
+    }
+    for (k, v) in obj {
+        let valid = match k.as_str() {
+            "Version" => v == 1,
+            "HighestUtcDay"
+            | "LastPuzzleDay"
+            | "LastGiftDay"
+            | "LastNotificationDay"
+            | "ScheduledDay" => v
+                .as_str()
+                .is_some_and(|s| s.is_empty() || crate::economy::daily_date(s)),
+            "Completed" | "PendingPuzzleGrants" => v.as_array().is_some_and(|a| {
+                let mut unique = std::collections::HashSet::new();
+                a.len() <= 3660
+                    && a.iter().all(|v| {
+                        v.as_str()
+                            .is_some_and(|s| crate::economy::daily_date(s) && unique.insert(s))
+                    })
+            }),
+            "PuzzleStreak" | "Sessions" => v
+                .as_i64()
+                .is_some_and(|n| (0..=i32::MAX as i64).contains(&n)),
+            "WinStreak" => v.as_i64().is_some_and(|n| (0..=3).contains(&n)),
+            "BonusRotation" => v.as_i64().is_some_and(|n| (0..=2).contains(&n)),
+            "LastOptInOffer" | "ScheduledAt" => v.as_i64().is_some_and(|n| n >= 0),
+            "Freeze"
+            | "FreezeEarned"
+            | "BonusPending"
+            | "FirstDailyCompletion"
+            | "ActiveContinued"
+            | "NotificationsEnabled"
+            | "PermissionRequested" => v.is_boolean(),
+            "ActiveAttempt" | "LastEndedAttempt" | "ActiveBonus" | "ScheduledId"
+            | "LastOpenedId" => v.as_str().is_some_and(|s| s.len() <= 128),
+            _ => false,
+        };
+        if !valid {
+            return Err(ApiError::bad("daily field"));
+        }
+    }
+    if let Some(pending) = v["PendingPuzzleGrants"].as_array()
+        && pending
+            .iter()
+            .any(|p| !v["Completed"].as_array().is_some_and(|a| a.contains(p)))
+    {
+        return Err(ApiError::bad("daily pending not completed"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

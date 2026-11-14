@@ -582,6 +582,7 @@ async fn link(
         return Err(ApiError::unauthorized());
     }
     if id != body.player_id {
+        economy::merge(&mut tx, id, body.player_id).await?;
         // Canonical account owns consumables; only monotonic progress crosses accounts.
         let rows = sqlx::query(
             "SELECT player_id,revision,data FROM saves WHERE player_id=$1 OR player_id=$2",
@@ -607,7 +608,6 @@ async fn link(
             let rev = canonical.map(|r| r.get::<i64, _>("revision")).unwrap_or(0) + 1;
             sqlx::query("INSERT INTO saves(player_id,revision,data) VALUES($1,$2,$3) ON CONFLICT(player_id) DO UPDATE SET revision=$2,data=$3,updated_at=now()").bind(id).bind(rev).bind(serde_json::to_value(data).map_err(|_|ApiError::unavailable())?).execute(&mut *tx).await?;
         }
-        economy::merge(&mut tx, id, body.player_id).await?;
         sqlx::query("INSERT INTO event_quotas(player_id,day,count) SELECT $1,day,count FROM event_quotas WHERE player_id=$2 ON CONFLICT(player_id,day) DO UPDATE SET count=LEAST(10000,event_quotas.count+excluded.count)").bind(id).bind(body.player_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE installs SET player_id=$1 WHERE player_id=$2")
             .bind(id)
@@ -707,7 +707,7 @@ async fn account_export(
             if !guest { return Err(ApiError::unauthorized()); }
         }
         let mut out=Vec::new();
-        for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","purchases","purchase_revocations","economy_offers","wallet_aliases","entitlement_transfers","player_value_cache","event_quotas","raw_events"] {
+        for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","daily_claims","daily_streaks","purchases","purchase_revocations","economy_offers","wallet_aliases","entitlement_transfers","player_value_cache","event_quotas","raw_events"] {
             let filter=if table=="players" {"id"} else {"player_id"};
             let sql=if table=="raw_events" {"SELECT to_jsonb(r) AS data FROM raw_events r JOIN events e USING(event_id) WHERE e.player_id=$1".to_string()} else {format!("SELECT to_jsonb(t)-'credential_hash' AS data FROM {table} t WHERE {filter}=$1")};
             use futures_util::TryStreamExt;
@@ -946,6 +946,9 @@ mod account_tests {
             200
         );
         let data = SaveData {
+            daily: Some(
+                json!({"Version":1,"WinStreak":2,"PuzzleStreak":999,"Freeze":true,"Completed":["2026-11-15"],"PendingPuzzleGrants":["2026-11-15"]}),
+            ),
             inventory: std::collections::BTreeMap::from([("hint".into(), 1000000)]),
             workshop: std::collections::BTreeMap::from([("gold".into(), 1000000)]),
             lives: 100,
@@ -965,6 +968,23 @@ mod account_tests {
         .await;
         assert_eq!(status, 200);
         assert_eq!(r["revision"], 1);
+        assert_eq!(r["data"]["daily"]["PuzzleStreak"], 0);
+        assert_eq!(r["data"]["daily"]["Freeze"], false);
+        assert_eq!(r["data"]["daily"]["WinStreak"], 2);
+        assert_eq!(r["data"]["daily"]["Completed"], json!(["2026-11-15"]));
+        let mut stale = data.clone();
+        stale.daily = Some(json!({"Version":1,"WinStreak":3}));
+        let (status, conflict) = call(
+            app.clone(),
+            "PUT",
+            "/v1/save",
+            json!({"revision":0,"data":stale}),
+            &token,
+            secret,
+        )
+        .await;
+        assert_eq!(status, 409);
+        assert_eq!(conflict["data"]["daily"]["WinStreak"], 2);
         assert!(r["data"].get("inventory").is_none());
         assert_eq!(r["data"]["workshop"], json!({}));
         assert!(r["data"].get("lives").is_none());

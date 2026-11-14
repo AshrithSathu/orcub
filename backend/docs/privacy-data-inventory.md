@@ -45,3 +45,27 @@ Apple processes payments. We store no card, bank, billing address or other payme
 wallets stores player_id, gold, inventory by booster code, lives and unlimited_until. wallet_ledger stores id, player_id, delta, reason, ref_id, idempotency_key, bounded action request, balance_after and created_at. purchase_revocations stores transaction_id, optional player_id and created_at to block late refunded grants; unknown-owner tombstones are retained until reconciliation/deletion by an operator. wallet_aliases stores former player UUID token, canonical player_id and created_at for post-link restore. economy_offers stores player_id, first_shown_at and last_shown_at for expiry/cooldown. Known-owner rows export and cascade on account deletion. These support app functionality, customer support, fraud prevention, analytics and personalisation. Ledger request contains machine codes/UUIDs only, never signed transactions.
 
 Per-player revenue (separate currencies), payer status, Remove Ads, sessions, UTC days active, rewarded acceptance and a session-end/interstitial timing correlation are calculated from these records and retained telemetry. They reduce interstitial ad load and control starter-offer timing; they never affect puzzle difficulty. These calculations do not create new persistent profile tables. The owner must update App Store privacy labels for purchases/purchase history linked to the pseudonymous account and separately assess Apple, Firebase and AdMob collection.
+
+## Daily loop
+
+daily_claims stores player_id, reason (daily_puzzle/daily_gift), utc_day, receipt
+(date, reason, streak, freeze and awarded gold/inventory/unlimited minutes), and
+created_at. daily_streaks stores player_id, last_day, streak, freeze, freeze_earned.
+Purpose: date-based idempotency, reward caps, streak continuity and merge
+protection. These rows persist until account deletion, are included in account
+export, cascade on deletion and survive telemetry retention. Historical ledger
+daily gifts are backfilled as one receipt per UTC date. Ledger requests may now
+also contain utc_day; no device clock or timezone grants authority.
+
+saves.data.daily optionally stores the DailySaveSection v1 fields: Version,
+HighestUtcDay, LastPuzzleDay, LastGiftDay, Completed, PendingPuzzleGrants,
+PuzzleStreak, WinStreak, BonusRotation, Sessions, Freeze, FreezeEarned,
+BonusPending, FirstDailyCompletion, ActiveAttempt, LastEndedAttempt,
+ActiveContinued, ActiveBonus, NotificationsEnabled, PermissionRequested,
+LastOptInOffer, LastNotificationDay, ScheduledId, ScheduledDay, LastOpenedId,
+ScheduledAt. Purpose: cross-device daily progress/preferences backup and pending
+reward retry. Retention/export/deletion follow saves. Notification IDs are
+bounded client-generated strings; this backend sends no notifications and stores
+no APNs token. Cloud preferences do not authorise notification delivery on a new
+device. Daily telemetry uses existing retained numeric/bool metric_* payloads
+(including metric_day and metric_success), rather than new personal identifiers.

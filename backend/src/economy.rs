@@ -1,3 +1,7 @@
+mod daily;
+pub(crate) fn daily_date(s: &str) -> bool {
+    daily::date(s).is_ok()
+}
 use crate::*;
 use sqlx::{Postgres, Transaction};
 type Tx<'a> = Transaction<'a, Postgres>;
@@ -52,6 +56,7 @@ pub(crate) async fn save_fields(tx: &mut Tx<'_>, id: Uuid, data: &mut SaveData) 
         .execute(&mut **tx)
         .await?;
     regenerate(tx, id).await?;
+    daily::save_fields(tx, id, data).await?;
     data.inventory.clear();
     data.workshop.clear();
     data.lives = 0;
@@ -158,6 +163,8 @@ pub struct Action {
     ref_id: Uuid,
     #[serde(default)]
     booster: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    utc_day: Option<String>,
 }
 async fn replay(tx: &mut Tx<'_>, id: Uuid, b: &Action) -> Result<bool> {
     let old: Option<Value> = sqlx::query_scalar(
@@ -199,6 +206,9 @@ pub async fn spend(
     h: HeaderMap,
     Json(b): Json<Action>,
 ) -> Result<Json<Value>> {
+    if b.utc_day.is_some() {
+        return Err(ApiError::bad("utc_day only allowed for daily grants"));
+    }
     if b.reason != "booster" && b.booster.is_some() {
         return Err(ApiError::bad("booster only allowed for booster sink"));
     }
@@ -268,16 +278,22 @@ pub async fn grant(
     h: HeaderMap,
     Json(b): Json<Action>,
 ) -> Result<Json<Value>> {
-    if b.reason != "booster" && b.booster.is_some() {
+    if b.booster.is_some() {
         return Err(ApiError::bad("booster only allowed for booster sink"));
     }
     let id = owner(&s, &h, b.player_id).await?;
     let mut tx = s.pool.begin().await?;
     lock(&mut tx, id).await?;
+    if b.utc_day.is_some() {
+        let receipt = daily::claim(&mut tx, id, &b).await?;
+        let wallet = snapshot(&mut tx, id).await?;
+        tx.commit().await?;
+        return Ok(Json(json!({"wallet":wallet,"daily":receipt})));
+    }
     if !replay(&mut tx, id, &b).await? {
         let amount = match b.reason.as_str() {
             "daily_gift" => {
-                let n:i64=sqlx::query_scalar("SELECT count(*) FROM wallet_ledger WHERE player_id=$1 AND reason='daily_gift' AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'").bind(id).fetch_one(&mut *tx).await?;
+                let n:i64=sqlx::query_scalar("SELECT (SELECT count(*) FROM daily_claims WHERE player_id=$1 AND reason='daily_gift' AND utc_day=(now() AT TIME ZONE 'UTC')::date) + (SELECT count(*) FROM wallet_ledger WHERE player_id=$1 AND reason='daily_gift' AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')").bind(id).fetch_one(&mut *tx).await?;
                 if n > 0 {
                     return Err(ApiError(StatusCode::CONFLICT, "daily gift claimed"));
                 }
@@ -311,6 +327,9 @@ pub async fn grant(
             &request(&b),
         )
         .await?;
+        if b.reason == "daily_gift" {
+            daily::legacy_receipt(&mut tx, id).await?;
+        }
     }
     let v = snapshot(&mut tx, id).await?;
     tx.commit().await?;
@@ -702,16 +721,18 @@ async fn revoke(pool: &PgPool, v: &Value) -> Result<()> {
 pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> {
     lock(tx, canonical).await?;
     lock(tx, guest).await?;
+    daily::merge(tx, canonical, guest).await?;
     let mut g = snapshot(tx, guest).await?;
     // Client-proven rewards are spendable on the original wallet, never portable between installs.
-    let grants:i64=sqlx::query_scalar("SELECT COALESCE(sum(delta),0)::bigint FROM wallet_ledger WHERE player_id=$1 AND reason IN ('daily_gift','level_reward')").bind(guest).fetch_one(&mut **tx).await?;
+    let grants:i64=sqlx::query_scalar("SELECT COALESCE(sum(delta),0)::bigint FROM wallet_ledger WHERE player_id=$1 AND reason IN ('daily_gift','daily_puzzle','level_reward')").bind(guest).fetch_one(&mut **tx).await?;
     let gold = g["gold"].as_i64().unwrap();
     let portable = if gold < 0 {
         gold
     } else {
         (gold - grants).max(0)
     };
-    if grants > 0 {
+    let has_grants: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wallet_ledger WHERE player_id=$1 AND reason IN ('daily_gift','daily_puzzle','level_reward'))").bind(guest).fetch_one(&mut **tx).await?;
+    if has_grants {
         g["inventory"] = json!({});
         g["unlimited_until"] = Value::Null;
     }
@@ -900,6 +921,7 @@ mod database_tests {
             reason: reason.into(),
             ref_id: Uuid::new_v4(),
             booster: None,
+            utc_day: None,
         }
     }
     #[sqlx::test(migrations = "./migrations")]
@@ -1071,6 +1093,7 @@ mod concurrency_tests {
             reason: "refill_lives".into(),
             ref_id: Uuid::new_v4(),
             booster: None,
+            utc_day: None,
         };
         let (a, b) = tokio::join!(
             spend(State(state.clone()), h.clone(), Json(action())),
@@ -1169,6 +1192,7 @@ mod authority_tests {
                 ref_id: Uuid::new_v4(),
                 idempotency_key: Uuid::new_v4(),
                 booster: None,
+                utc_day: None,
             };
             let _ = grant(State(s.clone()), h.clone(), Json(b)).await.unwrap();
             let b = Action {
@@ -1177,6 +1201,7 @@ mod authority_tests {
                 ref_id: Uuid::new_v4(),
                 idempotency_key: Uuid::new_v4(),
                 booster: None,
+                utc_day: None,
             };
             assert!(grant(State(s.clone()), h, Json(b)).await.is_err());
             let mut tx = pool.begin().await.unwrap();
