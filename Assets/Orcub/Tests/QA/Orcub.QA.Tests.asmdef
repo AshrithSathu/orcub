@@ -1,0 +1,9 @@
+{
+  "name": "Orcub.QA.Tests",
+  "references": ["Orcub.Runtime", "Orcub.QA.Editor", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+  "includePlatforms": ["Editor"],
+  "overrideReferences": true,
+  "precompiledReferences": ["nunit.framework.dll"],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"]
+}

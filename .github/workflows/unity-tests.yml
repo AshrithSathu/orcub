@@ -1,0 +1,57 @@
+name: Unity EditMode tests
+on:
+  push:
+    paths: ['Assets/**', 'Packages/**', 'ProjectSettings/**', '.github/workflows/unity-tests.yml']
+  pull_request:
+    paths: ['Assets/**', 'Packages/**', 'ProjectSettings/**', '.github/workflows/unity-tests.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  editmode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+    steps:
+      - name: Check Unity activation secrets
+        id: license
+        shell: bash
+        run: |
+          if [[ -n "$UNITY_LICENSE" && -n "$UNITY_EMAIL" && -n "$UNITY_PASSWORD" ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Unity EditMode tests skipped: add UNITY_LICENSE, UNITY_EMAIL and UNITY_PASSWORD repository Actions secrets. See scripts/qa/README.md. Fork PRs do not receive secrets.'
+            echo 'Unity tests were **skipped**, not passed. Add UNITY_LICENSE, UNITY_EMAIL and UNITY_PASSWORD (scripts/qa/README.md).' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.license.outputs.ready == 'true'
+        with:
+          lfs: true
+      - uses: actions/cache@v4
+        if: steps.license.outputs.ready == 'true'
+        with:
+          path: Library
+          key: Library-Linux-EditMode-${{ hashFiles('ProjectSettings/ProjectVersion.txt', 'Packages/**', 'Assets/**/*.asmdef') }}-${{ github.sha }}
+          restore-keys: |
+            Library-Linux-EditMode-${{ hashFiles('ProjectSettings/ProjectVersion.txt', 'Packages/**', 'Assets/**/*.asmdef') }}-
+      - name: Run EditMode suite (including level QA)
+        if: steps.license.outputs.ready == 'true'
+        uses: game-ci/unity-test-runner@v4
+        with:
+          projectPath: .
+          testMode: editmode
+          artifactsPath: test-artifacts
+          # Unity version is read from ProjectSettings/ProjectVersion.txt.
+      - name: Upload test results and level reports
+        if: always() && steps.license.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-editmode-results
+          path: |
+            test-artifacts
+            ArtSource/qa/level_report.*
+          if-no-files-found: warn

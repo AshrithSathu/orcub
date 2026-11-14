@@ -1,0 +1,6 @@
+{
+  "name": "Orcub.QA.Editor",
+  "references": ["Orcub.Runtime", "Unity.Newtonsoft.Json"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}
