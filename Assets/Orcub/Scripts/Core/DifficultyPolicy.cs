@@ -19,6 +19,9 @@ namespace Orcub.Core
         public int MoveLimit => moveLimit;
         internal AttemptPlan(int extra, bool hint, string why, int budget, int selectedVariant = 0)
         { variant = selectedVariant; extraMoves = extra; freeHintGlow = hint; reason = why; moveLimit = budget; }
+
+        /// <summary>Plain plan (variant 0, no help) for when adaptive selection fails; the level still loads.</summary>
+        public static AttemptPlan Neutral(int moveLimit = 0) => new AttemptPlan(0, false, "neutral_fallback", moveLimit);
     }
 
     public static class DifficultyPolicy

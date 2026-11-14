@@ -37,7 +37,7 @@ namespace Orcub.Core
             foreach (bool t in turned) if (t) min++;
             if (MechanicSolver.HasMechanics(def))
             {
-                if (!MechanicSolver.Solve(def, out var measured, out _)) throw new System.ArgumentException("Unsolvable board");
+                if (!MechanicSolver.SolveCached(def, out var measured)) throw new System.ArgumentException("Unsolvable board");
                 min = measured.MinimumMoves;
             }
             int links = def.Links.Count;

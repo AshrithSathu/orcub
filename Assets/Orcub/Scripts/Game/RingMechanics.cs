@@ -21,8 +21,22 @@ namespace Orcub.Game
         const float PadlockScale = 1.7f;
         const int DecalOrder = 3, PieceOrder = 6, HubOrder = 7, BadgeOrder = 20;
         // Owner correction: the kit's stamps and arrows read too small on a phone.
-        const float ArrowScale = 1.6f, StampScale = 2.5f, RustScale = 1.45f, BadgeScale = 1.7f;
-        static readonly Color Rust = new Color(0.55f, 0.27f, 0.14f);
+        const float ArrowScale = 1.6f, StampScale = 2.5f, RustScale = 2.1f, BadgeScale = 1.7f;
+        // Owner correction (rust): must read on ANY ring colour. Patches are inked dark and ringed with a pale
+        // halo (contrast on dark AND light clay), and the clay itself dulls toward a desaturated rust brown.
+        const int RustPatches = 6;
+        static readonly Color RustInk = new Color(0.58f, 0.36f, 0.27f);       // multiplies the kit's brown patch: dark rust
+        static readonly Color RustHalo = new Color(1f, 0.93f, 0.82f, 0.75f);  // pale rim around each patch
+        static readonly Color RustBrown = new Color(0.56f, 0.24f, 0.12f);
+        // Owner correction (linked): the mark and pinions read ~1.6x larger, tinted per pair.
+        const float LinkedScale = 1.6f;
+        /// <summary>Per-pair tint for the chain mark (pair 1, 2, ...): pastels that read on plum felt and differ from each other.</summary>
+        public static readonly Color[] PairTints =
+        {
+            new Color(1f, 0.82f, 0.36f), new Color(0.55f, 0.92f, 0.98f), new Color(1f, 0.6f, 0.78f),
+            new Color(0.66f, 0.95f, 0.6f), new Color(0.8f, 0.7f, 1f),
+        };
+        public static Color PairTint(int gearGroup) => PairTints[Mathf.Abs(gearGroup - 1) % PairTints.Length];
 
         PuzzleModel _model;
         Ring _ring;
@@ -31,13 +45,15 @@ namespace Orcub.Game
 
         readonly List<SpriteRenderer> _arrows = new List<SpriteRenderer>();
         readonly List<SpriteRenderer> _rust = new List<SpriteRenderer>();
-        readonly List<float> _rustAngles = new List<float>();
+        readonly List<SpriteRenderer> _rustHalo = new List<SpriteRenderer>();
         SpriteRenderer _padlock, _key, _oil, _stamp;
         Transform _hub, _pinionA, _pinionB;
+        SpriteRenderer _pinionBRenderer, _mark;
+        TextMesh _pairText; MeshRenderer _pairTextRenderer;   // L6: hidden / faded / sorted with the ring
         SpriteRenderer _turnArrow, _turnShadow;
-        Transform _badge; TextMesh _badgeText; SpriteRenderer _badgeSprite;
+        Transform _badge; TextMesh _badgeText; SpriteRenderer _badgeSprite; MeshRenderer _badgeTextRenderer;
         Vector2 _badgeOffset;
-        readonly List<(Transform t, TextMesh text, SpriteRenderer sr, Vector2 local)> _ids = new List<(Transform, TextMesh, SpriteRenderer, Vector2)>();
+        readonly List<(Transform t, TextMesh text, SpriteRenderer sr, Vector2 local, MeshRenderer mr)> _ids = new List<(Transform, TextMesh, SpriteRenderer, Vector2, MeshRenderer)>();
 
         bool _padlockShownLocked;
         float _padlockPop = -1f;
@@ -104,7 +120,7 @@ namespace Orcub.Game
             foreach (int id in ring.Incoming) stamped |= model.Links[id].Tinted;
             if (stamped)
             {
-                int shape = OrcubArt.ShapeFor(ring.Color);
+                int shape = OrcubArt.ShapeFor(ring.Color, model);   // L3: unique per colour on this board
                 var sprite = art.RingStamp(shape, ring.Radius);
                 if (sprite != null)
                 {
@@ -123,15 +139,18 @@ namespace Orcub.Game
             }
             if (ring.RustAfter > 0)
             {
-                for (int i = 0; i < 5; i++)
+                for (int i = 0; i < RustPatches; i++)
                 {
-                    float a = Take(Deg(0.25f), 200f, allowOverlap: true);
+                    float a = Take(Deg(0.3f), 200f, allowOverlap: true);
                     var sp = art.PerRadius(i % 2 == 0 ? art.rustPatchA : art.rustPatchB, ring.Radius);
                     if (sp == null) continue;
-                    _rust.Add(OnTube("Rust", sp, a, RustScale, Color.white, DecalOrder));
-                    _rustAngles.Add(a);
+                    var halo = OnTube("RustHalo", sp, a, RustScale * 1.16f, RustHalo, DecalOrder - 1);
+                    _rustHalo.Add(halo);
+                    _rust.Add(OnTube("Rust", sp, a, RustScale, RustInk, DecalOrder));
                 }
                 if (art.movesBadge != null) BuildRustBadge();
+                // L2: with several oil cans, the rusting ring shows which can saves it
+                if (multiOil && ring.RustOilId > 0) IdBadge(ring.RustOilId, Take(Deg(0.3f), 250f));
             }
             if (ring.GearGroup > 0) BuildHub();
             Refresh(animate: false);
@@ -196,7 +215,7 @@ namespace Orcub.Game
             if (_art.spriteMaterial != null) sr.sharedMaterial = _art.spriteMaterial;
             t.localScale = Vector3.one * 1.1f;
             var text = MechText.Create(t, id.ToString(), _art, BadgeOrder + 1, 1f);
-            _ids.Add((t, text, sr, PuzzleModel.Dir(angle) * (_ring.Radius + 0.62f)));
+            _ids.Add((t, text, sr, PuzzleModel.Dir(angle) * (_ring.Radius + 0.62f), text.GetComponent<MeshRenderer>()));
         }
 
         void BuildRustBadge()
@@ -210,6 +229,7 @@ namespace Orcub.Game
             if (_art.spriteMaterial != null) _badgeSprite.sharedMaterial = _art.spriteMaterial;
             _badge.localScale = Vector3.one * BadgeScale;
             _badgeText = MechText.Create(_badge, "", _art, BadgeOrder + 1, 1f);
+            _badgeTextRenderer = _badgeText.GetComponent<MeshRenderer>();
             _badgeOffset = BadgeSpot();
         }
 
@@ -244,20 +264,23 @@ namespace Orcub.Game
             foreach (var r in _model.Rings) if (r.Id != _ring.Id && r.GearGroup == _ring.GearGroup) mate = r.Id;
             _hub = new GameObject("LinkedHub").transform;
             _hub.SetParent(_view.HolderParent, false);
-            float s = Mathf.Clamp(_ring.Radius, 1f, 1.4f);
+            // 1.6x the kit size, capped so the hub stays inside the tube on small rings
+            float s = Mathf.Clamp(_ring.Radius, 1f, 1.4f) * Mathf.Min(LinkedScale, Mathf.Max(1f, (_ring.Radius - 0.18f) / 0.62f));
             int groups = 0;
             var seen = new HashSet<int>();
             foreach (var r in _model.Rings) if (r.GearGroup > 0 && seen.Add(r.GearGroup)) groups++;
             if (_art.linkedMark != null)
             {
-                var mark = MakeChild(_hub, "ChainMark", _art.linkedMark, new Color(1f, 0.95f, 0.86f), HubOrder + 1, _art.spriteMaterial);
-                mark.transform.localPosition = new Vector3(0f, 0.2f * s, 0f);
-                mark.transform.localScale = Vector3.one * 1.45f * s;
-                if (groups > 1)   // several pairs on one board: the pair's number, never colour alone
+                // tinted per pair so the two partners read as a pair at a glance (both rings share the tint)
+                _mark = MakeChild(_hub, "ChainMark", _art.linkedMark, PairTint(_ring.GearGroup), HubOrder + 1, _art.spriteMaterial);
+                _mark.transform.localPosition = new Vector3(0f, 0.2f * s, 0f);
+                _mark.transform.localScale = Vector3.one * 1.45f * s;
+                if (groups > 1)   // several pairs on one board: the pair's number too, never colour alone
                 {
-                    var n = MechText.Create(mark.transform, _ring.GearGroup.ToString(), _art, HubOrder + 2, 0.55f);
-                    n.color = new Color(1f, 0.95f, 0.86f);
-                    n.transform.localPosition = new Vector3(0.27f, 0.12f, 0f);
+                    _pairText = MechText.Create(_mark.transform, _ring.GearGroup.ToString(), _art, HubOrder + 2, 0.55f);
+                    _pairText.color = PairTint(_ring.GearGroup);   // reads on the felt beside the mark, matches the pair
+                    _pairText.transform.localPosition = new Vector3(0.27f, 0.12f, 0f);
+                    _pairTextRenderer = _pairText.GetComponent<MeshRenderer>();
                 }
             }
             // Two meshing pinions: this ring's colour and its partner's, turning against each other.
@@ -273,12 +296,14 @@ namespace Orcub.Game
                 _pinionA.localPosition = new Vector3(-d * 0.45f, -0.27f * s, 0f);
                 _pinionB.localPosition = new Vector3(d * 0.45f, -0.27f * s, 0f);
                 _pinionB.localRotation = Quaternion.Euler(0f, 0f, 18f);   // offset half a tooth so the teeth interleave
+                _pinionBRenderer = _pinionB.GetComponent<SpriteRenderer>();
             }
             var arc = MechSprites.ArcArrow;
             _turnShadow = MakeChild(_hub, "TurnShadow", arc, new Color(0.12f, 0.03f, 0.08f, 0f), HubOrder + 2, _art.unlitMaterial);
             _turnArrow = MakeChild(_hub, "TurnArrow", arc, new Color(1f, 0.95f, 0.86f, 0f), HubOrder + 3, _art.unlitMaterial);
-            // arc radius 0.6 world units at scale 1: clears the chain mark and stays inside the tube
-            _turnArrow.transform.localScale = _turnShadow.transform.localScale = Vector3.one * s;
+            // arc radius 0.6 world units at kit scale: clears the chain mark and stays inside the tube
+            float arcScale = Mathf.Clamp(_ring.Radius, 1f, 1.4f);
+            _turnArrow.transform.localScale = _turnShadow.transform.localScale = Vector3.one * arcScale;
             _turnShadow.transform.localPosition = new Vector3(0.03f, -0.05f, 0f);
         }
 
@@ -338,12 +363,19 @@ namespace Orcub.Game
             UpdateRust(dt, hidden, animate);
             UpdateHub(dt, hidden);
 
-            foreach (var (t, text, sr, local) in _ids)
+            for (int i = 0; i < _ids.Count; i++)
             {
+                var (t, text, sr, local, mr) = _ids[i];
                 t.position = transform.TransformPoint(local);
                 t.rotation = Quaternion.identity;
-                text.gameObject.SetActive(!hidden);
-                MechText.Sort(text, sr.sortingOrder + 1);
+                if (text.gameObject.activeSelf == hidden) text.gameObject.SetActive(!hidden);
+                MechText.Sort(mr, sr.sortingOrder + 1);
+            }
+            if (_pairText != null)
+            {   // L6: the pair number hides with the intro / fly-away and follows the mark's (lifted) order
+                bool show = !hidden && _mark != null && _mark.enabled;
+                if (_pairText.gameObject.activeSelf != show) _pairText.gameObject.SetActive(show);
+                if (show) MechText.Sort(_pairTextRenderer, _mark.sortingOrder + 1);
             }
         }
 
@@ -388,12 +420,15 @@ namespace Orcub.Game
             int remaining = Mathf.Max(0, _ring.RustAfter - _model.Moves);
             bool oiled = false;
             if (_ring.RustOilId > 0)
-                foreach (var r in _model.Rings) if (r.OilId == _ring.RustOilId && r.Removed) oiled = true;
+            {
+                var rings = _model.Rings;   // L1: indexed, no boxed enumerator per frame
+                for (int i = 0; i < rings.Count; i++) if (rings[i].OilId == _ring.RustOilId && rings[i].Removed) oiled = true;
+            }
             oiled &= !_ring.Frozen;
             bool frozen = _ring.Frozen;
 
-            // spread: 2 patches with plenty of time, all five on the last move; seized once frozen
-            int stage = frozen ? 9 : oiled ? -2 : remaining >= 4 ? 2 : remaining == 3 ? 3 : remaining == 2 ? 4 : 5;
+            // spread: 2 patches with plenty of time, all of them on the last move; seized once frozen
+            int stage = frozen ? 99 : oiled ? -2 : remaining >= 4 ? 2 : remaining == 3 ? 3 : remaining == 2 ? 4 : RustPatches;
             if (stage != _rustStage)
             {
                 bool grew = animate && stage > _rustStage && _rustStage >= 0;
@@ -405,16 +440,20 @@ namespace Orcub.Game
                         : _art.PerRadius(i % 2 == 0 ? _art.rustPatchA : _art.rustPatchB, _ring.Radius);
                     if (oiled) { if (!animate) sr.enabled = false; }   // oiled: the existing patches wash off (fade)
                     else sr.enabled = frozen || i < stage;
+                    if (i < _rustHalo.Count) { _rustHalo[i].sprite = sr.sprite; _rustHalo[i].enabled = sr.enabled; }
                 }
                 if (grew) _view.Pulse();
             }
             float fadeTarget = oiled ? 0f : 1f;
             _rustFade = animate ? Mathf.MoveTowards(_rustFade, fadeTarget, dt * 1.6f) : fadeTarget;
-            if (!_view.IsIntroPending)
-                foreach (var sr in _rust) { var c = sr.color; c.a = _rustFade; sr.color = c; }
-            // the clay itself goes rusty too, more as the deadline nears
-            float tint = frozen ? 0.42f : oiled ? 0f : Mathf.Lerp(0.12f, 0.3f, Mathf.InverseLerp(4f, 1f, remaining));
-            _view.SetBodyTint(Color.Lerp(Color.white, Rust * 1.6f, tint * _rustFade));
+            if (!_view.IsIntroPending && !_view.IsFlying)
+            {
+                for (int i = 0; i < _rust.Count; i++) { var c = _rust[i].color; if (c.a != _rustFade) { c.a = _rustFade; _rust[i].color = c; } }
+                for (int i = 0; i < _rustHalo.Count; i++) { var c = _rustHalo[i].color; float a = RustHalo.a * _rustFade; if (c.a != a) { c.a = a; _rustHalo[i].color = c; } }
+            }
+            // the clay itself dulls to rust brown as the deadline nears: obvious on orange / yellow / red too
+            float amount = frozen ? 0.75f : oiled ? 0f : Mathf.Lerp(0.25f, 0.55f, Mathf.InverseLerp(4f, 1f, remaining));
+            _view.SetBodyBlend(RustedClay(_view.Color), amount * _rustFade);
             _oiled = oiled; _frozen = frozen;
 
             if (_badge == null) return;
@@ -426,10 +465,25 @@ namespace Orcub.Game
             _badge.position = transform.position + (Vector3)_badgeOffset;
             _badge.rotation = Quaternion.identity;
             _badge.localScale = Vector3.one * BadgeScale * (1f + 0.25f * Mathf.Sin(_badgeBump * Mathf.PI));
-            _badgeText.text = remaining.ToString();   // frozen shows a coral 0 on a rusty badge
-            _badgeText.color = frozen ? new Color(0.62f, 0.16f, 0.12f) : remaining <= 1 ? new Color(0.86f, 0.32f, 0.27f) : new Color(0.25f, 0.08f, 0.16f);
-            _badgeSprite.color = frozen ? new Color(0.95f, 0.82f, 0.72f) : new Color(1f, 0.95f, 0.86f);
-            MechText.Sort(_badgeText, _badgeSprite.sortingOrder + 1);
+            if (remaining != _shownRemaining || frozen != _shownFrozen)
+            {   // L1: re-mesh the number only when it changes (frozen shows a coral 0 on a rusty badge)
+                _shownRemaining = remaining; _shownFrozen = frozen;
+                _badgeText.text = remaining.ToString();
+                _badgeText.color = frozen ? new Color(0.62f, 0.16f, 0.12f) : remaining <= 1 ? new Color(0.86f, 0.32f, 0.27f) : new Color(0.25f, 0.08f, 0.16f);
+                _badgeSprite.color = frozen ? new Color(0.95f, 0.82f, 0.72f) : new Color(1f, 0.95f, 0.86f);
+            }
+            MechText.Sort(_badgeTextRenderer, _badgeSprite.sortingOrder + 1);
+        }
+
+        int _shownRemaining = int.MinValue;
+        bool _shownFrozen;
+
+        /// <summary>Rusted clay for a palette colour: desaturated, darkened and pulled toward rust brown.</summary>
+        public static Color RustedClay(Color clay)
+        {
+            float lum = 0.2126f * clay.r + 0.7152f * clay.g + 0.0722f * clay.b;
+            var grey = new Color(lum * 0.62f, lum * 0.58f, lum * 0.55f, 1f);
+            return Color.Lerp(grey, RustBrown, 0.68f);
         }
 
         void UpdateHub(float dt, bool hidden)
@@ -451,8 +505,7 @@ namespace Orcub.Game
                 _pinionA.Rotate(0f, 0f, delta * 3.5f);
                 _pinionB.Rotate(0f, 0f, -delta * 3.5f);
                 bool coupled = mate >= 0;
-                var cb = _pinionB.GetComponent<SpriteRenderer>();
-                if (!_view.IsIntroPending) cb.enabled = coupled;   // partner pulled: the pair has disengaged
+                if (!_view.IsIntroPending && _pinionBRenderer.enabled != coupled) _pinionBRenderer.enabled = coupled;   // partner pulled: disengaged
             }
             if (_view.IsIntroPending) return;
             float a = Mathf.Clamp01(_turnShow / 0.25f) * (hidden ? 0f : 1f);
@@ -487,10 +540,12 @@ namespace Orcub.Game
             return tm;
         }
 
-        public static void Sort(TextMesh t, int order)
+        public static void Sort(TextMesh t, int order) => Sort(t.GetComponent<MeshRenderer>(), order);
+
+        /// <summary>L1: callers cache the renderer; no GetComponent per frame.</summary>
+        public static void Sort(MeshRenderer mr, int order)
         {
-            var mr = t.GetComponent<MeshRenderer>();
-            if (mr.sortingOrder != order) mr.sortingOrder = order;
+            if (mr != null && mr.sortingOrder != order) mr.sortingOrder = order;
         }
     }
 
@@ -499,16 +554,20 @@ namespace Orcub.Game
     {
         static Sprite _arc;
 
+        /// <summary>Builds the arrow at boot (behind the splash) instead of on the first linked board / intro card.</summary>
+        public static void Warm() { _ = ArcArrow; }
+
         /// <summary>
         /// Counter-clockwise arc arrow over the top of a circle (from 30° to 150°, head at 150°), white so it can be
         /// tinted; 256 px at 160 PPU, so at scale 1 the arc radius is 0.6 world units. Mirror X for clockwise.
+        /// Review e, L9: one analytic anti-aliased sample per pixel (signed distance), not 3×3 supersampling.
         /// </summary>
         public static Sprite ArcArrow
         {
             get
             {
                 if (_arc != null) return _arc;
-                const int n = 256, ss = 3;
+                const int n = 256;
                 const float cx = 128f, cy = 100f, r = 96f, half = 13f, a0 = 32f, a1 = 138f;
                 var px = new Color32[n * n];
                 float h = a1 * Mathf.Deg2Rad;
@@ -517,21 +576,17 @@ namespace Orcub.Game
                 var rad = new Vector2(Mathf.Cos(h), Mathf.Sin(h));
                 Vector2 tip = end + tan * 40f, b1 = end + rad * 30f - tan * 2f, b2 = end - rad * 30f - tan * 2f;
                 var start = new Vector2(cx + Mathf.Cos(a0 * Mathf.Deg2Rad) * r, cy + Mathf.Sin(a0 * Mathf.Deg2Rad) * r);
+                var centre = new Vector2(cx, cy);
                 for (int y = 0; y < n; y++)
                     for (int x = 0; x < n; x++)
                     {
-                        int hit = 0;
-                        for (int sy = 0; sy < ss; sy++)
-                            for (int sx = 0; sx < ss; sx++)
-                            {
-                                var p = new Vector2(x + (sx + 0.5f) / ss, y + (sy + 0.5f) / ss);
-                                var d = p - new Vector2(cx, cy);
-                                float ang = Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg;
-                                bool inArc = Mathf.Abs(d.magnitude - r) <= half && ang >= a0 && ang <= a1;
-                                bool cap = (p - start).magnitude <= half;
-                                if (inArc || cap || InTri(p, tip, b1, b2)) hit++;
-                            }
-                        byte a = (byte)(255 * hit / (ss * ss));
+                        var p = new Vector2(x + 0.5f, y + 0.5f);
+                        var d = p - centre;
+                        float ang = Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg;
+                        float dist = (p - start).magnitude - half;   // round tail cap
+                        if (ang >= a0 && ang <= a1) dist = Mathf.Min(dist, Mathf.Abs(d.magnitude - r) - half);
+                        dist = Mathf.Min(dist, TriDistance(p, tip, b1, b2));
+                        byte a = (byte)(255f * Mathf.Clamp01(0.5f - dist));
                         px[y * n + x] = new Color32(255, 255, 255, a);
                     }
                 var tex = new Texture2D(n, n, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, name = "ArcArrow" };
@@ -541,6 +596,20 @@ namespace Orcub.Game
                 _arc.name = "ArcArrow";
                 return _arc;
             }
+        }
+
+        /// <summary>Signed distance to a triangle (negative inside).</summary>
+        static float TriDistance(Vector2 p, Vector2 a, Vector2 b, Vector2 c)
+        {
+            float dist = Mathf.Min(Segment(p, a, b), Mathf.Min(Segment(p, b, c), Segment(p, c, a)));
+            return InTri(p, a, b, c) ? -dist : dist;
+        }
+
+        static float Segment(Vector2 p, Vector2 a, Vector2 b)
+        {
+            var ab = b - a;
+            float t = Mathf.Clamp01(Vector2.Dot(p - a, ab) / Mathf.Max(1e-6f, ab.sqrMagnitude));
+            return (p - (a + ab * t)).magnitude;
         }
 
         static bool InTri(Vector2 p, Vector2 a, Vector2 b, Vector2 c)

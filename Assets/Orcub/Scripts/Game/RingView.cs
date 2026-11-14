@@ -133,6 +133,18 @@ namespace Orcub.Game
             c.a = _body.color.a;
             _body.color = c;
         }
+        /// <summary>
+        /// Blends the clay toward <paramref name="target"/> (rust: a dull, desaturated brown that reads on every
+        /// palette colour, orange and yellow included). 0 restores the palette colour.
+        /// </summary>
+        public void SetBodyBlend(Color target, float amount)
+        {
+            if (_body == null || _introHidden || _flying) return;
+            var c = Color.Lerp(_color, target, Mathf.Clamp01(amount));
+            c.a = _body.color.a;
+            if (_body.color != c) _body.color = c;
+        }
+
         public void SetPicked(bool picked)
         {
             _picked = picked;

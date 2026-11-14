@@ -688,17 +688,27 @@ namespace Orcub.Game
             }
         }
 
-        /// <summary>Out of moves: one "+N moves" pill (rewarded ad, once), then Retry · Home.</summary>
-        public void ShowOutOfMoves(int bonusMoves, bool canWatchAd, Action onWatchAd, Action onRetry, Action onHome)
+        /// <summary>
+        /// Out of moves: one "+N moves" pill (rewarded ad, once), then Retry · Home. The dead-end variant (review e,
+        /// M5: rust or a spring left no way out) has its own title and, instead of the video pill, an Undo pill.
+        /// </summary>
+        public void ShowOutOfMoves(int bonusMoves, bool canWatchAd, Action onWatchAd, Action onRetry, Action onHome,
+            string title = "Out of moves", Action onUndo = null)
         {
             var card = OpenCard();
-            Title(card, "Out of moves", 0.68f, 0.85f, 76);
-            if (canWatchAd)
+            Title(card, title, 0.68f, 0.85f, 76);
+            bool pill = canWatchAd || onUndo != null;
+            if (onUndo != null)
+            {
+                var undo = _kit.Pill(card, "Undo", UiKit.Mint, UiKit.Title, () => { ClosePopup(); onUndo(); }, _art.iconUndo, UiKit.Ink);
+                UiKit.Anchor(undo, 0.06f, 0.4f, 0.94f, 0.6f);
+            }
+            else if (canWatchAd)
             {
                 var ad = _kit.Pill(card, $"+{bonusMoves} moves", UiKit.Coral, UiKit.Title, () => { ClosePopup(); onWatchAd(); }, _art.uiFilm);
                 UiKit.Anchor(ad, 0.06f, 0.4f, 0.94f, 0.6f);
             }
-            float y = canWatchAd ? 0.2f : 0.42f;
+            float y = pill ? 0.2f : 0.42f;
             LinkPair(card, "Retry", onRetry, "Home", onHome, y, y + 0.12f);
         }
 
@@ -771,27 +781,108 @@ namespace Orcub.Game
             UiKit.Anchor(cancel, 0.32f, 0.16f, 0.68f, 0.28f);
         }
 
-        /// <summary>Out of lives: big heart, live countdown, refill with ad, refill with cogs (dim until cogs exist).</summary>
-        public void ShowOutOfLives(Action onRefillAd, Action onRefillCogs, Action onBack)
+        /// <summary>
+        /// Out of lives (approved out_of_lives_gold_B): an anchored cream sheet with a close X; a status strip
+        /// (heart, "0 / 5 lives", the regeneration timer); ONE mint "Refill for 90 gold" (tapping it is the explicit
+        /// confirmation of the shown price; pending while the wallet answers, inline retry message on failure);
+        /// a quiet cream "Watch video for 1 life" row; and a "Wait" link.
+        /// </summary>
+        public void ShowOutOfLives(Action onRefillAd, Func<System.Threading.Tasks.Task<bool>> refillGold, Action onGoldRefilled, Action onBack)
         {
-            var card = OpenCard(cream: true);
-            Title(card, "Out of lives", 0.82f, 0.95f, 74);
-            var heart = _kit.MakeImage(card, _art.uiHeartClay, UiKit.HeartRed);
-            UiKit.Anchor(heart.rectTransform, 0.36f, 0.62f, 0.64f, 0.82f);
-            var timer = _kit.MakeText(card, "", UiKit.Body, UiKit.Ink);
-            UiKit.Anchor(timer.rectTransform, 0f, 0.53f, 1f, 0.62f);
-            StartCoroutine(Countdown(timer));
-            var ad = _kit.Pill(card, "Refill with ad", UiKit.Coral, UiKit.Body, () => { ClosePopup(); onRefillAd(); }, _art.uiFilm);
-            if (onRefillCogs != null)   // the cog shop isn't live yet: no dead buttons
+            ClosePopup();
+            _creamCard = true;
+            _onDismiss = onBack;
+            var popup = _popup = UiKit.Rect("Popup", _cards);
+            UiKit.Anchor(_popup, 0, 0, 1, 1);
+            var scrim = _popup.gameObject.AddComponent<Image>();
+            scrim.color = new Color(0.05f, 0.01f, 0.03f, 0f);
+            StartCoroutine(FadeScrim(scrim, 0.5f));
+            // the dimmed screen stays inactive: the scrim image blocks taps (raycast target)
+
+            var sheet = UiKit.Rect("LivesSheet", _popup);
+            UiKit.Anchor(sheet, 0.03f, 0f, 0.97f, 0.41f);
+            var bg = _kit.MakeImage(sheet, _art.sheet != null ? _art.sheet : _art.uiCard, _art.sheet != null ? Color.white : UiKit.CardCream);
+            bg.type = Image.Type.Sliced;
+            bg.raycastTarget = true;
+            UiKit.Anchor(bg.rectTransform, 0, 0, 1, 1);
+            bg.rectTransform.offsetMin = new Vector2(0f, -60f);
+            var body = UiKit.Rect("Body", sheet);
+            UiKit.Anchor(body, 0.05f, 0.06f, 0.95f, 0.96f);
+            var ink = UiKit.Ink;
+
+            // header: lamp art, title, close X
+            if (_art.chapterLamp != null)
             {
-                UiKit.Anchor(ad, 0.1f, 0.33f, 0.9f, 0.48f);
-                var cogs = _kit.Pill(card, "Refill for 12 cogs", UiKit.Mint, UiKit.Label,
-                    () => { ClosePopup(); onRefillCogs(); }, _art.uiCogClay, UiKit.Brass);
-                UiKit.Anchor(cogs, 0.1f, 0.2f, 0.9f, 0.31f);
+                var lamp = _kit.MakeImage(body, _art.chapterLamp, Color.white);
+                lamp.preserveAspect = true;
+                UiKit.Anchor(lamp.rectTransform, 0f, 0.8f, 0.2f, 1.02f);
             }
-            else UiKit.Anchor(ad, 0.1f, 0.27f, 0.9f, 0.43f);
-            var back = _kit.Link(card, "Not now", OnCard, () => { ClosePopup(); onBack(); });
-            UiKit.Anchor(back, 0.3f, 0.08f, 0.7f, 0.2f);
+            var title = _kit.MakeText(body, "Out of lives", UiKit.Display, ink);
+            UiKit.Anchor(title.rectTransform, 0.2f, 0.82f, 0.84f, 1f);
+            var close = _kit.RoundButton(body, "Close", _art.glyphClose != null ? _art.glyphClose : _art.uiRound, UiKit.CardCream, UiKit.Coral,
+                () => { if (_popup == popup) { ClosePopup(); onBack?.Invoke(); } });
+            UiKit.Anchor(close, 0.86f, 0.84f, 1f, 1f);
+            close.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+
+            // status strip: heart, "0 / 5 lives" | "Next life in mm:ss"
+            var strip = UiKit.Rect("Status", body);
+            UiKit.Anchor(strip, 0f, 0.64f, 1f, 0.79f);
+            var slab = _kit.MakeImage(strip, _art.uiSlab != null ? _art.uiSlab : _art.uiPill, UiKit.Slab, sliced: true);
+            UiKit.Anchor(slab.rectTransform, 0, 0, 1, 1);
+            var heart = _kit.MakeImage(strip, _art.uiHeartClay, UiKit.HeartRed);
+            heart.preserveAspect = true;
+            UiKit.Anchor(heart.rectTransform, 0.04f, 0.14f, 0.15f, 0.86f);
+            var count = _kit.MakeText(strip, $"{Mathf.Max(0, Lives.Count)} / {Lives.Max} lives", UiKit.Label, ink);
+            UiKit.Anchor(count.rectTransform, 0.15f, 0f, 0.5f, 1f);
+            var divider = _kit.Divider(strip);
+            UiKit.Anchor(divider.rectTransform, 0.515f, 0.22f, 0.52f, 0.78f);
+            var timer = _kit.MakeText(strip, "", UiKit.Label, ink);
+            UiKit.Anchor(timer.rectTransform, 0.53f, 0f, 0.98f, 1f);
+            StartCoroutine(Countdown(timer));
+
+            // primary: refill with gold (explicit tap = confirmation of the displayed price)
+            const string goldLabel = "Refill for 90 gold";
+            var gold = _kit.Pill(body, goldLabel, UiKit.Mint, UiKit.Title, () => { }, _art.GoldBarTight != null ? _art.GoldBarTight : _art.goldBar, Color.white);
+            UiKit.Anchor(gold, 0f, 0.42f, 1f, 0.6f);
+            var helper = _kit.MakeText(body, "Refills all 5 lives", UiKit.Label, ink);
+            UiKit.Anchor(helper.rectTransform, 0f, 0.33f, 1f, 0.42f);
+            var goldText = gold.GetComponentInChildren<Text>();
+            var goldButton = gold.GetComponent<Button>();
+            goldButton.onClick.RemoveAllListeners();
+            bool busy = false;
+            goldButton.onClick.AddListener(async () =>
+            {
+                if (busy || refillGold == null) return;
+                busy = true;
+                Haptics.Play(Haptics.Impact.Light, 0.6f);
+                goldText.text = "Refilling…";
+                helper.text = "Refills all 5 lives";
+                bool ok;
+                try { ok = await refillGold(); }
+                catch (Exception) { ok = false; }
+                if (this == null || _popup != popup) return;   // the sheet was closed meanwhile
+                busy = false;
+                if (ok)
+                {
+                    Haptics.Notify(Haptics.Notice.Success);
+                    ClosePopup();
+                    onGoldRefilled?.Invoke();
+                    return;
+                }
+                goldText.text = goldLabel;
+                helper.text = "Couldn't refill. Check your gold and try again";
+                Haptics.Notify(Haptics.Notice.Warning);
+            });
+
+            // secondary: rewarded video, quiet cream row
+            var video = _kit.Pill(body, "Watch video for 1 life", UiKit.CardCream, UiKit.Label,
+                () => { if (_popup == popup) { ClosePopup(); onRefillAd?.Invoke(); } }, _art.uiFilm, ink);
+            UiKit.Anchor(video, 0.02f, 0.14f, 0.98f, 0.3f);
+            var wait = _kit.Link(body, "Wait", OnCard, () => { if (_popup == popup) { ClosePopup(); onBack?.Invoke(); } });
+            UiKit.Anchor(wait, 0.35f, 0f, 0.65f, 0.12f);
+
+            var slide = sheet.gameObject.AddComponent<CanvasGroup>();
+            StartCoroutine(SlideUp(sheet, slide));
         }
 
         IEnumerator Countdown(Text label)

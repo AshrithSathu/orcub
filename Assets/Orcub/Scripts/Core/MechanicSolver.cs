@@ -41,6 +41,69 @@ namespace Orcub.Core
             return false;
         }
 
+        // ------------------------------------------------------------ per-board cache (review e, M4)
+        // Level start used to run this exact search 5+ times on the main thread (LevelRules + LevelRating, twice
+        // each, plus the sheet). Results are cached per board geometry so a level start does at most one search,
+        // and Warm() runs it on a worker thread ahead of time (next level, level-start sheet).
+        static readonly Dictionary<string, (bool solved, Result result)> Cache = new Dictionary<string, (bool, Result)>();
+        static readonly object CacheLock = new object();
+        const int CacheCapacity = 256;
+
+        /// <summary>Stable key for a board: everything the search reads.</summary>
+        public static string Fingerprint(LevelDef def)
+        {
+            var k = new StringBuilder(def.Rings.Count * 48 + def.Links.Count * 16);
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            foreach (var r in def.Rings)
+                k.Append(r.Center.x.ToString("R", inv)).Append(',').Append(r.Center.y.ToString("R", inv)).Append(',')
+                 .Append(r.Radius.ToString("R", inv)).Append(',').Append(r.Color).Append(',')
+                 .Append(r.GapAngle.HasValue ? r.GapAngle.Value.ToString("R", inv) : "-").Append(',')
+                 .Append(r.Ratchet).Append(',').Append(r.GearGroup).Append(',').Append(r.KeyId).Append(',')
+                 .Append(r.PadlockId).Append(',').Append(r.OilId).Append(',').Append(r.RustOilId).Append(',')
+                 .Append(r.RustAfter).Append(';');
+            k.Append('|');
+            foreach (var l in def.Links)
+                k.Append(l.Owner).Append('>').Append(l.Target).Append(l.Tinted ? "t" : "").Append(l.Clay ? "c" : "")
+                 .Append(',').Append(l.Color).Append(',').Append(l.SpringMoves).Append(';');
+            return k.ToString();
+        }
+
+        /// <summary>Cached exact search (no removal order). Thread-safe; results are shared, treat them as read-only.</summary>
+        public static bool SolveCached(LevelDef def, out Result result)
+        {
+            string key = Fingerprint(def);
+            lock (CacheLock)
+                if (Cache.TryGetValue(key, out var hit)) { result = hit.result; return hit.solved; }
+            bool solved = Solve(def, out result, out _);
+            lock (CacheLock)
+            {
+                if (Cache.Count >= CacheCapacity) Cache.Clear();
+                Cache[key] = (solved, result);
+            }
+            return solved;
+        }
+
+        /// <summary>True once <see cref="SolveCached"/> has a result for this board (tests / tools).</summary>
+        public static bool IsCached(LevelDef def)
+        {
+            string key = Fingerprint(def);
+            lock (CacheLock) return Cache.ContainsKey(key);
+        }
+
+        /// <summary>Solves mechanic boards on a worker thread so a later level start finds them cached.</summary>
+        public static System.Threading.Tasks.Task Warm(IEnumerable<LevelDef> defs)
+        {
+            var list = new List<LevelDef>();
+            foreach (var d in defs) if (d != null && HasMechanics(d) && !IsCached(d)) list.Add(d);
+            if (list.Count == 0) return System.Threading.Tasks.Task.CompletedTask;
+            return System.Threading.Tasks.Task.Run(() =>
+            {
+                foreach (var d in list)
+                    try { SolveCached(d, out _); }
+                    catch (Exception) { /* the main thread reports it when the board is used */ }
+            });
+        }
+
         public static bool Solve(LevelDef def, out Result result, out List<int> order, int budgetMilliseconds = int.MaxValue)
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();

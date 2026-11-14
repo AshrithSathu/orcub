@@ -114,6 +114,33 @@ namespace Orcub.Game
         /// <summary>Palette index → shape (coral 0 = triangle and lavender 4 = circle, as in the approved board).</summary>
         public static int ShapeFor(int paletteIndex) => Mathf.Abs(paletteIndex) % Shapes.Length;
 
+        /// <summary>
+        /// Review e, L3: the 10-colour palette shares 6 shapes (0/6, 1/7, 2/8, 3/9 collide, and yellow / pale yellow
+        /// or blue / periwinkle also look alike). On one board, every colour that appears on a colour clamp or a
+        /// stamped ring gets its OWN shape: colours keep their default shape unless an earlier colour (ascending
+        /// palette order, so 0–5 always keep theirs) already took it, then they take the first free one. A board has
+        /// at most six such colours, so no two clamps of different colours ever share a stamp.
+        /// </summary>
+        public static int ShapeFor(int paletteIndex, Orcub.Core.PuzzleModel board)
+        {
+            if (board == null) return ShapeFor(paletteIndex);
+            var colours = new System.Collections.Generic.SortedSet<int>();
+            foreach (var l in board.Links)
+                if (l.Tinted) { colours.Add(Mathf.Abs(l.Color)); colours.Add(Mathf.Abs(board.Rings[l.Target].Color)); }
+            colours.Add(Mathf.Abs(paletteIndex));
+            int used = 0, result = ShapeFor(paletteIndex);
+            foreach (int c in colours)
+            {
+                int shape = ShapeFor(c);
+                if ((used & (1 << shape)) != 0)
+                    for (int k = 0; k < Shapes.Length; k++)
+                        if ((used & (1 << k)) == 0) { shape = k; break; }
+                used |= 1 << shape;
+                if (c == Mathf.Abs(paletteIndex)) result = shape;
+            }
+            return result;
+        }
+
         public int MechRadiusIndex(float radius)
         {
             int best = 0;

@@ -78,7 +78,7 @@ namespace Orcub.Core
         {
             if (MechanicSolver.HasMechanics(def))
             {
-                bool solved = MechanicSolver.Solve(def, out var result, out _);
+                bool solved = MechanicSolver.SolveCached(def, out var result);
                 depth = result.MinimumMoves; rotation = result.Rotation; taps = result.Taps;
                 return solved;
             }

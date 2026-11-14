@@ -49,8 +49,14 @@ namespace Orcub.Game
             s._onClosed = onClosed;
             s._view = CurrentView();
             s.Build(animate: true);
+            // review f: an earlier delete intent was never confirmed. Offer to finish it (approved delete_confirm_A
+            // dialog); DeleteAccount runs only if the player chooses to continue.
+            if (!Fake.HasValue && Recovery != null && Recovery.DeletionNeedsConfirmation) s.ConfirmFinishDelete();
             return s;
         }
+
+        /// <summary>Optional recovery surface from the Net bridge (null until it implements <see cref="IAccountRecovery"/>).</summary>
+        static IAccountRecovery Recovery => Svc as IAccountRecovery;
 
         static View CurrentView()
         {
@@ -295,10 +301,32 @@ namespace Orcub.Game
 
         void ConfirmSignOut()
         {
+            // review f: the protective sign-out (final save first) may fail. Then a second, explicit tap signs out
+            // anyway via SignOut(discardUnsyncedProgress: true); the error line says exactly what that loses.
+            var recovery = Recovery;
+            bool saveFailed = false;
+            async Task Run()
+            {
+                if (Svc == null) throw new InvalidOperationException("Offline");
+                if (saveFailed && recovery != null) { await recovery.SignOut(true); return; }
+                try { await Svc.SignOut(); }
+                catch { saveFailed = true; throw; }
+            }
             _dialog = AccountDialog.Open(transform, _kit, AccountArt.Cloud, new Vector2(200f, 147f), "Sign out?",
                 "Your progress stays saved in the cloud; this phone continues as a guest.", null,
-                "Sign out", "Signing out…", "Couldn’t sign out. Check your connection and try again.",
-                () => Svc != null ? Svc.SignOut() : Task.FromException(new InvalidOperationException("Offline")));
+                "Sign out", "Signing out…",
+                recovery != null
+                    ? "Couldn’t save your latest progress. Tap Sign out again to sign out anyway; unsaved progress on this phone will be lost."
+                    : "Couldn’t sign out. Check your connection and try again.",
+                Run);
+        }
+
+        void ConfirmFinishDelete()
+        {
+            _dialog = AccountDialog.Open(transform, _kit, AccountArt.Trash, new Vector2(128f, 140f), "Finish deleting your account?",
+                "You started deleting this account. Continue to permanently delete your progress, stars and cloud save.", "This cannot be undone.",
+                "Delete", "Deleting…", "Couldn’t delete. Check your connection and try again.",
+                () => Svc != null ? Svc.DeleteAccount() : Task.FromException(new InvalidOperationException("Offline")));
         }
 
         void ConfirmDelete()

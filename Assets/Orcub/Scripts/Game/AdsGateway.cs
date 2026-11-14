@@ -6,6 +6,8 @@ namespace Orcub.Game
     public interface IAdsService
     {
         bool RewardedReady { get; }
+        /// <summary>ad_offer telemetry: call when a rewarded button becomes visible, once per sheet opening.</summary>
+        void RewardedOfferShown(string placement);
         void ShowRewarded(string placement, Action onReward, Action onClosedWithoutReward);
         void RecordWin(int levelNumber);
         void MaybeShowInterstitial(string placement, Action onFinished);

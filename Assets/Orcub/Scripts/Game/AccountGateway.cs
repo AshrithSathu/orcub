@@ -32,6 +32,20 @@ namespace Orcub.Game
         Task ResolveConflict(bool keepCloud);
     }
 
+    /// <summary>
+    /// Optional account-recovery surface (review f). Kept separate from <see cref="IAccountService"/> so the Net
+    /// bridge keeps compiling until it implements it; the UI checks <c>AccountGateway.Service as IAccountRecovery</c>.
+    /// </summary>
+    public interface IAccountRecovery
+    {
+        /// <summary>A delete intent for this user was never confirmed: offer "Finish deleting your account?".</summary>
+        bool DeletionNeedsConfirmation { get; }
+        /// <summary>Sign out; <c>discardUnsyncedProgress</c> only after the protective default failed and the player chose it.</summary>
+        Task SignOut(bool discardUnsyncedProgress);
+        /// <summary>Cancel a pending native reauthentication prompt.</summary>
+        void CancelReauthentication();
+    }
+
     public static class AccountGateway
     {
         /// <summary>Sign in with Apple stays hidden until the owner joins the paid Apple programme.</summary>

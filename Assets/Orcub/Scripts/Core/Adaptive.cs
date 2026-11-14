@@ -85,11 +85,17 @@ namespace Orcub.Core
             features.Add(new MoveFeature(useful, thinkSeconds, lockedTouches, undo), activeTuning);
         }
 
-        public AttemptPlan BeginAttempt(int levelIndex)
+        public AttemptPlan BeginAttempt(int levelIndex) => BeginAttempt(levelIndex, LevelLibrary.GetVariants(levelIndex));
+
+        /// <summary>
+        /// Selects from an already prepared variant array (INFINITE.md: "from that fixed ready array"), so a
+        /// generated level never blocks the main thread on the infinite worker between TryGet and BeginAttempt.
+        /// </summary>
+        public AttemptPlan BeginAttempt(int levelIndex, LevelData[] choices)
         {
             if (active != null) throw new InvalidOperationException("End the active attempt first");
             if (levelIndex < 0) throw new ArgumentOutOfRangeException(nameof(levelIndex));
-            var choices = LevelLibrary.GetVariants(levelIndex);
+            if (choices == null || choices.Length == 0) throw new ArgumentException("No variants", nameof(choices));
             activeTuning = tuning.Snapshot();
             estimate = SkillModel.Estimate(Skill, Log, activeTuning);
             var plan = DifficultyPolicy.Select(levelIndex, choices, estimate, Streak.Count(levelIndex), Log, activeTuning, random);

@@ -182,6 +182,16 @@ namespace Orcub.Game
                 unlocked ? UiKit.Ink : new Color(UiKit.Ink.r, UiKit.Ink.g, UiKit.Ink.b, 0.7f));
             UiKit.Anchor(number.rectTransform, 0, 0.02f, 1, 1f);
 
+            // L9: boss levels carry the approved coral "Boss" badge on the map too (as on the sheet and HUD)
+            if (LevelRewards.IsBoss(index) && art.bossBadge != null)
+            {
+                var badge = kit.MakeImage(node, art.BossBadgeTight, Color.white);
+                badge.preserveAspect = true;
+                // above the node; under its stars when it's the current node (the Play bubble sits on top)
+                if (isCurrent) UiKit.Anchor(badge.rectTransform, 0.1f, -0.5f, 0.9f, -0.22f);
+                else UiKit.Anchor(badge.rectTransform, 0.1f, 0.92f, 0.9f, 1.2f);
+            }
+
             if (!unlocked)
             {
                 var lk = kit.MakeImage(node, art.homeLock, Color.white);
@@ -392,12 +402,14 @@ namespace Orcub.Game
             _wait = null;
             // generated levels: never block the UI thread; show what we know and fill in when prepared
             LevelData data = null;
-            if (LevelLibrary.TryGetVariants(level, out var choices) && choices != null && choices.Length > 0) data = choices[0];
-            else
+            if (LevelLibrary.TryGetVariants(level, out var choices) && choices != null && choices.Length > 0)
             {
-                LevelLibrary.Prefetch(level);
-                _wait = StartCoroutine(FillWhenReady(level));
+                data = choices[0];
+                var defs = new List<LevelDef>(choices.Length);
+                for (int i = 1; i < choices.Length; i++) if (choices[i] != null) defs.Add(choices[i].ToDef());
+                _ = MechanicSolver.Warm(defs);   // M4: Play then finds the other variants' searches cached
             }
+            else _wait = StartCoroutine(FillWhenReady(level));
             Fill(level, data);
 
             _root.gameObject.SetActive(true);
@@ -408,10 +420,14 @@ namespace Orcub.Game
 
         IEnumerator FillWhenReady(int level)
         {
-            LevelData[] choices;
-            while (!LevelLibrary.TryGetVariants(level, out choices) || choices == null || choices.Length == 0) yield return null;
-            if (_level == level) Fill(level, choices[0]);
+            // L9: wait on the generation task itself, so a faulted generation stops polling (the sheet keeps its
+            // "…" targets; Play still works, the board falls back to its curated stand-in)
+            var task = LevelLibrary.PrepareAsync(level);
+            while (!task.IsCompleted) yield return null;
             _wait = null;
+            if (_level != level || task.Status != System.Threading.Tasks.TaskStatus.RanToCompletion) yield break;
+            var choices = task.Result;
+            if (choices != null && choices.Length > 0) Fill(level, choices[0]);
         }
 
         void Fill(int level, LevelData data)

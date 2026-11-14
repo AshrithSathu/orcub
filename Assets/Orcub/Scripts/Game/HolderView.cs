@@ -41,6 +41,7 @@ namespace Orcub.Game
         int _shownPasses;
         Transform _badge;
         TextMesh _badgeText;
+        MeshRenderer _badgeTextRenderer;
         SpriteRenderer _badgeSprite;
         int _lastCount = -1;
         float _badgeBump;
@@ -61,7 +62,7 @@ namespace Orcub.Game
             _tint = art.hardwareTint;
             _tint.a = 1f;
             _spring = link.SpringMoves > 0 && art.springClosed != null;
-            int shape = OrcubArt.ShapeFor(link.Color);
+            int shape = OrcubArt.ShapeFor(link.Color, model);   // L3: unique per colour on this board
             bool tinted = link.Tinted && art.clampStamps != null && art.clampStamps.Length > shape;
             _clampTint = tinted ? Color.Lerp(art.RingColor(link.Color), Color.white, 0.12f) : _tint;
 
@@ -93,6 +94,7 @@ namespace Orcub.Game
                 _badgeSprite.sortingOrder = 20;
                 if (art.spriteMaterial != null) _badgeSprite.sharedMaterial = art.spriteMaterial;
                 _badgeText = MechText.Create(_badge, "", art, 21, 1f);
+                _badgeTextRenderer = _badgeText.GetComponent<MeshRenderer>();
                 _badge.localScale = Vector3.one * BadgeScale;
                 _badge.gameObject.SetActive(false);
             }
@@ -100,12 +102,24 @@ namespace Orcub.Game
             Layout(0f);
         }
 
-        /// <summary>Weld and clamp points in the owner's (rotating) frame, straight from the model.</summary>
+        /// <summary>
+        /// Weld and clamp points in the owner's (rotating) frame. The clamp point comes straight from the model.
+        /// Review e, L5 (re-closed spring geometry), decided here: an active holder is always drawn welded on the
+        /// owner's rim at the point facing the target ring. Owners can only turn while their spring waits open (an
+        /// owner with an active clamp is locked), so for every never-released holder this is exactly the model's
+        /// weld point; after a re-close it moves the mount back to the side facing the target instead of drawing the
+        /// stem from the turned weld across the owner's own interior. The weld has no rule effect (only the clamp
+        /// point on the target matters), so gameplay, the solver and Undo are unchanged.
+        /// </summary>
         void Measure()
         {
             var owner = _model.Rings[_link.Owner];
+            var target = _model.Rings[_link.Target];
             var inv = Quaternion.Euler(0f, 0f, -owner.GapAngle);
-            _weld = inv * (_model.WeldPoint(_link) - owner.Center);
+            Vector2 weld = _link.Active
+                ? owner.Center + PuzzleModel.Dir(PuzzleModel.AngleOf(target.Center - owner.Center)) * owner.Radius
+                : _model.WeldPoint(_link);
+            _weld = inv * (weld - owner.Center);
             _clampPos = inv * (_model.ClampPoint(_link) - owner.Center);
         }
 
@@ -234,10 +248,14 @@ namespace Orcub.Game
             // release gesture is move zero; never show more than K while that gesture is still in progress
             int k = _link.SpringMoves;
             int left = Mathf.Clamp(k - Mathf.Max(0, _model.Moves - _link.ReleasedAt), 0, k);
-            if (left != _lastCount) { if (_lastCount >= 0) _badgeBump = 1f; _lastCount = left; }
+            if (left != _lastCount)
+            {   // L1: set (and re-mesh) the number only when it changes
+                if (_lastCount >= 0) _badgeBump = 1f;
+                _lastCount = left;
+                _badgeText.text = left.ToString();
+                _badgeText.color = left <= 1 ? new Color(0.86f, 0.32f, 0.27f) : new Color(0.25f, 0.08f, 0.16f);
+            }
             _badgeBump = Mathf.MoveTowards(_badgeBump, 0f, dt * 3f);
-            _badgeText.text = left.ToString();
-            _badgeText.color = left <= 1 ? new Color(0.86f, 0.32f, 0.27f) : new Color(0.25f, 0.08f, 0.16f);
 
             // upright, beside the clamp on the side away from the target ring's centre line
             Vector3 clampWorld = _clamp.transform.position;
@@ -247,7 +265,7 @@ namespace Orcub.Game
             _badge.position = clampWorld + (Vector3)(perp * 0.78f);
             _badge.rotation = Quaternion.identity;
             _badge.localScale = Vector3.one * BadgeScale * (1f + 0.25f * Mathf.Sin(_badgeBump * Mathf.PI));
-            MechText.Sort(_badgeText, _badgeSprite.sortingOrder + 1);
+            MechText.Sort(_badgeTextRenderer, _badgeSprite.sortingOrder + 1);
         }
 
         void SetTint(Color c)

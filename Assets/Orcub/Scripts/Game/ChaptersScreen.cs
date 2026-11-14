@@ -22,6 +22,11 @@ namespace Orcub.Game
         ScrollRect _scroll;
         TopBar _bar;
         Text _subtitle;
+        // L8: only the cards around the viewport exist (the saga is infinite); built / destroyed as it scrolls
+        const int Buffer = 3;
+        readonly System.Collections.Generic.Dictionary<int, RectTransform> _cards = new System.Collections.Generic.Dictionary<int, RectTransform>();
+        readonly System.Collections.Generic.List<int> _drop = new System.Collections.Generic.List<int>();
+        int _count, _current;
 
         public static ChaptersScreen Create(Transform parent, UiKit kit, Action<int> onOpen, Action onBack)
         {
@@ -77,22 +82,47 @@ namespace Orcub.Game
             _scroll.viewport = view;
             _scroll.horizontal = false;
             _scroll.decelerationRate = 0.12f;
+            _scroll.onValueChanged.AddListener(_ => RefreshWindow());
         }
 
         void Populate()
         {
             for (int i = _content.childCount - 1; i >= 0; i--) Destroy(_content.GetChild(i).gameObject);
-            int count = Chapters.Count;
-            int earned = 0;
-            for (int c = 0; c < count; c++) earned += Chapters.Stars(c);
-            _subtitle.text = $"{earned} stars earned";   // the saga never ends: no total
-            _content.sizeDelta = new Vector2(0f, count * (CardHeight + Gap) + 80f);
-            int current = Chapters.Of(Chapters.Frontier);
-            for (int c = 0; c < count; c++) Card(c, c == current);
-            _scroll.verticalNormalizedPosition = 1f;
+            _cards.Clear();
+            _count = Chapters.Count;
+            _subtitle.text = $"{EarnedStars()} stars earned";   // the saga never ends: no total
+            _content.sizeDelta = new Vector2(0f, _count * (CardHeight + Gap) + 80f);
+            _current = Chapters.Of(Chapters.Frontier);
+            _scroll.verticalNormalizedPosition = 1f;   // the start (chapter 1) on top, as approved
+            _content.anchoredPosition = new Vector2(_content.anchoredPosition.x, 0f);
+            RefreshWindow();
         }
 
-        void Card(int chapter, bool isCurrent)
+        /// <summary>Star total: one pass over the stored best-star keys up to the frontier (no per-card work).</summary>
+        static int EarnedStars()
+        {
+            int total = 0, last = Mathf.Max(LevelLibrary.CuratedCount, Progress.HighestUnlocked + 1);
+            for (int i = 0; i < last; i++) total += Progress.BestStars(i);
+            return total;
+        }
+
+        /// <summary>Builds the cards in view (± <see cref="Buffer"/>) and destroys the ones scrolled far away.</summary>
+        void RefreshWindow()
+        {
+            if (_content == null || _count == 0) return;
+            float pitch = CardHeight + Gap;
+            float top = Mathf.Max(0f, _content.anchoredPosition.y - 20f);
+            float viewH = ((RectTransform)_scroll.viewport).rect.height;
+            int first = Mathf.Max(0, Mathf.FloorToInt(top / pitch) - Buffer);
+            int last = Mathf.Min(_count - 1, Mathf.CeilToInt((top + Mathf.Max(viewH, pitch)) / pitch) + Buffer);
+            _drop.Clear();
+            foreach (var kv in _cards) if (kv.Key < first || kv.Key > last) _drop.Add(kv.Key);
+            foreach (int c in _drop) { if (_cards[c] != null) Destroy(_cards[c].gameObject); _cards.Remove(c); }
+            for (int c = first; c <= last; c++)
+                if (!_cards.ContainsKey(c)) _cards[c] = Card(c, c == _current);
+        }
+
+        RectTransform Card(int chapter, bool isCurrent)
         {
             var kit = _kit;
             var art = kit.Art;
@@ -148,7 +178,7 @@ namespace Orcub.Game
             {
                 var lk = kit.MakeImage(rt, art.homeLock, new Color(0.62f, 0.54f, 0.52f));
                 UiKit.Anchor(lk.rectTransform, 0.86f, 0.38f, 0.96f, 0.62f);
-                return;
+                return rt;
             }
             if (art.glyphChevron != null)
             {
@@ -165,6 +195,7 @@ namespace Orcub.Game
             var hit = rt.gameObject.AddComponent<Image>();
             hit.color = new Color(0, 0, 0, 0);
             UiKit.Tap(rt.gameObject, () => _onOpen?.Invoke(chapter));
+            return rt;
         }
     }
 }

@@ -81,7 +81,7 @@ namespace Orcub.EditorTools
             Add(0.8f, null, "08_pause");
             Add(0f, () => Hud().ShowLifeConfirm("Restart level?", "Restart", () => { }, () => { }), null);
             Add(0.8f, null, "10_life_confirm");
-            Add(0f, () => Hud().ShowOutOfLives(() => { }, null, () => { }), null);
+            Add(0f, () => Hud().ShowOutOfLives(() => { }, () => System.Threading.Tasks.Task.FromResult(false), () => { }, () => { }), null);
             Add(0.8f, null, "11_out_of_lives");
             Add(0f, () => { Hud().ClosePopup(); bv.GetType().GetField("_wreath", Flags).GetValue(bv).GetType().GetMethod("Show").Invoke(bv.GetType().GetField("_wreath", Flags).GetValue(bv), null); Hud().ShowOutOfMoves(5, true, () => { }, () => { }, () => { }); }, null);
             Add(1.0f, null, "12_out_of_moves");
@@ -198,14 +198,16 @@ namespace Orcub.EditorTools
                 foreach (var r in bv.Model.Rings) if (!r.Removed && p(r)) return r.Id;
                 return -1;
             }
-            void Spin(int ring, float degrees)
-            {
-                var spins = (System.Collections.Generic.Dictionary<int, float>)Field("_spins");
-                if (ring >= 0) spins[ring] = degrees;
-            }
+            void Spin(int ring, float degrees) => bv.DebugSpin(ring, degrees);
+            void HideWreath() { var w = Field("_wreath"); w?.GetType().GetMethod("Hide").Invoke(w, null); }
+            // L9: the intro flags this tool clears are put back afterwards
+            var introKeys = new System.Collections.Generic.List<string>();
+            foreach (var (_, n) in MechanicLevels) introKeys.Add("orcub.intro." + (n == "colour" ? "colour_clamp" : n == "key" ? "key_padlock" : n == "rust" ? "rust_oil" : n));
+            var introSaved = new System.Collections.Generic.Dictionary<string, int>();
+            foreach (var key in introKeys) introSaved[key] = PlayerPrefs.HasKey(key) ? PlayerPrefs.GetInt(key) : int.MinValue;
 
             AddUntil(() => UnityEngine.Object.FindFirstObjectByType<LoaderScreen>() == null && Field("_splash") == null);   // boot done
-            Add(0f, () => { foreach (var (_, n) in MechanicLevels) PlayerPrefs.DeleteKey("orcub.intro." + (n == "colour" ? "colour_clamp" : n == "key" ? "key_padlock" : n == "rust" ? "rust_oil" : n)); }, null);
+            Add(0f, () => { foreach (var key in introKeys) PlayerPrefs.DeleteKey(key); }, null);
             int k = 1;
             foreach (var (index, name) in MechanicLevels)
             {
@@ -241,6 +243,14 @@ namespace Orcub.EditorTools
             Add(0.5f, null, $"m{k++:00}_rust_last_move");
             Add(0f, () => bv.Model.CompleteMove(), null);
             Add(0.5f, null, $"m{k++:00}_rust_frozen");
+            Add(0.9f, null, $"m{k++:00}_rust_dead_end_card");   // M5: frozen with clamps on it -> the fail card
+            // owner correction: rust must read on every palette colour (orange 8, amber 1, pale yellow 7, coral 0, ...)
+            Add(0f, () => { Hud().ClosePopup(); HideWreath(); bv.Build(RustSampler(new[] { 8, 1, 7, 0, 5, 3 }, 3)); Call("UpdateHud"); }, null);
+            Add(0.6f, null, $"m{k++:00}_rust_colours_early");
+            Add(0f, () => { var m = bv.Model; while (m.Moves < 2) m.CompleteMove(); }, null);   // deadlines 3/4/5: 1, 2 and 3 left
+            Add(0.6f, null, $"m{k++:00}_rust_colours_last_move");
+            Add(0f, () => { var m = bv.Model; while (m.Moves < 5) m.CompleteMove(); }, null);
+            Add(0.6f, null, $"m{k++:00}_rust_colours_frozen");
             Add(0f, () => Play(126), null);
             Add(2.2f, null, $"m{k++:00}_spring_level127");
             Add(0f, () => { var m = bv.Model; foreach (var l in m.Links) if (l.Active && l.SpringMoves > 0) { m.ReleaseLink(l.Id); break; } }, null);
@@ -264,6 +274,8 @@ namespace Orcub.EditorTools
                     }
             }, null);
             Add(0.5f, null, $"m{k++:00}_clay_cracked");
+            Add(0f, () => { Hud().ClosePopup(); HideWreath(); bv.Build(LinkedSampler()); Call("UpdateHud"); }, null);
+            Add(0.6f, null, $"m{k++:00}_linked_pairs_tinted");
             Add(0f, () => Play(185), null);
             Add(2.2f, null, $"m{k++:00}_mix_level186");
             Add(0f, () => Call("OpenPause"), null);
@@ -283,8 +295,55 @@ namespace Orcub.EditorTools
             Add(0f, () => Play(459), null);
             AddUntil(() => Field("_loading") == null);
             Add(2.6f, null, $"m{k++:00}_infinite_boss460");
-            Add(0f, () => { Hud().ClosePopup(); RestoreProgress(saved); }, null);
+            // out-of-lives sheet (approved out_of_lives_gold_B): idle, pending gold refill, failed refill
+            var gate = new System.Threading.Tasks.TaskCompletionSource<bool>();
+            Add(0f, () => Hud().ShowOutOfLives(() => { }, () => gate.Task, () => { }, () => { }), null);
+            Add(0.9f, null, $"m{k++:00}_out_of_lives_gold");
+            Add(0f, () => ClickButton("Refill for 90 gold"), null);
+            Add(0.3f, null, $"m{k++:00}_out_of_lives_gold_pending");
+            Add(0f, () => gate.TrySetResult(false), null);
+            Add(0.3f, null, $"m{k++:00}_out_of_lives_gold_failed");
+            Add(0f, () =>
+            {
+                Hud().ClosePopup();
+                RestoreProgress(saved);
+                foreach (var kv in introSaved)
+                    if (kv.Value == int.MinValue) PlayerPrefs.DeleteKey(kv.Key); else PlayerPrefs.SetInt(kv.Key, kv.Value);
+                PlayerPrefs.Save();
+            }, null);
             Start();
+        }
+
+        static void ClickButton(string name)
+        {
+            foreach (var b in UnityEngine.Object.FindObjectsByType<Button>(FindObjectsSortMode.None))
+                if (b.name == name && b.isActiveAndEnabled) { b.onClick.Invoke(); return; }
+        }
+
+        /// <summary>A sampler board: one rusting ring per palette colour, each held by a clamp from a plain ring.</summary>
+        static Orcub.Core.LevelDef RustSampler(int[] colours, int rustAfter)
+        {
+            var d = new Orcub.Core.LevelDef { Name = "Rust sampler", Mechanics = new[] { "rust" } };
+            for (int i = 0; i < colours.Length; i++)
+            {
+                float x = (i % 2) * 4.2f - 2.1f, y = 6f - (i / 2) * 4.2f;
+                d.Rings.Add(new Orcub.Core.RingDef(x, y, 1.25f, colours[i], 90f) { RustAfter = rustAfter + (i % 3) });
+            }
+            for (int i = 0; i < colours.Length; i += 2) d.Links.Add(new Orcub.Core.LinkDef(i, i + 1));
+            return d;
+        }
+
+        /// <summary>Three linked pairs on one board (tinted marks, pair numbers) plus plain rings.</summary>
+        static Orcub.Core.LevelDef LinkedSampler()
+        {
+            var d = new Orcub.Core.LevelDef { Name = "Linked sampler", Mechanics = new[] { "linked" } };
+            int[] colours = { 3, 8, 4, 2, 0, 6 };
+            for (int i = 0; i < 6; i++)
+            {
+                float x = (i % 2) * 4.2f - 2.1f, y = 6f - (i / 2) * 4.2f;
+                d.Rings.Add(new Orcub.Core.RingDef(x, y, i < 2 ? 1.0f : 1.3f, colours[i], 0f) { GearGroup = i / 2 + 1 });
+            }
+            return d;
         }
 
         static void SheetOpen(int index)
