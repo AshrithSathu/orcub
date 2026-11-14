@@ -1,0 +1,10 @@
+{
+  "name": "Orcub.Store",
+  "references": [
+    "Orcub.Runtime",
+    "Orcub.Net",
+    "Orcub.Ads",
+    "Unity.Newtonsoft.Json"
+  ],
+  "autoReferenced": true
+}

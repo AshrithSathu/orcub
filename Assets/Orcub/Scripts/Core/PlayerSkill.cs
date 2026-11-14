@@ -64,6 +64,8 @@ namespace Orcub.Core
                 throw new ArgumentOutOfRangeException(nameof(levelRating));
             result.Validate();
             bool won = result.Outcome == AttemptOutcome.Win;
+            // Assisted wins are not skill evidence: preserve rating, confidence and the recent window.
+            if (won && (result.Continues > 0 || result.BoostersUsed > 0)) return;
             float delta = KFactor * ((won ? 1f : 0f) - ExpectedScore(Rating, levelRating));
             // Even an unexpected accidental loss can remove at most 12 points; tiers span 150+.
             state.Rating = Mathf.Clamp(Rating + Mathf.Max(-tuning.MaxRatingLoss, delta), tuning.MinimumRating, tuning.MaximumRating);

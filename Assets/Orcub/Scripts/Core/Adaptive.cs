@@ -132,7 +132,9 @@ namespace Orcub.Core
             r.Validate();
             var plan = active;
             Skill.Record(levelRating, minMoves, r);
-            Streak.Record(index, r.Outcome);
+            // Assisted wins preserve relief, regardless of whether help came from ads or gold.
+            if (!(r.Outcome == AttemptOutcome.Win && (r.Continues > 0 || r.BoostersUsed > 0)))
+                Streak.Record(index, r.Outcome);
             active = null;
             Log.Append(new AttemptRecord
             {

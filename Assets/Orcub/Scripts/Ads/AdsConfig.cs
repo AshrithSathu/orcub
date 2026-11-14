@@ -23,7 +23,9 @@ namespace Orcub.Ads
         public float editorAdDelaySeconds = 1.4f;
         public static AdsConfig Load()
         {
-            var value = JsonUtility.FromJson<AdsConfig>(Resources.Load<TextAsset>("AdsConfig").text);
+            var asset = Resources.Load<TextAsset>("AdsConfig");
+            if (asset == null) { Debug.LogError("AdsConfig missing; ads disabled"); return new AdsConfig { adsEnabled = false }; }
+            var value = JsonUtility.FromJson<AdsConfig>(asset.text);
 #if ORCUB_RELEASE && !DEVELOPMENT_BUILD && !UNITY_EDITOR
             value.iosAppId = value.liveAppId; value.rewardedUnitId = value.liveRewardedUnitId; value.interstitialUnitId = value.liveInterstitialUnitId;
 #endif

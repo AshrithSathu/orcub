@@ -1,0 +1,106 @@
+{
+  "identifier": "B03D67C8-DF79-4890-8457-BB89908A238A",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "1.99",
+      "familyShareable": false,
+      "internalID": "1000000000",
+      "localizations": [
+        {
+          "description": "starter pack",
+          "displayName": "Starter Pack",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.orcub.puzzle.starter_pack",
+      "referenceName": "starter_pack",
+      "type": "NonConsumable"
+    },
+    {
+      "displayPrice": "0.99",
+      "familyShareable": false,
+      "internalID": "1000000001",
+      "localizations": [
+        {
+          "description": "gold small",
+          "displayName": "Gold Small",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.orcub.puzzle.gold_small",
+      "referenceName": "gold_small",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "4.99",
+      "familyShareable": false,
+      "internalID": "1000000002",
+      "localizations": [
+        {
+          "description": "gold medium",
+          "displayName": "Gold Medium",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.orcub.puzzle.gold_medium",
+      "referenceName": "gold_medium",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "9.99",
+      "familyShareable": false,
+      "internalID": "1000000003",
+      "localizations": [
+        {
+          "description": "gold large",
+          "displayName": "Gold Large",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.orcub.puzzle.gold_large",
+      "referenceName": "gold_large",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "19.99",
+      "familyShareable": false,
+      "internalID": "1000000004",
+      "localizations": [
+        {
+          "description": "gold huge",
+          "displayName": "Gold Huge",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.orcub.puzzle.gold_huge",
+      "referenceName": "gold_huge",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "3.99",
+      "familyShareable": false,
+      "internalID": "1000000005",
+      "localizations": [
+        {
+          "description": "remove ads",
+          "displayName": "Remove Ads",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.orcub.puzzle.remove_ads",
+      "referenceName": "remove_ads",
+      "type": "NonConsumable"
+    }
+  ],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA"
+  },
+  "subscriptionGroups": [],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

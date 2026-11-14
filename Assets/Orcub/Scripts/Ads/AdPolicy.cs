@@ -5,6 +5,7 @@ namespace Orcub.Ads
     public sealed class AdPolicy
     {
         readonly AdsConfig config;
+        public bool RemoveAds { get; set; }
         readonly string storagePrefix;
         string day;
         int dailyInterstitials, dailyRewarded;
@@ -34,7 +35,7 @@ namespace Orcub.Ads
         public void RecordWin() => wins++;
         public void RecordRewarded(double now) => lastRewarded = now;
         public bool CanShowInterstitial(int levelNumber, bool won, double now) =>
-            config.adsEnabled && DailyInterstitialAllowed() && won && levelNumber >= config.firstInterstitialLevel &&
+            !RemoveAds && config.adsEnabled && DailyInterstitialAllowed() && won && levelNumber >= config.firstInterstitialLevel &&
             SessionInterstitials < config.maxInterstitialsPerSession &&
             wins - winsAtInterstitial >= config.levelsBetweenInterstitials &&
             now - lastInterstitial >= config.interstitialIntervalSeconds &&

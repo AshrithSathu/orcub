@@ -58,13 +58,13 @@ namespace Orcub.Tests
         public void RecentWindowAndConfidencePersist()
         {
             for (int i = 0; i < 30; i++)
-                skill.Record(1000, 3, new AttemptResult(AttemptOutcome.Win, 6, 12, i, 1));
+                skill.Record(1000, 3, new AttemptResult(AttemptOutcome.Win, 6, 12));
             var loaded = new PlayerSkill(prefix);
             Assert.AreEqual(8, loaded.Recent.Count);
-            Assert.AreEqual(22, loaded.Recent[0].Boosters);
+            Assert.AreEqual(0, loaded.Recent[0].Boosters);
             Assert.AreEqual(0.5f, loaded.Recent[7].Efficiency);
             Assert.AreEqual(2f, loaded.Recent[7].SecondsPerMove);
-            Assert.AreEqual(1, loaded.Recent[7].Continues);
+            Assert.AreEqual(0, loaded.Recent[7].Continues);
             Assert.AreEqual(1f, loaded.Confidence);
             Assert.Less(loaded.KFactor, 24f);
             Assert.Greater(loaded.KFactor, 12f);

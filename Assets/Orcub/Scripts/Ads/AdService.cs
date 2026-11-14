@@ -23,8 +23,10 @@ namespace Orcub.Ads
         [System.Runtime.InteropServices.DllImport("__Internal")] static extern int OrcubTrackingStatus();
         [System.Runtime.InteropServices.DllImport("__Internal")] static extern void OrcubRequestTracking();
 #endif
-        bool Simulated => Application.isEditor || Application.platform != RuntimePlatform.IPhonePlayer;
-        public bool RewardedReady => config.adsEnabled && policy.CanShowRewarded && !showing && (Simulated || (initialized && ConsentInformation.CanRequestAds() && rewarded != null && rewarded.CanShowAd()));
+        bool Simulated => Application.isEditor;
+        bool Supported => Application.isEditor || Application.platform == RuntimePlatform.IPhonePlayer;
+        public bool RemoveAds { get => policy.RemoveAds; set => policy.RemoveAds = value; }
+        public bool RewardedReady => Supported && config.adsEnabled && policy.CanShowRewarded && !showing && (Simulated || (initialized && ConsentInformation.CanRequestAds() && rewarded != null && rewarded.CanShowAd()));
         public bool PrivacyOptionsRequired => !Simulated && ConsentInformation.PrivacyOptionsRequirementStatus == PrivacyOptionsRequirementStatus.Required;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -69,30 +71,47 @@ namespace Orcub.Ads
             PlayerPrefs.Save();
             if (!privacyStarted) StartCoroutine(BeginPrivacy());
         }
+        void OnApplicationFocus(bool focused)
+        {
+            if (focused && !privacyStarted && PlayerPrefs.GetInt("Ads.FirstLevelCompleted", 0) != 0)
+                StartCoroutine(BeginPrivacy());
+        }
         IEnumerator BeginPrivacy()
         {
+            if (privacyStarted) yield break;
             privacyStarted = true;
-            if (Simulated || !config.adsEnabled) yield break;
-#if UNITY_IOS && !UNITY_EDITOR
-            // ATT is OS-persisted; never request it again once a choice exists.
-            while (!Application.isFocused) yield return null;
-            yield return new WaitForSecondsRealtime(1.5f);
-            if (OrcubTrackingStatus() == 0)
-            {
-                OrcubRequestTracking();
-                while (OrcubTrackingStatus() == 0) yield return null;
-            }
-#endif
+            if (Simulated || !Supported || !config.adsEnabled) yield break;
+            // UMP (including the EEA/UK form) must complete before requesting ATT.
+            bool complete = false, consentOk = false;
+            int generation = ++privacyGeneration;
             ConsentInformation.Update(new ConsentRequestParameters(), error => callbacks.Enqueue(() =>
             {
-                if (error != null) { Debug.LogWarning("Ads consent update: " + error.Message); InitializeIfAllowed(); return; }
+                if (generation != privacyGeneration) return;
+                if (error != null) { complete = true; return; }
                 ConsentForm.LoadAndShowConsentFormIfRequired(formError => callbacks.Enqueue(() =>
                 {
-                    if (formError != null) Debug.LogWarning("Ads consent form: " + formError.Message);
-                    InitializeIfAllowed();
+                    if (generation != privacyGeneration) return;
+                    consentOk = formError == null; complete = true;
                 }));
             }));
+            double deadline = Now + 30;
+            while (!complete && Now < deadline) yield return null;
+            if (!complete || !consentOk) { privacyGeneration++; privacyStarted = false; InitializeIfAllowed(); yield break; }
+#if UNITY_IOS && !UNITY_EDITOR
+            deadline = Now + 10;
+            while (!Application.isFocused && Now < deadline) yield return null;
+            if (Application.isFocused && OrcubTrackingStatus() == 0)
+            {
+                OrcubRequestTracking();
+                while (Application.isFocused && OrcubTrackingStatus() == 0 && Now < deadline) yield return null;
+            }
+            // ATT may remain undetermined after an interruption. Ads may run without IDFA;
+            // the next foreground retries the privacy flow instead of waiting indefinitely.
+            if (OrcubTrackingStatus() == 0) privacyStarted = false;
+#endif
+            InitializeIfAllowed();
         }
+        int privacyGeneration;
         void InitializeIfAllowed()
         {
             if (initialized || !config.adsEnabled || !ConsentInformation.CanRequestAds()) return;
@@ -134,20 +153,25 @@ namespace Orcub.Ads
             var ad = rewarded; rewarded = null;
             ad.OnAdFullScreenContentOpened += () => callbacks.Enqueue(() => { policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); });
             ad.OnAdPaid += value => callbacks.Enqueue(() => RecordPaid(placement, value, config.rewardedUnitId, ad.GetResponseInfo()?.GetMediationAdapterClassName()));
-            bool earned = false, closed = false;
+            bool earned = false, closed = false, finalized = false;
             void Finish()
             {
                 if (closed) return;
-                closed = true; showing = false;
+                closed = true;
                 policy.RecordRewarded(Now);
-                ad.Destroy(); LoadRewarded();
+                StartCoroutine(SettleReward());
+            }
+            IEnumerator SettleReward()
+            {
+                yield return new WaitForSecondsRealtime(.5f);
+                finalized = true; showing = false; ad.Destroy(); LoadRewarded();
                 if (!earned) onClosedWithoutReward?.Invoke();
             }
             ad.OnAdFullScreenContentClosed += () => callbacks.Enqueue(Finish);
             ad.OnAdFullScreenContentFailed += _ => callbacks.Enqueue(() => { FailAd(placement, "show_failed"); Finish(); });
             ad.Show(_ => callbacks.Enqueue(() =>
             {
-                if (earned || closed) return;
+                if (earned || finalized) return;
                 earned = true;
                 TrackAd("ad_reward", placement);
                 onReward?.Invoke();
@@ -163,7 +187,7 @@ namespace Orcub.Ads
         public void MaybeShowInterstitial(string placement) => MaybeShowInterstitial(placement, null);
         public void MaybeShowInterstitial(string placement, Action onFinished)
         {
-            bool eligible = pendingWin && policy.CanShowInterstitial(levelNumber, true, Now);
+            bool eligible = Supported && pendingWin && policy.CanShowInterstitial(levelNumber, true, Now);
             pendingWin = false;
             if (!eligible || showing || (!Simulated && (!ConsentInformation.CanRequestAds() || interstitial == null || !interstitial.CanShowAd())))
             { onFinished?.Invoke(); return; }

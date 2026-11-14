@@ -16,7 +16,7 @@ namespace Orcub.Core
             for (int i = skill.Recent.Count - 1; i >= 0 && n < t.PaceWindow; i--)
             {
                 var sample = skill.Recent[i];
-                if (!sample.Won || sample.Efficiency <= 0 || sample.SecondsPerMove <= 0) continue;
+                if (sample.Continues > 0 || sample.Boosters > 0 || !sample.Won || sample.Efficiency <= 0 || sample.SecondsPerMove <= 0) continue;
                 seconds += Mathf.Min(t.SecondsCap, sample.SecondsPerMove);
                 excess += Mathf.Min(t.ExcessCap, 1 / sample.Efficiency - 1); n++;
             }
@@ -26,7 +26,7 @@ namespace Orcub.Core
             for (int i = log.Entries.Count - 1; i >= 0 && models < t.PaceWindow; i--)
             {
                 var r = log.Entries[i];
-                if (r.Version < 2 || r.Features == null || r.Features.Count < t.EarlyMoves) continue;
+                if (r.Result.Continues > 0 || r.Result.BoostersUsed > 0 || r.Version < 2 || r.Features == null || r.Features.Count < t.EarlyMoves) continue;
                 float p = Mathf.Clamp(r.ModelPrediction, .05f, .95f);
                 modelRating += r.LevelRating + t.ModelRatingScale * (float)Math.Log10(p / (1 - p)); models++;
             }

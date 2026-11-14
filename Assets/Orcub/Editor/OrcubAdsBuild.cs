@@ -29,6 +29,7 @@ end
 ";
             var text = System.IO.File.ReadAllText(podfile);
             if (!text.Contains("post_install do |installer|")) System.IO.File.AppendAllText(podfile, hook);
+            else Debug.LogWarning("Existing Podfile post_install hook: verify every pod deployment target is at least iOS 15.0");
         }
 
         [MenuItem("Orcub/Sync Ads Settings")]

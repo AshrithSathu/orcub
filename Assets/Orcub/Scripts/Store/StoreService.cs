@@ -1,0 +1,200 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
+
+namespace Orcub.Store
+{
+    public sealed class StoreProduct
+    {
+        public string Id, Title, LocalizedPrice;
+    }
+    public sealed class StoreTransaction
+    {
+        public string Id, ProductId, Jws;
+    }
+    public interface IStoreKit
+    {
+        event Action<StoreTransaction> TransactionUpdated;
+        Task<IReadOnlyList<StoreProduct>> LoadProducts(string[] ids);
+        Task<StoreTransaction> Purchase(string id, string appAccountToken);
+        Task<IReadOnlyList<StoreTransaction>> Unfinished();
+        Task<IReadOnlyList<StoreTransaction>> Restore();
+        Task Finish(string transactionId);
+    }
+    public sealed class StoreHttpException : Exception
+    {
+        public long Status { get; }
+        public StoreHttpException(long status) : base("store_http_" + status) { Status = status; }
+    }
+    public interface IStoreBackend
+    {
+        string PlayerId { get; }
+        Task PrepareAccount();
+        Task<JObject> Request(string path, string method, object body = null);
+        void Track(string kind, object data);
+    }
+    public interface IStoreCache
+    {
+        string Read(string key);
+        void Write(string key, string value);
+    }
+    public sealed class Wallet
+    {
+        readonly IStoreBackend backend;
+        readonly IStoreCache cache;
+        readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
+        public long Balance { get; private set; }
+        public bool IsCached { get; private set; } = true;
+        public bool RemoveAds { get; private set; }
+        public JObject Snapshot { get; private set; }
+        public event Action Changed;
+        internal Wallet(IStoreBackend backend, IStoreCache cache) { this.backend = backend; this.cache = cache; }
+        internal void LoadCache()
+        {
+            if (Snapshot != null && (string)Snapshot["player_id"] != backend.PlayerId)
+            { Snapshot = null; Balance = 0; RemoveAds = false; IsCached = true; Changed?.Invoke(); }
+            var json = cache.Read("wallet." + backend.PlayerId);
+            try { if (!string.IsNullOrEmpty(json)) Apply(JObject.Parse(json)); }
+            catch (Newtonsoft.Json.JsonException) { }
+            IsCached = true;
+        }
+        internal void Apply(JObject value)
+        {
+            if ((string)value["player_id"] != backend.PlayerId) throw new InvalidOperationException("wallet_account_mismatch");
+            Snapshot = (JObject)value.DeepClone(); Balance = (long)value["gold"]; RemoveAds = (bool)value["remove_ads"];
+            IsCached = false; cache.Write("wallet." + backend.PlayerId, value.ToString()); Changed?.Invoke();
+        }
+        public async Task Refresh() => Apply(await backend.Request("/v1/wallet?player_id=" + backend.PlayerId, "GET"));
+        // The returned effect is null on replay, including across launches. Persist before exposing it.
+        public async Task<JObject> Spend(SpendSink sink, string idempotencyKey)
+        {
+            if (!Guid.TryParse(idempotencyKey, out _)) throw new ArgumentException("UUID required", nameof(idempotencyKey));
+            await gate.WaitAsync();
+            try
+            {
+                var response = await backend.Request("/v1/wallet/spend", "POST", new { player_id = backend.PlayerId,
+                    idempotency_key = idempotencyKey, reason = sink.Reason, ref_id = sink.ReferenceId, booster = sink.Booster });
+                Apply((JObject)response["wallet"]);
+                var key = "spend." + backend.PlayerId + "." + idempotencyKey;
+                bool replay = cache.Read(key) == "1";
+                cache.Write(key, "1");
+                if (!replay) backend.Track("wallet_spend", new { metric_count = 1, metric_success = true });
+                return replay ? null : response["effect"] as JObject;
+            }
+            finally { gate.Release(); }
+        }
+    }
+    public sealed class SpendSink
+    {
+        public string Reason { get; }
+        public string ReferenceId { get; }
+        public string Booster { get; }
+        public SpendSink(string reason, string referenceId, string booster = null)
+        {
+            if (reason != "continue" && reason != "refill_lives" && reason != "booster") throw new ArgumentException("Invalid sink");
+            if (!Guid.TryParse(referenceId, out _)) throw new ArgumentException("Reference UUID required");
+            if (reason == "booster" && booster != "hint" && booster != "undo" && booster != "unclamp") throw new ArgumentException("Invalid booster");
+            Reason = reason; ReferenceId = referenceId; Booster = reason == "booster" ? booster : null;
+        }
+    }
+    public sealed class StoreService
+    {
+        public static readonly string[] ProductIds = { "com.orcub.puzzle.starter_pack", "com.orcub.puzzle.gold_small", "com.orcub.puzzle.gold_medium", "com.orcub.puzzle.gold_large", "com.orcub.puzzle.gold_huge", "com.orcub.puzzle.remove_ads" };
+        readonly IStoreKit kit;
+        readonly IStoreCache cache;
+        readonly HashSet<string> completed = new HashSet<string>();
+        readonly IStoreBackend backend;
+        readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
+        public Wallet Wallet { get; }
+        public IReadOnlyList<StoreProduct> Products { get; private set; } = Array.Empty<StoreProduct>();
+        public JArray Offers { get; private set; } = new JArray();
+        public JObject Economy { get; private set; }
+        public event Action<string> Purchased, Failed, Pending;
+        public event Action Changed;
+        public StoreService(IStoreKit kit, IStoreBackend backend, IStoreCache cache)
+        {
+            this.kit = kit; this.backend = backend; this.cache = cache; Wallet = new Wallet(backend, cache);
+            kit.TransactionUpdated += OnTransaction;
+        }
+        async void OnTransaction(StoreTransaction transaction) { await Process(transaction); }
+        public bool CanPresentOffer(JObject offer, DateTimeOffset now)
+        {
+            if (!DateTimeOffset.TryParse((string)offer["expires_at"], out var expiry) || now >= expiry) return false;
+            var key = "offer." + backend.PlayerId + "." + (string)offer["id"] + "." + expiry.ToUnixTimeSeconds();
+            return !DateTimeOffset.TryParse(cache.Read(key), out var next) || now >= next;
+        }
+        public void MarkOfferPresented(JObject offer)
+        {
+            if (!DateTimeOffset.TryParse((string)offer["expires_at"], out var expiry) ||
+                !DateTimeOffset.TryParse((string)offer["repeat_after"], out var next)) return;
+            cache.Write("offer." + backend.PlayerId + "." + (string)offer["id"] + "." + expiry.ToUnixTimeSeconds(), next.ToString("o"));
+        }
+        public async Task Initialize()
+        {
+            Wallet.LoadCache();
+            await backend.PrepareAccount(); Wallet.LoadCache();
+            await RetryPending(); await Refresh();
+            Products = await kit.LoadProducts(ProductIds); Changed?.Invoke();
+        }
+        public async Task Refresh()
+        {
+            await Wallet.Refresh();
+            var config = await backend.Request("/v1/config?player_id=" + backend.PlayerId, "GET");
+            Economy = config["economy"] as JObject; Offers = config["offers"] as JArray ?? new JArray(); Changed?.Invoke();
+        }
+        public async Task Purchase(string id)
+        {
+            try
+            {
+                if (!Products.Any(p => p.Id == id)) throw new InvalidOperationException("product_unavailable");
+                await backend.PrepareAccount();
+                var transaction = await kit.Purchase(id, backend.PlayerId);
+                if (transaction == null) { Pending?.Invoke(id); return; }
+                await Process(transaction);
+            }
+            catch (Exception) { backend.Track("iap_failed", new { metric_count = 1, metric_success = false }); Failed?.Invoke(id); }
+        }
+        public async Task RetryPending()
+        {
+            foreach (var transaction in await kit.Unfinished()) await Process(transaction);
+        }
+        async Task Process(StoreTransaction transaction)
+        {
+            await gate.WaitAsync();
+            try
+            {
+                if (completed.Contains(transaction.Id)) return;
+                var response = await backend.Request("/v1/iap/apple", "POST", new { player_id = backend.PlayerId, signed_transaction = transaction.Jws });
+                if ((string)response["transaction_id"] != transaction.Id) throw new InvalidOperationException("transaction_mismatch");
+                Wallet.Apply((JObject)response["wallet"]);
+                await Wallet.Refresh();
+                await kit.Finish(transaction.Id); completed.Add(transaction.Id);
+                backend.Track("iap_purchase", new { metric_count = 1, metric_success = true }); Purchased?.Invoke(transaction.ProductId);
+            }
+            catch (StoreHttpException error) when (error.Status == 400 || error.Status == 409)
+            { backend.Track("iap_failed", new { metric_count = 1, metric_success = false }); Failed?.Invoke(transaction.ProductId); }
+            catch (Exception) { backend.Track("iap_failed", new { metric_count = 1, metric_success = false }); Pending?.Invoke(transaction.ProductId); }
+            finally { gate.Release(); }
+            try { await Refresh(); } catch (Exception) { /* Retain last confirmed wallet; refresh next foreground. */ }
+        }
+        public async Task Restore()
+        {
+            await gate.WaitAsync();
+            try
+            {
+                await backend.PrepareAccount();
+                var transactions = await kit.Restore();
+                if (transactions.Count > 100) throw new InvalidOperationException("restore_limit");
+                var response = await backend.Request("/v1/iap/restore", "POST", new { player_id = backend.PlayerId, signed_transactions = transactions.Select(t => t.Jws).ToArray() });
+                Wallet.Apply((JObject)response["wallet"]); await Wallet.Refresh();
+                foreach (var transaction in transactions) await kit.Finish(transaction.Id);
+            }
+            catch (Exception) { Failed?.Invoke("restore"); }
+            finally { gate.Release(); }
+            try { await Refresh(); } catch (Exception) { }
+        }
+    }
+}
