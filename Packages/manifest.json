@@ -58,7 +58,13 @@
     "com.unity.modules.wind": "1.0.0",
     "com.unity.modules.xr": "1.0.0",
     "com.google.ads.mobile": "11.7.0",
-    "com.unity.external-dependency-manager": "2.1.1"
+    "com.unity.external-dependency-manager": "2.1.1",
+    "com.google.firebase.analytics": "file:firebase-analytics-13.17.1.tgz",
+    "com.google.firebase.auth": "file:firebase-auth-13.17.1.tgz",
+    "com.google.firebase.crashlytics": "file:firebase-crashlytics-13.17.1.tgz",
+    "com.google.firebase.remote-config": "file:firebase-remote-config-13.17.1.tgz",
+    "com.unity.nuget.newtonsoft-json": "3.2.2",
+    "com.google.firebase.app": "file:firebase-app-13.17.1.tgz"
   },
   "scopedRegistries": [
     {

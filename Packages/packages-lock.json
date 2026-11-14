@@ -27,6 +27,46 @@
       },
       "url": "https://package.openupm.com"
     },
+    "com.google.firebase.analytics": {
+      "version": "file:firebase-analytics-13.17.1.tgz",
+      "depth": 0,
+      "source": "local-tarball",
+      "dependencies": {
+        "com.google.firebase.app": "13.17.1"
+      }
+    },
+    "com.google.firebase.app": {
+      "version": "file:firebase-app-13.17.1.tgz",
+      "depth": 0,
+      "source": "local-tarball",
+      "dependencies": {
+        "com.unity.external-dependency-manager": "2.1.1"
+      }
+    },
+    "com.google.firebase.auth": {
+      "version": "file:firebase-auth-13.17.1.tgz",
+      "depth": 0,
+      "source": "local-tarball",
+      "dependencies": {
+        "com.google.firebase.app": "13.17.1"
+      }
+    },
+    "com.google.firebase.crashlytics": {
+      "version": "file:firebase-crashlytics-13.17.1.tgz",
+      "depth": 0,
+      "source": "local-tarball",
+      "dependencies": {
+        "com.google.firebase.app": "13.17.1"
+      }
+    },
+    "com.google.firebase.remote-config": {
+      "version": "file:firebase-remote-config-13.17.1.tgz",
+      "depth": 0,
+      "source": "local-tarball",
+      "dependencies": {
+        "com.google.firebase.app": "13.17.1"
+      }
+    },
     "com.unity.2d.animation": {
       "version": "16.0.1",
       "depth": 0,
@@ -264,7 +304,7 @@
     },
     "com.unity.nuget.newtonsoft-json": {
       "version": "3.2.2",
-      "depth": 1,
+      "depth": 0,
       "source": "registry",
       "dependencies": {},
       "url": "https://packages.unity.com"

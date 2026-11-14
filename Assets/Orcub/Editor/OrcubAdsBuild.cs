@@ -45,7 +45,7 @@ end
                 AssetDatabase.CreateAsset(asset, path);
             }
             var settings = new SerializedObject(asset);
-            settings.FindProperty("adMobIOSAppId").stringValue = config.iosAppId;
+            settings.FindProperty("adMobIOSAppId").stringValue = OrcubBuild.ReleaseBuild ? config.liveAppId : config.iosAppId;
             settings.FindProperty("userTrackingUsageDescription").stringValue = config.trackingUsageDescription;
             settings.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssets();

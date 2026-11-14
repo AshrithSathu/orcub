@@ -41,6 +41,11 @@ namespace Orcub.Game
         bool _attemptOpen;
         float _attemptStart;
         int _attemptBoosters, _attemptContinues;
+        AttemptPlan _plan;
+        float _requiredBefore, _lastGesture, _thinkSeconds;
+        int _gestures;
+        bool _featurePending;
+        int _lockedTouches;
         bool _usedAdContinue, _levelOver;
         float _winAt = -1f, _failCheckAt = -1f;
         int _winStars;
@@ -249,7 +254,7 @@ namespace Orcub.Game
         public void Build(int index)
         {
             _levelIndex = index;
-            _levelData = LevelLibrary.Get(_levelIndex);
+            _levelData = LevelLibrary.Get(_levelIndex, _plan?.Variant ?? 0);
             var def = _levelData != null ? _levelData.ToDef() : Levels.Basic10();
             _def = def;
             Build(def);
@@ -272,12 +277,16 @@ namespace Orcub.Game
             int count = Mathf.Max(1, LevelLibrary.Count);
             _levelIndex = ((index % count) + count) % count;
             EndAttempt(AttemptOutcome.Quit);   // restart / skip before a result counts as a quit
+            _plan = null;
+            if (Application.isPlaying) BeginAttempt();
             Build(_levelIndex);
             if (Application.isPlaying)
             {
-                BeginAttempt();
+                _rules = LevelRules.For(_def, tutorial: _levelIndex < 3, extraMoves: _plan.ExtraMoves);
+                UpdateHud();
                 HideRingsForIntro();
                 DropInRings();
+                if (_plan.ExtraMoves > 0 || _plan.FreeHintGlow) StartCoroutine(AnnounceAssist(_plan));
             }
         }
 
@@ -390,6 +399,7 @@ namespace Orcub.Game
             FitCamera();
             HandlePointer();
             StepSpins(Time.deltaTime);
+            if (_spins.Count == 0 && _active < 0) FinishFeature();
         }
 
         void HandlePointer()
@@ -417,6 +427,9 @@ namespace Orcub.Game
         {
             _active = Pick(p);
             if (_active < 0) return;
+            FinishFeature();
+            _requiredBefore = Adaptive.RequiredRotation(_model);
+            _thinkSeconds = Time.unscaledTime - _lastGesture;
             ClearHints();   // the player is acting; the hint has done its job
 
             _pressWorld = p;
@@ -458,7 +471,9 @@ namespace Orcub.Game
                 foreach (var h in view.OwnedHolders)
                     if (_model.Links[h.LinkId].Active) h.Flash();
                 // Touching a ring that is still holding another is a wrong move: it costs a move too.
+                _lockedTouches++;
                 CountMove();
+                FinishFeature();
                 _failCheckAt = Time.time + 0.45f;
             }
             view.SetPicked(_mode != DragMode.Locked);
@@ -559,7 +574,8 @@ namespace Orcub.Game
         {
             _undo.Push((_pendingSnap ?? _model.Capture(), _movesUsed));
             _pendingSnap = null;
-            _movesUsed++;
+            _movesUsed++; _gestures++;
+            _featurePending = true;
             _hud?.SetMoves(Mathf.Max(0, MovesLeft), bump: true);
             _hud?.SetBoosterReady(BoosterKind.Undo, true);
         }
@@ -743,6 +759,14 @@ namespace Orcub.Game
                 _hud.ShowToast(refusal);
                 return;
             }
+            if (kind == BoosterKind.Undo && _attemptOpen)
+            {
+                _gestures++;
+                FinishFeature();
+                _adaptive.RecordMove(false, Time.unscaledTime - _lastGesture, _lockedTouches, true);
+                _lastGesture = Time.unscaledTime; _lockedTouches = 0;
+            }
+            ClientGateway.Track("booster_used", new { level = _levelIndex, booster = BoosterName(kind) });
             BoosterInventory.TrySpend(kind);
             _attemptBoosters++;
             Haptics.Play(Haptics.Impact.Medium, 0.8f);
@@ -758,21 +782,14 @@ namespace Orcub.Game
         /// </summary>
         void BeginAttempt()
         {
-            _attemptStart = Time.time;
-            _attemptBoosters = _attemptContinues = 0;
-            _attemptOpen = false;
-            if (_def == null) return;
+            _attemptStart = _lastGesture = Time.unscaledTime;
+            _attemptBoosters = _attemptContinues = _lockedTouches = 0;
+            _featurePending = false; _gestures = 0;
             _adaptive ??= new Adaptive();
-            AttemptPlan plan;
-            try { plan = _adaptive.BeginAttempt(_levelIndex, _def); }
-            catch (Exception e) { Debug.LogWarning("Adaptive plan skipped: " + e.Message); return; }
+            ClientGateway.Configure?.Invoke(_adaptive);
+            _plan = _adaptive.BeginAttempt(_levelIndex);
             _attemptOpen = true;
-            if (plan.ExtraMoves > 0)
-            {
-                _rules = LevelRules.For(_def, tutorial: _levelIndex < 3, extraMoves: plan.ExtraMoves);
-                UpdateHud();
-            }
-            if (plan.ExtraMoves > 0 || plan.FreeHintGlow) StartCoroutine(AnnounceAssist(plan));
+            ClientGateway.Track("level_start", new { LevelIndex = _levelIndex, Variant = _plan.Variant, Plan = new { variant = _plan.Variant, extraMoves = _plan.ExtraMoves, freeHintGlow = _plan.FreeHintGlow, reason = _plan.Reason, moveLimit = _plan.MoveLimit } });
         }
 
         System.Collections.IEnumerator AnnounceAssist(AttemptPlan plan)
@@ -792,19 +809,34 @@ namespace Orcub.Game
         void EndAttempt(AttemptOutcome outcome)
         {
             if (!_attemptOpen || _adaptive == null) return;
+            FinishFeature();
             _attemptOpen = false;
-            if (outcome == AttemptOutcome.Quit && _movesUsed == 0)
+            if (_gestures == 0)
             {
                 _adaptive.CancelAttempt();   // left without touching the board: not evidence of anything
                 return;
             }
             try
             {
-                _adaptive.EndAttempt(new AttemptResult(outcome, _movesUsed, Time.time - _attemptStart,
+                _adaptive.EndAttempt(new AttemptResult(outcome, _movesUsed, Time.unscaledTime - _attemptStart,
                     _attemptBoosters, _attemptContinues));
+                ClientGateway.Track("level_end", _adaptive.Log.Entries[_adaptive.Log.Entries.Count - 1]);
+                ClientGateway.Save?.Invoke();
             }
             catch (Exception e) { Debug.LogWarning("Adaptive record skipped: " + e.Message); }
         }
+
+        void FinishFeature()
+        {
+            if (!_featurePending || !_attemptOpen) return;
+            _featurePending = false;
+            _adaptive.RecordMove(Adaptive.RequiredRotation(_model) < _requiredBefore - .01f,
+                _thinkSeconds, _lockedTouches);
+            _lastGesture = Time.unscaledTime; _lockedTouches = 0;
+        }
+
+        void OnDestroy() { if (Application.isPlaying) EndAttempt(AttemptOutcome.Quit); }
+        void OnApplicationQuit() => EndAttempt(AttemptOutcome.Quit);
 
         static string BoosterName(BoosterKind kind) => kind switch
         {

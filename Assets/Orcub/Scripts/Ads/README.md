@@ -2,7 +2,7 @@
 
 Installed Google's official `com.google.ads.mobile` 11.7.0 from the OpenUPM scoped registry (`com.google`). Its dependency `com.unity.external-dependency-manager` 2.1.1 comes from Unity's registry. Both are pinned in Packages/manifest.json and packages-lock.json; no plugin binaries need copying into Assets.
 
-## Replace IDs
+## Build IDs
 
 Edit only `Assets/Orcub/Scripts/Ads/Resources/AdsConfig.json`:
 
@@ -11,11 +11,11 @@ Edit only `Assets/Orcub/Scripts/Ads/Resources/AdsConfig.json`:
 - `interstitialUnitId`: iOS interstitial unit ID.
 - `trackingUsageDescription`: ATT purpose string.
 
-All checked-in IDs are Google's official iOS test IDs. The build preprocessor copies the app ID and purpose string into Google's settings asset before its plist postprocessor runs. Google's plugin adds its bundled SKAdNetworkItems list automatically. Do not edit generated Info.plist or GoogleMobileAdsSettings to replace IDs.
+The default fields remain Google's official iOS test IDs. The `liveAppId`, `liveRewardedUnitId` and `liveInterstitialUnitId` fields contain the real Orcub IDs, selected only by the build-scoped `ORCUB_RELEASE` define in Orcub/Build iOS Release (live ads). Normal BuildIOS and development builds keep test IDs. Never use the release menu for the owner's phone. Populate `testDeviceIds` with AdMob hashed test device IDs when testing the native SDK; these are passed to MobileAds.SetRequestConfiguration. The build preprocessor copies the app ID and purpose string into Google's settings asset before its plist postprocessor runs. Google's plugin adds its bundled SKAdNetworkItems list automatically. Do not edit generated Info.plist or GoogleMobileAdsSettings to replace IDs.
 
 ## Policy
 
-The same JSON owns the kill switch (`adsEnabled`) and all policy numbers: level 8 minimum, wins only, 150 seconds and 3 completed levels between interstitials, 6 per session, and a 60-second exclusion after rewarded ads. The first interstitial also requires 150 seconds in-session and 3 wins. Replay wins count as completed levels. Counters are session-only and use monotonic real time. No ad state is read by puzzle generation or difficulty logic.
+The same JSON owns the kill switch (`adsEnabled`) and all policy numbers: level 8 minimum, wins only, 150 seconds and 3 completed levels between interstitials, 6 per session, and a 60-second exclusion after rewarded ads. The first interstitial also requires 150 seconds in-session and 3 wins. Replay wins count as completed levels. Timing uses monotonic real time. Win/session counters are session-only; interstitial/rewarded UTC daily caps persist across sessions. Backend config and activated Remote Config can override the interval and daily caps. No ad state is read by puzzle generation or difficulty logic.
 
 ## Consent and rewards
 
@@ -34,3 +34,5 @@ Run all EditMode tests through MCP run_tests, including AdPolicyTests. Device ad
 Sources: https://developers.google.com/admob/unity/quick-start, https://developers.google.com/admob/unity/privacy, https://developers.google.com/admob/unity/test-ads.
 
 Verified 2026-11-15: MCP EditMode run 67/67 passed (including 14 AdPolicy tests and all 44 original tests). OrcubBuild.BuildIOS exported successfully; EDM installed both pods automatically. The Xcode 27 pod deployment-target fix was applied to that export with the same checked-in hook and pod install rerun. Signed Debug workspace build with team 3HB3HKUZ4Q ended BUILD SUCCEEDED. No phone installation or on-device ad presentation was performed. Xcode output: Builds/dd/Build/Products/Debug-iphoneos/Orcub.app.
+
+Client integration verification: all 73 EditMode tests passed, and the signed Debug test-ID workspace build ended BUILD SUCCEEDED. See ../Net/README.md for Firebase, telemetry, config, account/save APIs and detailed evidence.

@@ -11,13 +11,13 @@ namespace Orcub.Game
         public static bool SoundOn
         {
             get => PlayerPrefs.GetInt(SoundKey, 1) == 1;
-            set { PlayerPrefs.SetInt(SoundKey, value ? 1 : 0); PlayerPrefs.Save(); Apply(); }
+            set { PlayerPrefs.SetInt(SoundKey, value ? 1 : 0); PlayerPrefs.Save(); Apply(); ClientGateway.Track("settings_changed", new { sound = SoundOn, haptics = HapticsOn }); }
         }
 
         public static bool HapticsOn
         {
             get => PlayerPrefs.GetInt(HapticsKey, 1) == 1;
-            set { PlayerPrefs.SetInt(HapticsKey, value ? 1 : 0); PlayerPrefs.Save(); Apply(); }
+            set { PlayerPrefs.SetInt(HapticsKey, value ? 1 : 0); PlayerPrefs.Save(); Apply(); ClientGateway.Track("settings_changed", new { sound = SoundOn, haptics = HapticsOn }); }
         }
 
         public static void Apply()

@@ -24,7 +24,7 @@ namespace Orcub.Ads
         [System.Runtime.InteropServices.DllImport("__Internal")] static extern void OrcubRequestTracking();
 #endif
         bool Simulated => Application.isEditor || Application.platform != RuntimePlatform.IPhonePlayer;
-        public bool RewardedReady => config.adsEnabled && !showing && (Simulated || (initialized && ConsentInformation.CanRequestAds() && rewarded != null && rewarded.CanShowAd()));
+        public bool RewardedReady => config.adsEnabled && policy.CanShowRewarded && !showing && (Simulated || (initialized && ConsentInformation.CanRequestAds() && rewarded != null && rewarded.CanShowAd()));
         public bool PrivacyOptionsRequired => !Simulated && ConsentInformation.PrivacyOptionsRequirementStatus == PrivacyOptionsRequirementStatus.Required;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -39,6 +39,11 @@ namespace Orcub.Ads
             DontDestroyOnLoad(gameObject);
             config = AdsConfig.Load();
             policy = new AdPolicy(config, Now);
+            ClientGateway.AdCaps = (interval, interstitialCap, rewardedCap) =>
+            {
+                config.interstitialIntervalSeconds = Math.Max(0, interval);
+                config.interstitialDailyCap = Math.Max(0, interstitialCap); config.rewardedDailyCap = Math.Max(0, rewardedCap);
+            };
             AdsGateway.Service = this;
             // Delay all privacy forms until a completed level, including UMP's optional ATT message.
             if (PlayerPrefs.GetInt("Ads.FirstLevelCompleted", 0) != 0)
@@ -92,6 +97,7 @@ namespace Orcub.Ads
         {
             if (initialized || !config.adsEnabled || !ConsentInformation.CanRequestAds()) return;
             initialized = true;
+            MobileAds.SetRequestConfiguration(new RequestConfiguration { TestDeviceIds = new System.Collections.Generic.List<string>(config.testDeviceIds) });
             MobileAds.Initialize(_ => callbacks.Enqueue(() => { LoadRewarded(); LoadInterstitial(); }));
         }
         void LoadRewarded()
@@ -119,11 +125,15 @@ namespace Orcub.Ads
         }
         public void ShowRewarded(string placement, Action onReward, Action onClosedWithoutReward)
         {
-            if (!RewardedReady) { onClosedWithoutReward?.Invoke(); return; }
+            placement = "rewarded_" + placement;
+            TrackAd("ad_offer", placement);
+            if (!RewardedReady) { FailAd(placement, "not_ready"); onClosedWithoutReward?.Invoke(); return; }
             showing = true;
             policy.RecordRewarded(Now);
-            if (Simulated) { StartCoroutine(Simulate(onReward)); return; }
+            if (Simulated) { policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); StartCoroutine(Simulate(() => { TrackAd("ad_reward", placement); onReward?.Invoke(); })); return; }
             var ad = rewarded; rewarded = null;
+            ad.OnAdFullScreenContentOpened += () => callbacks.Enqueue(() => { policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); });
+            ad.OnAdPaid += value => callbacks.Enqueue(() => RecordPaid(placement, value, config.rewardedUnitId, ad.GetResponseInfo()?.GetMediationAdapterClassName()));
             bool earned = false, closed = false;
             void Finish()
             {
@@ -134,11 +144,12 @@ namespace Orcub.Ads
                 if (!earned) onClosedWithoutReward?.Invoke();
             }
             ad.OnAdFullScreenContentClosed += () => callbacks.Enqueue(Finish);
-            ad.OnAdFullScreenContentFailed += _ => callbacks.Enqueue(Finish);
+            ad.OnAdFullScreenContentFailed += _ => callbacks.Enqueue(() => { FailAd(placement, "show_failed"); Finish(); });
             ad.Show(_ => callbacks.Enqueue(() =>
             {
                 if (earned || closed) return;
                 earned = true;
+                TrackAd("ad_reward", placement);
                 onReward?.Invoke();
             }));
         }
@@ -156,8 +167,9 @@ namespace Orcub.Ads
             pendingWin = false;
             if (!eligible || showing || (!Simulated && (!ConsentInformation.CanRequestAds() || interstitial == null || !interstitial.CanShowAd())))
             { onFinished?.Invoke(); return; }
+            TrackAd("ad_offer", placement);
             showing = true;
-            if (Simulated) { policy.RecordInterstitial(Now); StartCoroutine(Simulate(onFinished, false)); return; }
+            if (Simulated) { policy.RecordInterstitial(Now); TrackAd("ad_shown", placement); StartCoroutine(Simulate(onFinished, false)); return; }
             var ad = interstitial; interstitial = null;
             bool closed = false;
             void Finish()
@@ -166,10 +178,19 @@ namespace Orcub.Ads
                 closed = true; showing = false;
                 ad.Destroy(); LoadInterstitial(); onFinished?.Invoke();
             }
-            ad.OnAdFullScreenContentOpened += () => callbacks.Enqueue(() => policy.RecordInterstitial(Now));
+            ad.OnAdPaid += value => callbacks.Enqueue(() => RecordPaid(placement, value, config.interstitialUnitId, ad.GetResponseInfo()?.GetMediationAdapterClassName()));
+            ad.OnAdFullScreenContentOpened += () => callbacks.Enqueue(() => { policy.RecordInterstitial(Now); TrackAd("ad_shown", placement); });
             ad.OnAdFullScreenContentClosed += () => callbacks.Enqueue(Finish);
-            ad.OnAdFullScreenContentFailed += _ => callbacks.Enqueue(Finish);
+            ad.OnAdFullScreenContentFailed += _ => callbacks.Enqueue(() => { FailAd(placement, "show_failed"); Finish(); });
             ad.Show();
+        }
+        static void TrackAd(string kind, string placement) => ClientGateway.Track(kind, new { placement, network = "admob" });
+        static void FailAd(string placement, string code) => ClientGateway.Track("ad_failed", new { placement, network = "admob", code });
+        static void RecordPaid(string placement, AdValue value, string unit, string network)
+        {
+            string precision = value.Precision.ToString().ToLowerInvariant();
+            if (precision == "publisherprovided") precision = "publisher_provided";
+            ClientGateway.Paid?.Invoke(placement, value.Value, value.CurrencyCode, precision, unit, network ?? "admob");
         }
         public void ShowPrivacyOptions()
         {

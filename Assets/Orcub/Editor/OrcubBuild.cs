@@ -19,6 +19,7 @@ namespace Orcub.EditorTools
     /// </summary>
     public static class OrcubBuild
     {
+        public static bool ReleaseBuild { get; private set; }
         public const string BundleId = "com.orcub.puzzle";
         public const string AppleTeamId = "3HB3HKUZ4Q"; // Personal Team (free provisioning)
         public const string IOSOutput = "Builds/iOS-v2";
@@ -103,6 +104,17 @@ namespace Orcub.EditorTools
                 targetGroup = BuildTargetGroup.iOS,
                 options = BuildOptions.None,
             });
+        }
+
+        [MenuItem("Orcub/Build iOS Release (live ads)")]
+        public static void BuildIOSRelease()
+        {
+            ConfigurePlayer();
+            ReleaseBuild = true;
+            try { Run(new BuildPlayerOptions { scenes = Scenes(), locationPathName = IOSOutput,
+                target = BuildTarget.iOS, targetGroup = BuildTargetGroup.iOS,
+                options = BuildOptions.None, extraScriptingDefines = new[] { "ORCUB_RELEASE" } }); }
+            finally { ReleaseBuild = false; OrcubAdsBuild.SyncSettings(); }
         }
 
         [MenuItem("Orcub/Build Android (APK)")]

@@ -5,11 +5,13 @@ namespace Orcub.Tests
 {
     public class AdPolicyTests
     {
+        string storagePrefix;
         AdsConfig config;
         AdPolicy policy;
         [SetUp] public void Setup()
         {
-            config = new AdsConfig(); policy = new AdPolicy(config);
+            storagePrefix = "orcub.test.ads." + System.Guid.NewGuid() + ".";
+            config = new AdsConfig(); policy = new AdPolicy(config, storagePrefix: storagePrefix);
             Win(3);
         }
         void Win(int count) { for (int i = 0; i < count; i++) policy.RecordWin(); }
@@ -54,6 +56,6 @@ namespace Orcub.Tests
             Assert.IsFalse(policy.CanShowInterstitial(10, true, 999));
         }
         [Test] public void NewSessionResetsCap()
-        { policy.RecordInterstitial(150); policy = new AdPolicy(config, 1000); Win(3); Assert.IsTrue(policy.CanShowInterstitial(8, true, 1150)); }
+        { policy.RecordInterstitial(150); policy = new AdPolicy(config, 1000, storagePrefix); Win(3); Assert.IsTrue(policy.CanShowInterstitial(8, true, 1150)); }
     }
 }

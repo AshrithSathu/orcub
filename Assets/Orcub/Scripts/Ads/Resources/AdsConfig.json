@@ -10,5 +10,11 @@
   "maxInterstitialsPerSession": 6,
   "rewardedCooldownSeconds": 60,
   "reloadDelaySeconds": 30,
-  "editorAdDelaySeconds": 1.4
+  "editorAdDelaySeconds": 1.4,
+  "liveAppId": "ca-app-pub-7345153763598739~9524213673",
+  "liveRewardedUnitId": "ca-app-pub-7345153763598739/3829033868",
+  "liveInterstitialUnitId": "ca-app-pub-7345153763598739/6898050332",
+  "testDeviceIds": [],
+  "interstitialDailyCap": 6,
+  "rewardedDailyCap": 20
 }

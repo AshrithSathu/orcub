@@ -1,13 +1,27 @@
 {
-    "name": "Orcub.Tests",
-    "rootNamespace": "Orcub.Tests",
-    "references": ["Orcub.Runtime", "Orcub.Ads", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
-    "includePlatforms": ["Editor"],
-    "excludePlatforms": [],
-    "allowUnsafeCode": false,
-    "overrideReferences": true,
-    "precompiledReferences": ["nunit.framework.dll"],
-    "autoReferenced": false,
-    "defineConstraints": ["UNITY_INCLUDE_TESTS"],
-    "noEngineReferences": false
+  "name": "Orcub.Tests",
+  "rootNamespace": "Orcub.Tests",
+  "references": [
+    "Orcub.Runtime",
+    "Orcub.Ads",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner",
+    "Orcub.Net",
+    "Unity.Newtonsoft.Json"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll",
+    "Newtonsoft.Json.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "noEngineReferences": false
 }
