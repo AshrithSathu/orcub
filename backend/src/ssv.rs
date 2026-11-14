@@ -88,24 +88,29 @@ pub async fn callback(State(s): State<Arc<App>>, RawQuery(raw): RawQuery) -> Res
     }
     let fields = verify(&raw, &keys.1)?;
     drop(keys);
-    if fields.get("ad_unit").map(String::as_str) != Some("3829033868")
-        && fields.get("ad_unit").map(String::as_str)
-            != Some("ca-app-pub-7345153763598739/3829033868")
-    {
-        return Err(ApiError::unauthorized());
+    // The signature proves the request came from Google. Callbacks that cannot map to one of our
+    // impressions (AdMob's console "Verify URL" ping, other units, missing/foreign ids) are
+    // acknowledged with 200 and grant nothing, so Google neither fails verification nor retries.
+    let ack = || Ok(Json(json!({"ok":true,"granted":false})));
+    let unit = fields.get("ad_unit").map(String::as_str);
+    if unit != Some("3829033868") && unit != Some("ca-app-pub-7345153763598739/3829033868") {
+        return ack();
     }
-    let nonce = fields
+    let Some(nonce) = fields
         .get("custom_data")
         .and_then(|v| v.parse::<Uuid>().ok())
-        .ok_or(ApiError::unauthorized())?;
-    let player = fields
-        .get("user_id")
-        .and_then(|v| v.parse::<Uuid>().ok())
-        .ok_or(ApiError::unauthorized())?;
-    let transaction = fields
+    else {
+        return ack();
+    };
+    let Some(player) = fields.get("user_id").and_then(|v| v.parse::<Uuid>().ok()) else {
+        return ack();
+    };
+    let Some(transaction) = fields
         .get("transaction_id")
         .filter(|v| !v.is_empty() && v.len() <= 256)
-        .ok_or(ApiError::unauthorized())?;
+    else {
+        return ack();
+    };
     let canonical: Option<Uuid> =
         sqlx::query_scalar("SELECT player_id FROM wallet_aliases WHERE token=$1")
             .bind(player)
