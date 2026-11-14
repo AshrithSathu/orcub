@@ -16,10 +16,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("ADMIN_TOKEN must be at least 32 characters".into());
     }
     let days: i32 = std::env::var("RETENTION_DAYS")
-        .unwrap_or_else(|_| "400".into())
+        .unwrap_or_else(|_| "395".into())
         .parse()?;
-    if !(1..=400).contains(&days) {
-        return Err("RETENTION_DAYS must be 1..400".into());
+    if !(1..=395).contains(&days) {
+        return Err("RETENTION_DAYS must be 1..395".into());
     }
     let pool = PgPoolOptions::new()
         .max_connections(10)
@@ -48,14 +48,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let job = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
-            tokio::select! {_=stop_rx.changed()=>break,_=interval.tick()=>{match retain(&pool,days).await{Ok(n)=>tracing::info!(deleted=n,"retention"),Err(_)=>tracing::error!("retention failed")}}}
+            tokio::select! {_=stop_rx.changed()=>break,_=interval.tick()=>{match retain(&pool,days).await{Ok(n)=>tracing::info!(deleted=n,"retention"),Err(e)=>tracing::error!(code=?e.as_database_error().and_then(|e|e.code()),"retention failed")}}}
         }
     });
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".into());
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown())
-        .await?;
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown())
+    .await?;
     let _ = stop_tx.send(true);
     job.await?;
     Ok(())

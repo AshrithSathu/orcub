@@ -34,21 +34,31 @@ struct Provider {
 struct Cache {
     keys: HashMap<String, DecodingKey>,
     expires: Instant,
+    retry: Instant,
+    failures: u32,
 }
 pub struct Firebase {
     client: reqwest::Client,
+    endpoint: String,
     cache: Mutex<Cache>,
+    refresh: Mutex<()>,
+    verifying: tokio::sync::Semaphore,
 }
 impl Default for Firebase {
     fn default() -> Self {
         Self {
+            endpoint: "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com".into(),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .expect("TLS client"),
+            refresh: Mutex::new(()),
+            verifying: tokio::sync::Semaphore::new(32),
             cache: Mutex::new(Cache {
                 keys: HashMap::new(),
                 expires: Instant::now(),
+                retry: Instant::now(),
+                failures: 0,
             }),
         }
     }
@@ -61,6 +71,38 @@ pub fn bearer(h: &HeaderMap) -> Result<&str> {
         .ok_or(ApiError::unauthorized())
 }
 impl Firebase {
+    async fn fetch_keys(&self) -> Result<(HashMap<String, DecodingKey>, u64)> {
+        let response = self
+            .client
+            .get(&self.endpoint)
+            .send()
+            .await
+            .map_err(|_| ApiError::unavailable())?
+            .error_for_status()
+            .map_err(|_| ApiError::unavailable())?;
+        let ttl = cache_seconds(
+            response
+                .headers()
+                .get("cache-control")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or(""),
+        );
+        let body: Keys = response.json().await.map_err(|_| ApiError::unavailable())?;
+        let mut keys = HashMap::new();
+        for k in body.keys {
+            if k.kty == "RSA" && k.alg == "RS256" {
+                keys.insert(
+                    k.kid,
+                    DecodingKey::from_rsa_components(&k.n, &k.e)
+                        .map_err(|_| ApiError::unavailable())?,
+                );
+            }
+        }
+        if keys.is_empty() {
+            return Err(ApiError::unavailable());
+        }
+        Ok((keys, ttl))
+    }
     pub async fn verify(&self, h: &HeaderMap) -> Result<String> {
         self.verify_kind(h, false).await
     }
@@ -74,41 +116,61 @@ impl Firebase {
             return Err(ApiError::unauthorized());
         }
         let kid = header.kid.ok_or(ApiError::unauthorized())?;
-        let mut cache = self.cache.lock().await;
-        if cache.expires <= Instant::now() {
-            let response = self.client.get("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com").send().await.map_err(|_| ApiError::unavailable())?.error_for_status().map_err(|_| ApiError::unavailable())?;
-            let ttl = cache_seconds(
-                response
-                    .headers()
-                    .get("cache-control")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or(""),
-            );
-            let body: Keys = response.json().await.map_err(|_| ApiError::unavailable())?;
-            let mut keys = HashMap::new();
-            for k in body.keys {
-                if k.kty == "RSA" && k.alg == "RS256" {
-                    keys.insert(
-                        k.kid,
-                        DecodingKey::from_rsa_components(&k.n, &k.e)
-                            .map_err(|_| ApiError::unavailable())?,
-                    );
+        let _permit = self
+            .verifying
+            .try_acquire()
+            .map_err(|_| ApiError::unavailable())?;
+        let (expired, missing, empty, retry) = {
+            let c = self.cache.lock().await;
+            (
+                c.expires <= Instant::now(),
+                !c.keys.contains_key(&kid),
+                c.keys.is_empty(),
+                c.retry <= Instant::now(),
+            )
+        };
+        if (expired || missing) && retry {
+            // Single flight; requests with stale keys never queue behind network I/O.
+            if let Ok(_flight) = self.refresh.try_lock() {
+                let should_refresh = self.cache.lock().await.retry <= Instant::now();
+                if should_refresh {
+                    let result = self.fetch_keys().await;
+                    let mut c = self.cache.lock().await;
+                    match result {
+                        Ok((keys, ttl)) => {
+                            c.keys = keys;
+                            c.expires = Instant::now() + Duration::from_secs(ttl);
+                            c.retry = Instant::now() + Duration::from_secs(60);
+                            c.failures = 0;
+                        }
+                        Err(_) => {
+                            c.failures = (c.failures + 1).min(5);
+                            c.retry =
+                                Instant::now() + Duration::from_secs(30_u64 << (c.failures - 1));
+                        }
+                    }
                 }
+            } else if empty {
+                return Err(ApiError::unavailable());
             }
-            cache.keys = keys;
-            cache.expires = Instant::now() + Duration::from_secs(ttl);
         }
-        let key = cache.keys.get(&kid).ok_or(ApiError::unauthorized())?;
+        let key = {
+            let c = self.cache.lock().await;
+            if c.keys.is_empty() {
+                return Err(ApiError::unavailable());
+            }
+            c.keys.get(&kid).cloned().ok_or(ApiError::unauthorized())?
+        };
         let mut v = Validation::new(Algorithm::RS256);
         v.set_audience(&["orcub-f0091"]);
         v.set_issuer(&["https://securetoken.google.com/orcub-f0091"]);
         v.leeway = 0;
         v.set_required_spec_claims(&["exp", "aud", "iss", "sub", "iat", "auth_time"]);
-        let c = decode::<Claims>(token, key, &v)
+        let c = decode::<Claims>(token, &key, &v)
             .map_err(|_| ApiError::unauthorized())?
             .claims;
         let now = chrono::Utc::now().timestamp();
-        if c.sub.is_empty() || c.sub.len() > 128 || c.iat > now || c.auth_time > now {
+        if c.sub.is_empty() || c.sub.len() > 128 || c.iat > now + 60 || c.auth_time > now + 60 {
             return Err(ApiError::unauthorized());
         }
         if anonymous
@@ -148,10 +210,15 @@ pub(crate) fn fixture() -> Firebase {
     let key =
         DecodingKey::from_rsa_pem(include_bytes!("../tests/fixtures/test-public.pem")).unwrap();
     Firebase {
+        endpoint: "http://127.0.0.1:1".into(),
         client: reqwest::Client::new(),
+        refresh: Mutex::new(()),
+        verifying: tokio::sync::Semaphore::new(32),
         cache: Mutex::new(Cache {
             keys: HashMap::from([("test".into(), key)]),
             expires: Instant::now() + Duration::from_secs(3600),
+            retry: Instant::now() + Duration::from_secs(3600),
+            failures: 0,
         }),
     }
 }
@@ -177,6 +244,85 @@ pub(crate) fn test_token(uid: &str, overrides: serde_json::Value) -> String {
 #[cfg(test)]
 mod verification_tests {
     use super::*;
+    #[tokio::test]
+    async fn concurrent_refresh_is_single_flight() {
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = count.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new().route(
+                    "/",
+                    axum::routing::get(move || {
+                        let calls = calls.clone();
+                        async move {
+                            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE
+                        }
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+        let mut verifier = fixture();
+        verifier.endpoint = endpoint;
+        {
+            let mut c = verifier.cache.lock().await;
+            c.expires = Instant::now();
+            c.retry = Instant::now();
+        }
+        let verifier = std::sync::Arc::new(verifier);
+        let mut jobs = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let v = verifier.clone();
+            jobs.spawn(async move {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    "authorization",
+                    format!("Bearer {}", test_token("uid", serde_json::json!({})))
+                        .parse()
+                        .unwrap(),
+                );
+                v.verify(&h).await.unwrap()
+            });
+        }
+        while let Some(r) = jobs.join_next().await {
+            assert_eq!(r.unwrap(), "uid");
+        }
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        server.abort();
+    }
+    #[tokio::test]
+    async fn failed_refresh_preserves_keys_backoff_and_negative_cache() {
+        let verifier = fixture();
+        {
+            let mut c = verifier.cache.lock().await;
+            c.expires = Instant::now();
+            c.retry = Instant::now();
+        }
+        let mut h = HeaderMap::new();
+        h.insert("authorization",format!("Bearer {}",test_token("uid",serde_json::json!({"iat":chrono::Utc::now().timestamp()+30,"auth_time":chrono::Utc::now().timestamp()+30}))).parse().unwrap());
+        assert_eq!(verifier.verify(&h).await.unwrap(), "uid");
+        {
+            let c = verifier.cache.lock().await;
+            assert_eq!(c.failures, 1);
+            assert!(c.retry > Instant::now());
+            assert!(c.keys.contains_key("test"));
+        }
+        assert!(verifier.verify(&h).await.is_ok());
+        assert_eq!(verifier.cache.lock().await.failures, 1);
+        let flight = verifier.refresh.lock().await;
+        verifier.cache.lock().await.retry = Instant::now();
+        assert!(verifier.verify(&h).await.is_ok());
+        drop(flight);
+        let permit = verifier.verifying.acquire_many(32).await.unwrap();
+        assert_eq!(verifier.verify(&h).await.unwrap_err().0, 503);
+        drop(permit);
+    }
     #[tokio::test]
     async fn rejects_wrong_claims_and_signature() {
         let verifier = fixture();

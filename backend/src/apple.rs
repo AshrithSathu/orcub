@@ -68,13 +68,7 @@ fn verify_root(jws: &str, root: &X509, apple_oids: bool) -> Result<Value> {
     let payload: Value =
         serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).map_err(|_| invalid())?)
             .map_err(|_| invalid())?;
-    let signed_time = payload["signedDate"]
-        .as_i64()
-        .map(|n| n / 1000)
-        .unwrap_or_else(|| chrono::Utc::now().timestamp());
-    if signed_time <= 0 || signed_time > chrono::Utc::now().timestamp() + 300 {
-        return Err(invalid());
-    }
+    let signed_time = signed_time(&payload)?;
     let mut params = openssl::x509::verify::X509VerifyParam::new().map_err(|_| invalid())?;
     params.set_time(signed_time);
     let mut store = X509StoreBuilder::new().map_err(|_| invalid())?;
@@ -119,6 +113,21 @@ fn verify_root(jws: &str, root: &X509, apple_oids: bool) -> Result<Value> {
     }
     serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).map_err(|_| invalid())?)
         .map_err(|_| invalid())
+}
+fn signed_time(payload: &Value) -> Result<i64> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let t = payload["signedDate"]
+        .as_i64()
+        .ok_or(ApiError::bad("signedDate required"))?;
+    if t <= 0
+        || t > now + 300000
+        || payload
+            .get("expiresDate")
+            .is_some_and(|v| v.as_i64().is_none_or(|t| t <= now))
+    {
+        return Err(ApiError::bad("signed payload time"));
+    }
+    Ok(t / 1000)
 }
 pub fn environment(v: &Value) -> Result<()> {
     let expected = std::env::var("APPLE_ENVIRONMENT").unwrap_or_else(|_| "Production".into());
@@ -274,6 +283,16 @@ mod tests {
         b.build()
     }
     #[test]
+    fn signed_dates_expiry_and_environment() {
+        let now = chrono::Utc::now().timestamp_millis();
+        assert!(signed_time(&serde_json::json!({})).is_err());
+        assert!(signed_time(&serde_json::json!({"signedDate":now+600000})).is_err());
+        assert!(signed_time(&serde_json::json!({"signedDate":now,"expiresDate":now-1})).is_err());
+        assert!(signed_time(&serde_json::json!({"signedDate":now-86400000})).is_ok());
+        assert!(environment(&serde_json::json!({"environment":"Xcode"})).is_err());
+        assert!(environment(&serde_json::json!({"environment":"Invalid"})).is_err());
+    }
+    #[test]
     fn self_signed_test_chain_signature_and_root() {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let key = || PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
@@ -284,7 +303,7 @@ mod tests {
         let lk = key();
         let leaf = cert("leaf", &lk, Some((&intermediate, &ik)), false);
         let h=URL_SAFE_NO_PAD.encode(serde_json::to_vec(&serde_json::json!({"alg":"ES256","x5c":[STANDARD.encode(leaf.to_der().unwrap()),STANDARD.encode(intermediate.to_der().unwrap()),STANDARD.encode(root.to_der().unwrap())]})).unwrap());
-        let p = URL_SAFE_NO_PAD.encode(br#"{"bundleId":"com.orcub.puzzle"}"#);
+        let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&serde_json::json!({"bundleId":"com.orcub.puzzle","signedDate":chrono::Utc::now().timestamp_millis()})).unwrap());
         let input = format!("{h}.{p}");
         let mut signer = Signer::new(MessageDigest::sha256(), &lk).unwrap();
         signer.update(input.as_bytes()).unwrap();

@@ -213,6 +213,11 @@ pub struct Ad {
 }
 impl Event {
     pub fn validated(&self) -> Result<(Value, bool)> {
+        if matches!(self.kind.as_str(), "ad_paid" | "iap")
+            && self.occurred_at < Utc::now() - chrono::Duration::days(30)
+        {
+            return Err(ApiError::bad("revenue timestamp outside 30 days"));
+        }
         timestamp(self.occurred_at)?;
         label(&self.kind, 64)?;
         let known = [
@@ -460,6 +465,16 @@ mod tests {
         next.merge_progress(&old);
         assert_eq!(next.highest_level, 8);
         assert_eq!(next.stars[&2], 3);
+    }
+    #[test]
+    fn revenue_backdating_is_bounded() {
+        let e = Event {
+            event_id: Uuid::new_v4(),
+            kind: "ad_paid".into(),
+            occurred_at: Utc::now() - chrono::Duration::days(31),
+            data: json!({}),
+        };
+        assert!(e.validated().is_err());
     }
     #[test]
     fn raw_pii_rejected() {

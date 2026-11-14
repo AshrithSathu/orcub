@@ -41,6 +41,18 @@ async fn lock(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
 async fn snapshot(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     Ok(sqlx::query_scalar("SELECT to_jsonb(w) || jsonb_build_object('remove_ads',EXISTS(SELECT 1 FROM purchases WHERE player_id=$1 AND product_id='com.orcub.puzzle.remove_ads' AND NOT revoked)) FROM wallets w WHERE player_id=$1").bind(id).fetch_one(&mut **tx).await?)
 }
+pub(crate) async fn save_fields(tx: &mut Tx<'_>, id: Uuid, data: &mut SaveData) -> Result<()> {
+    sqlx::query("INSERT INTO wallets(player_id) VALUES($1) ON CONFLICT DO NOTHING")
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
+    let w = snapshot(tx, id).await?;
+    data.inventory =
+        serde_json::from_value(w["inventory"].clone()).map_err(|_| ApiError::unavailable())?;
+    data.workshop.clear();
+    data.lives = w["lives"].as_u64().unwrap_or(0) as u32;
+    Ok(())
+}
 async fn entry(
     tx: &mut Tx<'_>,
     id: Uuid,
@@ -83,7 +95,7 @@ pub struct Action {
 }
 async fn replay(tx: &mut Tx<'_>, id: Uuid, b: &Action) -> Result<bool> {
     let old: Option<Value> = sqlx::query_scalar(
-        "SELECT request FROM wallet_ledger WHERE player_id=$1 AND idempotency_key=$2",
+        "SELECT request FROM wallet_ledger WHERE player_id=$1 AND (idempotency_key=$2 OR idempotency_key LIKE '%:' || $2) ORDER BY created_at LIMIT 1",
     )
     .bind(id)
     .bind(b.idempotency_key.to_string())
@@ -499,7 +511,7 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
         .execute(&mut **tx)
         .await?;
     sqlx::query("UPDATE wallets SET inventory=(SELECT COALESCE(jsonb_object_agg(k,n),'{}') FROM (SELECT k,sum(v::int) n FROM (SELECT key k,value v FROM jsonb_each_text(inventory) UNION ALL SELECT key,value FROM jsonb_each_text($2::jsonb)) x GROUP BY k) a), unlimited_until=GREATEST(unlimited_until,$3) WHERE player_id=$1").bind(canonical).bind(&g["inventory"]).bind(serde_json::from_value::<Option<DateTime<Utc>>>(g["unlimited_until"].clone()).map_err(|_|ApiError::unavailable())?).execute(&mut **tx).await?;
-    sqlx::query("UPDATE wallet_ledger SET player_id=$1 WHERE player_id=$2")
+    sqlx::query("UPDATE wallet_ledger SET player_id=$1,idempotency_key=$2::uuid::text || ':' || idempotency_key WHERE player_id=$2")
         .bind(canonical)
         .bind(guest)
         .execute(&mut **tx)
@@ -710,6 +722,9 @@ mod database_tests {
         revoke(&pool, &v).await.unwrap();
         let mut tx = pool.begin().await.unwrap();
         assert_eq!(snapshot(&mut tx, id).await.unwrap()["gold"], -70);
+        entry(&mut tx, id, 0, "test", "ref", "guest-key", &json!({}))
+            .await
+            .unwrap();
         lock(&mut tx, guest).await.unwrap();
         entry(
             &mut tx,
