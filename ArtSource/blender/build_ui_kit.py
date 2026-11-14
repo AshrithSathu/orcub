@@ -182,7 +182,7 @@ def film_glyph():
     return fuse("filmplay", parts, voxel=0.008, smooth_repeat=2)
 
 
-def render_ui(ob, name, half_w, half_h, border_px=None):
+def render_ui(ob, name, half_w, half_h, border_px=None, shadow=0.42, shadow_offset=(6, -10)):
     scene = bpy.context.scene
     ob.data.materials.clear()
     ob.data.materials.append(white_clay())
@@ -196,7 +196,7 @@ def render_ui(ob, name, half_w, half_h, border_px=None):
     scene.camera.location = (0, 0, 10)
     scene.render.filepath = os.path.join(UI_OUT, name + ".png")
     bpy.ops.render.render(write_still=True)
-    add_drop_shadow(scene.render.filepath)
+    add_drop_shadow(scene.render.filepath, offset=shadow_offset, strength=shadow)
     ob.hide_render = True
     META[name] = dict(file=name + ".png", ppu=PPU, border=border_px or 0)
     print("rendered", name)
@@ -244,20 +244,68 @@ def pause_glyph():
 
 
 def heart_shape():
-    """Puffy clay cushion: two round lobes + a rotated rounded square (the classic heart construction),
-    fused into one blob and squashed in Z so it reads as soft clay, not a flat cut-out."""
-    # square side 1.0 rotated 45 deg, centre c; lobes (r = 0.5) sit on its two upper edges' midpoints
-    c = -0.2
-    k = 0.5 / math.sqrt(2)
-    lobes = [ellipsoid("lobeL", (0.5, 0.5, 0.5), (-k, c + k, 0)), ellipsoid("lobeR", (0.5, 0.5, 0.5), (k, c + k, 0))]
-    point = rounded_box("point", (1.0, 1.0, 0.94), (0, c, 0), 0.16)
-    point.rotation_euler = (0, 0, math.radians(45))
-    ob = fuse("heart", lobes + [point], voxel=0.01, smooth_repeat=8)
-    ob.scale = (1.0, 1.0, 0.55)
-    bpy.ops.object.select_all(action="DESELECT")
-    ob.select_set(True)
-    bpy.context.view_layer.objects.active = ob
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    """Exact heart silhouette (parametric outline), puffed into a smooth clay cushion: the top surface is
+    raised by its distance from the outline, so edges roll over softly and the middle domes up."""
+    import numpy as np
+    outline = []
+    for i in range(160):
+        t = 2 * math.pi * i / 160
+        x = 16 * math.sin(t) ** 3
+        y = 13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t)
+        outline.append((x / 17.0, y / 17.0 + 0.06))
+    base = 0.16
+    ob = extrude_outline("heart", outline, base, bevel=0.07)   # thin exact-shape slab, voxel-fused
+    # Inflate like a balloon: height = blurred filled silhouette (smooth everywhere, so no ridges or creases).
+    n, lo, hi = 400, -1.2, 1.2
+    xs = np.linspace(lo, hi, n)
+    gx, gy = np.meshgrid(xs, xs)
+    poly = np.array(outline)
+    inside = np.zeros(gx.shape, dtype=bool)
+    j2 = len(poly) - 1
+    for i2 in range(len(poly)):                       # even-odd point-in-polygon on the grid
+        xi, yi = poly[i2]
+        xj, yj = poly[j2]
+        cond = ((yi > gy) != (yj > gy)) & (gx < (xj - xi) * (gy - yi) / ((yj - yi) + 1e-12) + xi)
+        inside ^= cond
+        j2 = i2
+    h = inside.astype(np.float64)
+
+    def box(arr, r, axis):
+        k = 2 * r + 1
+        pad = [(0, 0), (0, 0)]
+        pad[axis] = (r, r)
+        pa = np.pad(arr, pad)
+        c = np.cumsum(pa, axis=axis)
+        if axis == 0:
+            c = np.vstack([np.zeros((1, c.shape[1])), c])
+            return (c[k:, :] - c[:-k, :]) / k
+        c = np.hstack([np.zeros((c.shape[0], 1)), c])
+        return (c[:, k:] - c[:, :-k]) / k
+
+    for _ in range(3):
+        h = box(box(h, 22, 0), 22, 1)
+    h = np.where(inside, h, 0.0)
+    h = h / h.max()
+    me = ob.data
+    co = np.zeros(len(me.vertices) * 3)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    u = np.clip((co[:, 0] - lo) / (hi - lo) * (n - 1), 0, n - 1)
+    v = np.clip((co[:, 1] - lo) / (hi - lo) * (n - 1), 0, n - 1)
+    u0, v0 = np.floor(u).astype(int), np.floor(v).astype(int)
+    u1, v1 = np.minimum(u0 + 1, n - 1), np.minimum(v0 + 1, n - 1)
+    fu, fv = u - u0, v - v0
+    hv = (h[v0, u0] * (1 - fu) * (1 - fv) + h[v0, u1] * fu * (1 - fv) + h[v1, u0] * (1 - fu) * fv + h[v1, u1] * fu * fv)
+    top = co[:, 2] > 0
+    co[top, 2] += 0.42 * np.sqrt(hv[top])               # sqrt: rounder shoulders, soft crown
+    me.vertices.foreach_set("co", co.ravel())
+    me.update()
+    sm = ob.modifiers.new("Smooth", "CORRECTIVE_SMOOTH")
+    sm.factor = 0.5
+    sm.iterations = 24
+    sm.use_only_smooth = True
+    bpy.ops.object.modifier_apply(modifier=sm.name)
+    bpy.ops.object.shade_smooth()
     return ob
 
 
@@ -309,7 +357,7 @@ def part_b():
     # cream clay card for menus (pause, confirm, out of lives): sliced on all four sides
     card = rounded_rect("card", 4.0, 4.0, 0.72, 0.42, 0.2)
     render_ui(card, "ui_card", 2.0 + m, 2.0 + m, border_px=int((0.72 + m) * PPU))
-    render_ui(heart_shape(), "ui_heart", 1.0 + m, 1.0 + m)
+    render_ui(heart_shape(), "ui_heart", 1.0 + m, 1.0 + m, shadow=0.26, shadow_offset=(3, -6))
     render_ui(cog_shape(), "ui_cog", 1.15 + m, 1.15 + m)
     render_ui(sound_glyph(), "ui_sound", 0.8 + m, 0.6 + m)
     render_ui(haptics_glyph(), "ui_haptics", 0.85 + m, 0.6 + m)
