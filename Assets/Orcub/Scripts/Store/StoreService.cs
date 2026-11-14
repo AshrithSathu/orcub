@@ -57,15 +57,15 @@ namespace Orcub.Store
             if (Snapshot != null && (string)Snapshot["player_id"] != backend.PlayerId)
             { Snapshot = null; Balance = 0; RemoveAds = false; IsCached = true; Changed?.Invoke(); }
             var json = cache.Read("wallet." + backend.PlayerId);
-            try { if (!string.IsNullOrEmpty(json)) Apply(JObject.Parse(json)); }
+            try { if (!string.IsNullOrEmpty(json)) Apply(JObject.Parse(json), true); }
             catch (Newtonsoft.Json.JsonException) { }
             IsCached = true;
         }
-        internal void Apply(JObject value)
+        internal void Apply(JObject value, bool cached = false)
         {
             if ((string)value["player_id"] != backend.PlayerId) throw new InvalidOperationException("wallet_account_mismatch");
             Snapshot = (JObject)value.DeepClone(); Balance = (long)value["gold"]; RemoveAds = (bool)value["remove_ads"];
-            IsCached = false; cache.Write("wallet." + backend.PlayerId, value.ToString()); Changed?.Invoke();
+            IsCached = cached; cache.Write("wallet." + backend.PlayerId, value.ToString()); Changed?.Invoke();
         }
         public async Task Refresh() => Apply(await backend.Request("/v1/wallet?player_id=" + backend.PlayerId, "GET"));
         // The returned effect is null on replay, including across launches. Persist before exposing it.
