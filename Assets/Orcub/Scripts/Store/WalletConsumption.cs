@@ -13,6 +13,7 @@ namespace Orcub.Store
         JArray pending;
         JObject provisional;
         Task reconciliation;
+        DateTime retryAt;
         string owner;
         public string AttemptReference { get; set; } = Guid.NewGuid().ToString();
         public WalletConsumption(IStoreBackend backend, IStoreCache cache, Wallet wallet)
@@ -23,34 +24,57 @@ namespace Orcub.Store
             if (owner == account && pending != null) return;
             owner = account;
             var json = cache.Read("consume." + owner);
-            pending = string.IsNullOrEmpty(json) ? new JArray() : JArray.Parse(json);
+            pending = string.IsNullOrEmpty(json) ? new JArray() : SafeArray("consume." + owner, json);
             // Offline first launch has no server identity yet. Transfer once on registration.
             if (owner != "unregistered")
             {
                 var unregistered = cache.Read("consume.unregistered");
                 if (!string.IsNullOrEmpty(unregistered))
                 {
-                    foreach (var item in JArray.Parse(unregistered).OfType<JObject>())
+                    foreach (var item in SafeArray("consume.unregistered", unregistered).OfType<JObject>())
                         if (!pending.OfType<JObject>().Any(x => (string)x["idempotency_key"] == (string)item["idempotency_key"])) pending.Add(item.DeepClone());
                     Save(); cache.Write("consume.unregistered", "");
                 }
             }
-            // Old acknowledged reservations are already reflected in the cached wallet.
-            foreach (var item in pending.OfType<JObject>().Where(x => (bool?)x["ack"] == true).ToArray()) pending.Remove(item);
             Save();
             json = cache.Read("provisional." + owner);
             provisional = string.IsNullOrEmpty(json) ? new JObject {
                 ["lives"] = 5, ["lives_updated_at"] = DateTimeOffset.UtcNow.ToString("o"), ["inventory"] = new JObject()
-            } : JObject.Parse(json);
+            } : SafeObject("provisional." + owner, json);
             cache.Write("provisional." + owner, provisional.ToString());
             wallet.LoadCache();
+        }
+        JArray SafeArray(string key, string json) { try {
+            var array=string.IsNullOrEmpty(json) ? new JArray() : JArray.Parse(json);
+            if(key.StartsWith("consume.") && array.Any(x=>!(x is JObject item) || item["count"]?.Type!=JTokenType.Integer || (int)item["count"]<1 || (int)item["count"]>100 || !Guid.TryParse((string)item["idempotency_key"],out _) || !Guid.TryParse((string)item["attempt_ref"],out _) || !new[]{"life","booster_hint","booster_undo","booster_unclamp"}.Contains((string)item["kind"]) || !TryTime(item["created_at"],out _))) throw new FormatException("Invalid consume queue");
+            if(key.StartsWith("adgrants.") && array.Any(x=>!(x is JObject grant) || grant["nonce"]?.Type!=JTokenType.String || !TryTime(grant["at"],out _))) throw new FormatException("Invalid ad grant cache");
+            return array;
+        } catch (Exception) { cache.Write("quarantine."+key,json); cache.Write(key,""); return new JArray(); } }
+        JObject SafeObject(string key, string json) { try { var value=JObject.Parse(json); if(value["lives"]?.Type!=JTokenType.Integer || !(value["inventory"] is JObject)) throw new FormatException("Invalid provisional wallet"); return value; } catch (Exception) { cache.Write("quarantine."+key,json); cache.Write(key,""); return new JObject { ["lives"]=5, ["lives_updated_at"]=DateTimeOffset.UtcNow.ToString("o"), ["inventory"]=new JObject() }; } }
+        public void Migrate(string oldId, string newId)
+        {
+            if (string.IsNullOrEmpty(oldId) || oldId==newId) return;
+            var old=SafeArray("consume."+oldId,cache.Read("consume."+oldId)??"[]");
+            var target=SafeArray("consume."+newId,cache.Read("consume."+newId)??"[]");
+            foreach (var item in old.OfType<JObject>()) if (!target.OfType<JObject>().Any(x=>(string)x["idempotency_key"]==(string)item["idempotency_key"])) target.Add(item.DeepClone());
+            cache.Write("consume."+newId,target.ToString()); cache.Write("consume."+oldId,"");
+            var grants=SafeArray("adgrants."+newId,cache.Read("adgrants."+newId));
+            foreach(var grant in SafeArray("adgrants."+oldId,cache.Read("adgrants."+oldId)).OfType<JObject>()) if(!grants.OfType<JObject>().Any(x=>(string)x["nonce"]==(string)grant["nonce"])) grants.Add(grant.DeepClone());
+            cache.Write("adgrants."+newId,grants.ToString()); cache.Write("adgrants."+oldId,""); owner=null;
+        }
+        public bool ApplyAdRefill(string nonce)
+        {
+            Load(); var grants=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)??"[]");
+            if (grants.OfType<JObject>().Any(x=>(string)x["nonce"]==nonce)) return false;
+            if (grants.OfType<JObject>().Count(x=>TryTime(x["at"],out var time) && time.UtcDateTime.Date==DateTime.UtcNow.Date)>=20) return false;
+            grants.Add(new JObject { ["nonce"]=nonce,["at"]=DateTimeOffset.UtcNow.ToString("o") }); cache.Write("adgrants."+owner,grants.ToString()); return true;
         }
         void Save() => cache.Write("consume." + owner, pending.ToString());
         JObject Snapshot => wallet.Snapshot ?? provisional;
         static bool TryTime(JToken token, out DateTimeOffset time)
         {
             if (token?.Type == JTokenType.Date) { time = token.ToObject<DateTimeOffset>(); return true; }
-            return DateTimeOffset.TryParse((string)token, out time);
+            time=default; return token?.Type==JTokenType.String && DateTimeOffset.TryParse((string)token, out time);
         }
         static void Regenerate(ref int count, ref DateTimeOffset stamp, DateTimeOffset now)
         {
@@ -61,12 +85,19 @@ namespace Orcub.Store
         int LifeCount(DateTimeOffset now, out DateTimeOffset stamp)
         {
             var s = Snapshot;
+            var applied=s["applied_keys"] as JArray;
+            if (applied!=null) { foreach(var item in pending.OfType<JObject>().Where(x=>applied.Values<string>().Any(k=>k==(string)x["idempotency_key"] || k.EndsWith(":"+(string)x["idempotency_key"]))).ToArray()) pending.Remove(item); Save(); }
             stamp = TryTime(s["lives_updated_at"], out var parsed) ? parsed : now;
             if (TryTime(s["unlimited_until"], out var until) && now < until) return 5;
             int count = (int?)s["lives"] ?? 5;
+            var confirmed=s["rewarded_nonces"] as JArray ?? new JArray();
+            var grants=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)??"[]");
+            var latest=grants.OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && at>now.AddDays(-1));
+            if (latest!=null && !confirmed.Values<string>().Contains((string)latest["nonce"]) && TryTime(latest["at"],out var refillAt)) { count=5; stamp=refillAt; }
             foreach (var item in pending.OfType<JObject>().Where(x => (string)x["kind"] == "life"))
             {
                 var at = TryTime(item["created_at"], out var time) ? time : stamp;
+                if (latest!=null && TryTime(latest["at"],out var refillBoundary) && at<refillBoundary) continue;
                 if (at < stamp) at = stamp;
                 Regenerate(ref count, ref stamp, at);
                 count = Math.Max(0, count - ((int?)item["count"] ?? 1));
@@ -78,6 +109,7 @@ namespace Orcub.Store
         {
             Load();
             if (kind == "life") return LifeCount(now, out _);
+            LifeCount(now, out _);
             int count = (int?)Snapshot["inventory"]?[kind.Substring(8)] ?? 0;
             int reserved = pending.OfType<JObject>().Where(x => (string)x["kind"] == kind).Sum(x => (int?)x["count"] ?? 1);
             return Math.Max(0, count - reserved);
@@ -91,8 +123,10 @@ namespace Orcub.Store
         public bool TrySpend(string kind)
         {
             Load();
+            if (kind == "life" && TryTime(Snapshot["unlimited_until"],out var until) && DateTimeOffset.UtcNow<until) return true;
             if (Count(kind, DateTimeOffset.UtcNow) <= 0) return false;
-            pending.Add(new JObject { ["kind"] = kind, ["count"] = 1, ["attempt_ref"] = AttemptReference,
+            var grant=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)).OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddDays(-1) && !(Snapshot["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]));
+            pending.Add(new JObject { ["rewarded_nonce"]=grant?["nonce"]?.DeepClone(), ["kind"] = kind, ["count"] = 1, ["attempt_ref"] = AttemptReference,
                 ["idempotency_key"] = Guid.NewGuid().ToString(), ["created_at"] = DateTimeOffset.UtcNow.ToString("o") });
             Save(); _ = Reconcile(); return true;
         }
@@ -107,9 +141,14 @@ namespace Orcub.Store
             // Yield so TrySpend always exposes the local decrement before any acknowledgement.
             await Task.Yield();
             Load(); var account = backend.PlayerId; var queue = pending; var keyOwner = owner;
-            if (string.IsNullOrEmpty(account)) return;
+            if (string.IsNullOrEmpty(account) || DateTime.UtcNow < retryAt) return;
             try
             {
+                var grants=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner));
+                if(queue.Count==0 && grants.OfType<JObject>().Any(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddDays(-1) && !(wallet.Snapshot?["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]))) {
+                    await wallet.Refresh();
+                    if(grants.OfType<JObject>().Any(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddDays(-1) && !(wallet.Snapshot?["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]))) return;
+                }
                 foreach (var item in queue.OfType<JObject>().ToArray())
                 {
                     if (backend.PlayerId != account) return;
@@ -119,17 +158,18 @@ namespace Orcub.Store
                             queue.Remove(item); cache.Write("consume." + keyOwner, queue.ToString());
                         });
                     }
-                    catch (StoreHttpException e) when (e.Status >= 400 && e.Status < 500)
+                    catch (StoreHttpException e) when (e.Status == 409 && e.Message.Contains("insufficient"))
                     {
                         if (backend.PlayerId != account) return;
                         // Server wins conflicts. Keep the gameplay benefit; never claw it back.
                         queue.Remove(item); cache.Write("consume." + keyOwner, queue.ToString());
-                        Debug.LogWarning("Dropping wallet consume after HTTP " + e.Status);
-                        await wallet.Refresh();
+                        backend.Track("error",new { code="insufficient_inventory",context="consume" });
+                        try { await wallet.Refresh(); } catch (Exception) { }
                     }
                 }
             }
-            catch (Exception) { /* Transport/5xx: retain the same durable keys for the next retry. */ }
+            catch (StoreHttpException e) { if(e.Status==429) retryAt = DateTime.UtcNow.AddSeconds(Math.Max(15,e.RetryAfter)); }
+            catch (Exception) { /* Runtime schedules the next retry after 15 seconds. */ }
         }
     }
 }

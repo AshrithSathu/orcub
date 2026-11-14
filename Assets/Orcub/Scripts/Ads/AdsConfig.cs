@@ -26,8 +26,8 @@ namespace Orcub.Ads
             var asset = Resources.Load<TextAsset>("AdsConfig");
             if (asset == null) { Debug.LogError("AdsConfig missing; ads disabled"); return new AdsConfig { adsEnabled = false }; }
             var value = JsonUtility.FromJson<AdsConfig>(asset.text);
-#if ORCUB_RELEASE && !DEVELOPMENT_BUILD && !UNITY_EDITOR
-            value.iosAppId = value.liveAppId; value.rewardedUnitId = value.liveRewardedUnitId; value.interstitialUnitId = value.liveInterstitialUnitId;
+#if ORCUB_RELEASE && !UNITY_EDITOR
+            if (!Debug.isDebugBuild) { value.iosAppId = value.liveAppId; value.rewardedUnitId = value.liveRewardedUnitId; value.interstitialUnitId = value.liveInterstitialUnitId; }
 #endif
             return value;
         }

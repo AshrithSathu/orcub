@@ -8,5 +8,5 @@ WITH grouped AS (
  percentile_cont(0.5) WITHIN GROUP(ORDER BY (payload->'Result'->>'MovesUsed')::numeric) FILTER(WHERE kind='level_end') AS median_moves,
  percentile_cont(0.5) WITHIN GROUP(ORDER BY (payload->'Result'->>'Seconds')::numeric) FILTER(WHERE kind='level_end') AS median_seconds,
  sum((payload->'Result'->>'BoostersUsed')::int) FILTER(WHERE kind='level_end') AS boosters_used
- FROM events WHERE kind IN ('level_start','level_end') AND occurred_at >= $1 AND occurred_at < $2 GROUP BY 1
+ FROM events WHERE NOT dev AND NOT EXISTS(SELECT 1 FROM installs dev WHERE dev.player_id=events.player_id AND dev.metadata->>'platform' IN ('editor','ios-dev')) AND kind IN ('level_start','level_end') AND occurred_at >= $1 AND occurred_at < $2 GROUP BY 1
 ) SELECT to_jsonb(g)||jsonb_build_object('fail_rate', losses::numeric/nullif(ends,0)) AS data FROM grouped g ORDER BY level;

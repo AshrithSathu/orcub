@@ -10,6 +10,13 @@ namespace Orcub.Core
         public static Func<string, int> Count;
         public static Func<string, bool> Spend;
         public static Action Refill;
+        public static Func<string,System.Threading.Tasks.Task<string>> PrepareAdRefill;
+        public static Action<string> AdRefillEarned;
+        public static Func<System.Threading.Tasks.Task> FlushSpends;
+        public static Action<string,string> MigrateSpends;
+        public static Action LevelStarted, LevelEnded;
+        public static Func<string, System.Threading.Tasks.Task<bool>> RefillFromAd;
+        public static Func<System.Threading.Tasks.Task<bool>> RefillWithGold;
         public static Func<int> SecondsToNext;
         public static Action<string> BeginAttempt;
     }

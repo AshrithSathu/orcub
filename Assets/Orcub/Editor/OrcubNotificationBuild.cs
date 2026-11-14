@@ -10,9 +10,8 @@ namespace Orcub.EditorTools
         public void OnPreprocessBuild(BuildReport report)
         {
             if (report.summary.platform != BuildTarget.iOS) return;
-            NotificationSettings.iOSSettings.RequestAuthorizationOnAppLaunch = false;
-            NotificationSettings.iOSSettings.AddRemoteNotificationCapability = false;
-            NotificationSettings.iOSSettings.NotificationRequestAuthorizationForRemoteNotificationsOnAppLaunch = false;
+            if(NotificationSettings.iOSSettings.RequestAuthorizationOnAppLaunch || NotificationSettings.iOSSettings.AddRemoteNotificationCapability || NotificationSettings.iOSSettings.NotificationRequestAuthorizationForRemoteNotificationsOnAppLaunch)
+                throw new BuildFailedException("Disable iOS notification launch authorization and remote capability in Project Settings before exporting");
         }
     }
 }

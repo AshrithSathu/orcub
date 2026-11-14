@@ -30,15 +30,15 @@ namespace Orcub.Net
             try { if (File.Exists(path))
                 {
                     using var reader = new JsonTextReader(new StringReader(File.ReadAllText(path))) { DateParseHandling = DateParseHandling.None };
-                    events.AddRange(JArray.Load(reader).OfType<JObject>());
+                    events.AddRange(JArray.Load(reader).OfType<JObject>().Where(e=>e["event_id"]?.Type==JTokenType.String && Guid.TryParse((string)e["event_id"],out _) && (e["kind"]==null || e["kind"].Type==JTokenType.String)).GroupBy(e=>(string)e["event_id"]).Select(g=>g.First()));
                 } }
-            catch (Exception) { /* A corrupt queue must not block startup. */ }
+            catch (Exception) { events.Clear(); try { File.Move(path,path+".corrupt."+Guid.NewGuid().ToString("N")); } catch(Exception) { } }
             foreach (var e in events) { int n = Encoding.UTF8.GetByteCount(e.ToString(Formatting.None)); sizes[(string)e["event_id"]] = n; bytes += n; }
             Trim();
         }
-        public void Add(string kind, object data)
+        public void Add(string kind, object data, bool dev=false)
         {
-            var e = new JObject { ["event_id"] = Guid.NewGuid().ToString(), ["kind"] = kind,
+            var e = new JObject { ["event_id"] = Guid.NewGuid().ToString(), ["kind"] = kind, ["dev"]=dev,
                 ["occurred_at"] = DateTime.UtcNow.ToString("o"), ["data"] = JToken.FromObject(data) };
             if (Encoding.UTF8.GetByteCount(e.ToString(Formatting.None)) > MaxBatchBytes / 2) return;
             if (stopped) return;
@@ -50,10 +50,10 @@ namespace Orcub.Net
         {
             while (events.Count > MaxEvents || (events.Count > 0 && bytes > MaxDiskBytes)) { string id = (string)events[0]["event_id"]; bytes -= sizes[id]; sizes.Remove(id); events.RemoveAt(0); }
         }
-        public JObject[] Batch()
+        public JObject[] Batch(Func<string,bool> allowed = null)
         {
             var result = new List<JObject>(); int size = 256;
-            foreach (var e in events.Take(100))
+            foreach (var e in events.Where(e=>allowed==null || allowed((string)e["kind"])).Take(100))
             {
                 size += Encoding.UTF8.GetByteCount(e.ToString(Formatting.None)) + 1;
                 if (size > MaxBatchBytes) break;

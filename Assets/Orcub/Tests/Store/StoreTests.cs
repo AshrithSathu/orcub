@@ -96,13 +96,13 @@ namespace Orcub.Tests
             var f = new Fake(); var s = new StoreService(f,f,f); await s.Restore();
             Assert.Less(f.Calls.IndexOf("/v1/iap/restore"), f.Calls.IndexOf("finish")); Assert.IsTrue(s.Wallet.RemoveAds);
         }
-        [Test] public async Task MixedRestoreFinishesOnlySuccessAndRetriesOnlyFailure()
+        [Test] public async Task MixedRestoreFinishesSuccessAndAlwaysResendsAllEntitlements()
         {
             var f = new Fake { MixedRestore = true }; var s = new StoreService(f,f,f);
             await s.Restore(); Assert.AreEqual(1,f.Finished);
-            await s.Restore(); Assert.AreEqual(1,f.Finished);
+            await s.Restore(); Assert.AreEqual(2,f.Finished);
             Assert.AreEqual(2,f.RestoreBatches[0].Length);
-            CollectionAssert.AreEqual(new[] { "bad.jws" },f.RestoreBatches[1]);
+            CollectionAssert.AreEquivalent(new[] { f.Transaction.Jws, "bad.jws" },f.RestoreBatches[1]);
         }
         [Test]
         public async Task ServerRejectNeverGrantsOrFinishes()

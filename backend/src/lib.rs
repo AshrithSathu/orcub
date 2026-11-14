@@ -1,8 +1,10 @@
 pub mod apple;
 pub mod auth;
 pub mod economy;
+mod firebase_admin;
 mod limits;
 pub mod model;
+pub mod ssv;
 use axum::{
     Json, Router,
     extract::Request,
@@ -147,6 +149,8 @@ pub fn router(s: Arc<App>) -> Router {
         .route("/v1/install", post(install))
         .route("/v1/events", post(events))
         .route("/v1/config", get(config))
+        .route("/v1/ads/ssv", get(ssv::callback))
+        .route("/v1/ads/nonce", post(ssv::nonce))
         .route("/v1/wallet", get(economy::wallet))
         .route("/v1/wallet/spend", post(economy::spend))
         .route("/v1/wallet/grant", post(economy::grant))
@@ -226,8 +230,9 @@ async fn guard(State(s): State<Arc<App>>, req: Request, next: Next) -> Response 
     let start = std::time::Instant::now();
     let method = req.method().clone();
     // Never log URLs (player ids/query strings), headers, tokens, bodies, or peer addresses.
-    let sensitive =
-        req.uri().path().starts_with("/v1/wallet") || req.uri().path().starts_with("/v1/iap");
+    let sensitive = req.uri().path().starts_with("/v1/wallet")
+        || req.uri().path().starts_with("/v1/iap")
+        || req.uri().path().starts_with("/v1/ads");
     let mut response = next.run(req).await;
     if sensitive {
         response
@@ -381,7 +386,7 @@ async fn events(
     }
     let mut inserted = 0;
     for (event, (data, raw)) in body.events.iter().zip(validated) {
-        let n=sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(event.event_id).bind(body.player_id).bind(&event.kind).bind(event.occurred_at).bind(if raw {json!({})} else {data.clone()}).execute(&mut *tx).await?.rows_affected();
+        let n=sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload,dev) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(event.event_id).bind(body.player_id).bind(&event.kind).bind(event.occurred_at).bind(if raw {json!({})} else {data.clone()}).bind(event.dev).execute(&mut *tx).await?.rows_affected();
         if n > 0 && raw {
             sqlx::query("INSERT INTO raw_events(event_id,payload) VALUES($1,$2)")
                 .bind(event.event_id)
@@ -671,13 +676,47 @@ async fn account_delete(
     h: HeaderMap,
     Query(q): Query<AccountQuery>,
 ) -> Result<Response> {
-    let id = account_player(&s, &h, q.player_id).await?;
-    sqlx::query("DELETE FROM players WHERE id=$1 AND ($2 OR firebase_uid IS NULL)")
-        .bind(id)
-        .bind(h.contains_key("authorization"))
-        .execute(&s.pool)
+    let uid = if h.contains_key("authorization") {
+        Some(verified_uid(&s, &h).await?)
+    } else {
+        None
+    };
+    let subject = if let Some(uid) = &uid {
+        hex(&digest(&format!("uid:{uid}")))
+    } else {
+        hex(&digest(&format!(
+            "guest:{}:{}",
+            q.player_id.ok_or(ApiError::unauthorized())?,
+            header(&h, "x-install-token")?
+        )))
+    };
+    let deleted: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM deletion_tombstones WHERE subject_hash=$1)",
+    )
+    .bind(&subject)
+    .fetch_one(&s.pool)
+    .await?;
+    if !deleted {
+        let id = account_player(&s, &h, q.player_id).await?;
+        let mut tx = s.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO deletion_tombstones(subject_hash) VALUES($1) ON CONFLICT DO NOTHING",
+        )
+        .bind(&subject)
+        .execute(&mut *tx)
         .await?;
-    Ok(([("cache-control","no-store")],Json(json!({"receipt_id":Uuid::new_v4(),"deleted_at":Utc::now(),"scope":"first_party_backend","deleted":true}))).into_response())
+        sqlx::query("DELETE FROM players WHERE id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+    }
+    let identity_deleted = if let Some(uid) = uid {
+        firebase_admin::delete(&uid).await?
+    } else {
+        true
+    };
+    Ok(([("cache-control","no-store")],Json(json!({"receipt_id":Uuid::new_v4(),"deleted_at":Utc::now(),"scope":"first_party_backend","deleted":true,"identity_deleted":identity_deleted}))).into_response())
 }
 async fn account_export(
     State(s): State<Arc<App>>,
@@ -815,7 +854,7 @@ async fn attempts(
 ) -> Result<Response> {
     admin(&s, &h)?;
     let (start, end) = w.bounds()?;
-    let rows=sqlx::query("SELECT event_id,payload FROM events WHERE kind='level_end' AND occurred_at >= $1 AND occurred_at < $2 AND event_id > $3 ORDER BY event_id LIMIT 1001").bind(start).bind(end).bind(w.after.unwrap_or(Uuid::nil())).fetch_all(&s.pool).await?;
+    let rows=sqlx::query("SELECT event_id,payload FROM events WHERE NOT dev AND NOT EXISTS(SELECT 1 FROM installs dev WHERE dev.player_id=events.player_id AND dev.metadata->>'platform' IN ('editor','ios-dev')) AND kind='level_end' AND occurred_at >= $1 AND occurred_at < $2 AND event_id > $3 ORDER BY event_id LIMIT 1001").bind(start).bind(end).bind(w.after.unwrap_or(Uuid::nil())).fetch_all(&s.pool).await?;
     let mut out = String::new();
     for r in rows.iter().take(1000) {
         out.push_str(
@@ -1134,6 +1173,19 @@ mod account_tests {
             .0,
             200
         );
+        assert_eq!(
+            call(
+                app.clone(),
+                "DELETE",
+                "/v1/account",
+                Value::Null,
+                &token,
+                secret
+            )
+            .await
+            .0,
+            200
+        );
         let n: i64 = sqlx::query_scalar("SELECT count(*) FROM installs")
             .fetch_one(&pool)
             .await
@@ -1179,6 +1231,7 @@ mod abuse_tests {
         let batch = Batch {
             player_id: id,
             events: vec![Event {
+                dev: false,
                 event_id: Uuid::new_v4(),
                 kind: "custom".into(),
                 occurred_at: Utc::now(),

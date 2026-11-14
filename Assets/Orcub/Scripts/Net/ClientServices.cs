@@ -98,7 +98,7 @@ namespace Orcub.Net
                 {
                     var culture = CultureInfo.CurrentCulture;
                     var payload = new { install_id = Guid.NewGuid().ToString(), app_version = Application.version,
-                        build = string.IsNullOrEmpty(Application.buildGUID) ? "editor" : Application.buildGUID, platform = Application.isEditor ? "editor" : "ios", os_version = SystemInfo.operatingSystem,
+                        build = string.IsNullOrEmpty(Application.buildGUID) ? "editor" : Application.buildGUID, platform = Application.isEditor ? "editor" : Debug.isDebugBuild ? "ios-dev" : "ios", os_version = SystemInfo.operatingSystem,
                         device_model = SystemInfo.deviceModel, device_ram_mb = SystemInfo.systemMemorySize,
                         screen = new { w = Screen.width, h = Screen.height, dpi = Screen.dpi }, locale = culture.Name,
                         language = culture.TwoLetterISOLanguageName, timezone = TimeZoneInfo.Local.Id, first_open_ts = DateTime.UtcNow.ToString("o") };
@@ -170,10 +170,11 @@ namespace Orcub.Net
         public void Track(string kind, object data)
         {
             if (stopped || queue == null) return;
-            if (kind == "level_start") ConsumableGateway.BeginAttempt?.Invoke(Guid.NewGuid().ToString());
-            if (!AnalyticsConsent.BackendAllowed(kind)) return;
+            if (kind == "level_start") { ConsumableGateway.BeginAttempt?.Invoke(Guid.NewGuid().ToString()); ConsumableGateway.LevelStarted?.Invoke(); }
+            if(kind=="level_end") ConsumableGateway.LevelEnded?.Invoke();
+            // Hold optional pre-consent events durably; Flush selects eligible events.
             if (data is AttemptRecord record) data = JObject.Parse(JsonUtility.ToJson(record));
-            queue.Add(kind, data);
+            queue.Add(kind, data, Application.isEditor || Debug.isDebugBuild);
             if (!firebaseReady || !AnalyticsConsent.Allowed) return;
             var fields = JObject.FromObject(data);
             var parameters = new List<Parameter>();
@@ -228,7 +229,7 @@ namespace Orcub.Net
             {
                 if (!Ready) { await Register(); return; }
                 if (queue.Count == 0) return;
-                var batch = System.Array.FindAll(queue.Batch(), e => AnalyticsConsent.BackendAllowed((string)e["kind"]));
+                var batch = System.Array.FindAll(queue.Batch(AnalyticsConsent.BackendAllowed), e => AnalyticsConsent.BackendAllowed((string)e["kind"]));
                 if (batch.Length == 0) return;
                 using var req = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, batch));
                 if (req.responseCode >= 200 && req.responseCode < 300) { queue.Remove(batch); failures = 0; renewedInstall = false; }
@@ -246,8 +247,7 @@ namespace Orcub.Net
                 }
                 else if (req.responseCode == 401 && !renewedInstall)
                 {
-                    renewedInstall = true; credentials = null; InstallStore.Write("");
-                    await Register();
+                    renewedInstall = true; await RenewInstall();
                 }
                 else
                 {
@@ -259,24 +259,30 @@ namespace Orcub.Net
             catch (Exception) { failures = Math.Min(failures + 1, 8); nextFlush = Time.realtimeSinceStartupAsDouble + Math.Pow(2, failures); }
             finally { sending = false; nextFlush = Math.Max(nextFlush, Time.realtimeSinceStartupAsDouble + 5); }
         }
-        void OnApplicationPause(bool paused) { if (stopped || queue == null) return; if (paused) { EndSession(); queue.Persist(); _ = Flush(); Account?.RequestSave(); } else StartSession(); }
+        void OnApplicationPause(bool paused) { if (stopped || queue == null) return; if (paused) { EndSession(); queue.Persist(); _ = Flush(); _ = SaveOnPause(); } else StartSession(); }
+        async Task SaveOnPause() { try { if(Account!=null) await Account.Save(true); } catch(Exception) { } }
         void OnApplicationQuit() { if (stopped || queue == null) return; EndSession(); queue.Persist(); }
         void OnDestroy() { AnalyticsConsent.Changed -= ApplyConsent; Application.logMessageReceived -= OnLog; if (Instance == this) { Instance = null; ClientGateway.Event = null; ClientGateway.Configure = null; ClientGateway.Paid = null; ClientGateway.Save = null; } }
-        public void SetPlayer(string id) { credentials["player_id"] = id; InstallStore.Write(credentials.ToString(Formatting.None)); }
+        public void SetPlayer(string id) { Orcub.Core.ConsumableGateway.MigrateSpends?.Invoke(PlayerId,id); credentials["player_id"] = id; InstallStore.Write(credentials.ToString(Formatting.None)); }
+        public async Task RenewInstall()
+        {
+            var old=PlayerId; credentials=null; InstallStore.Write(""); await Register();
+            if(Ready) Orcub.Core.ConsumableGateway.MigrateSpends?.Invoke(old,PlayerId);
+        }
         public async Task ResetLocalAsync()
         {
             stopped = true;
             // Stopped continuations discard responses; the old writer drains before Boot.
             queue.Clear(); await queue.Stop();
             string pendingUid = PlayerPrefs.GetString("orcub.delete.firebase_uid", "");
-            int revoke = PlayerPrefs.GetInt("orcub.delete.google_revoke", 0);
+            string revoke = PlayerPrefs.GetString("orcub.delete.google_revoke_uid", "");
             ScopedPreferences.Clear();
             if (pendingUid.Length > 0) PlayerPrefs.SetString("orcub.delete.firebase_uid", pendingUid);
-            if (revoke != 0) PlayerPrefs.SetInt("orcub.delete.google_revoke", revoke);
+            if (revoke.Length>0) PlayerPrefs.SetString("orcub.delete.google_revoke_uid", revoke);
             PlayerPrefs.Save(); InstallStore.Write(""); credentials = null;
             foreach (var file in new[] { "orcub-attempts.json", "orcub-config.json", "orcub-events.json" })
             { var p = Path.Combine(Application.persistentDataPath, file); if (File.Exists(p)) File.Delete(p); }
-            AnalyticsConsent.Resolve(false);
+
             Destroy(gameObject); Instance = null; Boot();
             UnityEngine.SceneManagement.SceneManager.LoadScene("Game");
         }

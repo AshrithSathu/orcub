@@ -27,7 +27,8 @@ namespace Orcub.Store
     public sealed class StoreHttpException : Exception
     {
         public long Status { get; }
-        public StoreHttpException(long status) : base("store_http_" + status) { Status = status; }
+        public double RetryAfter { get; }
+        public StoreHttpException(long status, string error = null, double retryAfter = 0) : base(error ?? "store_http_" + status) { Status = status; RetryAfter = retryAfter; }
     }
     public interface IStoreBackend
     {
@@ -58,12 +59,16 @@ namespace Orcub.Store
             { Snapshot = null; Balance = 0; RemoveAds = false; IsCached = true; Changed?.Invoke(); }
             var json = cache.Read("wallet." + backend.PlayerId);
             try { if (!string.IsNullOrEmpty(json)) Apply(JObject.Parse(json), true); }
-            catch (Newtonsoft.Json.JsonException) { }
+            catch (Exception) { Snapshot=null; Balance=0; RemoveAds=false; cache.Write("quarantine.wallet." + backend.PlayerId, json); cache.Write("wallet." + backend.PlayerId, ""); }
             IsCached = true;
         }
         internal void Apply(JObject value, bool cached = false, Action afterPersist = null)
         {
             if ((string)value["player_id"] != backend.PlayerId) throw new InvalidOperationException("wallet_account_mismatch");
+            if(value["gold"]?.Type!=JTokenType.Integer || value["remove_ads"]?.Type!=JTokenType.Boolean || (value["inventory"]!=null && !(value["inventory"] is JObject))) throw new InvalidOperationException("wallet_cache_shape");
+            foreach(var field in new[]{"applied_keys","rewarded_nonces"}) if(value[field]!=null && (!(value[field] is JArray array) || array.Any(x=>x.Type!=JTokenType.String))) throw new InvalidOperationException("wallet_cache_keys");
+            if(value["lives"]!=null && value["lives"].Type!=JTokenType.Integer) throw new InvalidOperationException("wallet_cache_lives");
+            if(value["inventory"] is JObject inventory && inventory.Properties().Any(x=>x.Value.Type!=JTokenType.Integer)) throw new InvalidOperationException("wallet_cache_inventory");
             Snapshot = (JObject)value.DeepClone(); Balance = (long)value["gold"]; RemoveAds = (bool)value["remove_ads"];
             IsCached = cached; cache.Write("wallet." + backend.PlayerId, value.ToString()); afterPersist?.Invoke(); Changed?.Invoke();
         }
@@ -89,7 +94,7 @@ namespace Orcub.Store
             try
             {
                 if (backend.PlayerId != owner) throw new InvalidOperationException("account_changed");
-                var response = await backend.Request("/v1/wallet/consume", "POST", new { player_id = owner, kind = (string)item["kind"], count = (int)item["count"], attempt_ref = (string)item["attempt_ref"], idempotency_key = (string)item["idempotency_key"] });
+                var response = await backend.Request("/v1/wallet/consume", "POST", new { player_id = owner, kind = (string)item["kind"], count = (int)item["count"], attempt_ref = (string)item["attempt_ref"], idempotency_key = (string)item["idempotency_key"], occurred_at = (string)item["created_at"], rewarded_nonce = (string)item["rewarded_nonce"] });
                 Apply((JObject)response["wallet"], afterPersist: acknowledged);
             }
             finally { gate.Release(); }
@@ -226,12 +231,6 @@ namespace Orcub.Store
                 await backend.PrepareAccount();
                 var transactions = await kit.Restore();
                 string retryKey = "restore.retry." + backend.PlayerId;
-                string retryJson = cache.Read(retryKey);
-                if (!string.IsNullOrEmpty(retryJson))
-                {
-                    var retryIds = new HashSet<string>(JArray.Parse(retryJson).Values<string>());
-                    transactions = transactions.Where(t => retryIds.Contains(t.Id)).ToArray();
-                }
                 if (transactions.Count > 100) throw new InvalidOperationException("restore_limit");
                 var response = await Wallet.Submit("/v1/iap/restore", new { player_id = backend.PlayerId, signed_transactions = transactions.Select(t => t.Jws).ToArray() });
                 await Wallet.Refresh();

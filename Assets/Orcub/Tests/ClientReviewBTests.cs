@@ -18,6 +18,16 @@ namespace Orcub.Tests
                 () => order.Add("queue"), () => { order.Add("wipe_signout_register"); return Task.CompletedTask; });
             CollectionAssert.AreEqual(identityFails ? new[] { "reauth", "backend", "firebase", "queue", "wipe_signout_register" } : new[] { "reauth", "backend", "firebase", "wipe_signout_register" }, order);
         }
+        [Test] public async Task FinalSaveIsForcedAndAwaitedBeforeDrainOrWipe()
+        {
+            var saved=new TaskCompletionSource<bool>(); bool forced=false,drained=false,wiped=false;
+            async Task Finish() { await FinalAccountSave.Run(force=> { forced=force; return saved.Task; },()=> { drained=true; return Task.CompletedTask; }); wiped=true; }
+            var finishing=Finish(); Assert.True(forced); Assert.False(drained); Assert.False(wiped);
+            saved.SetResult(true); await finishing; Assert.True(drained); Assert.True(wiped);
+            drained=false;
+            Assert.ThrowsAsync<Exception>(()=>FinalAccountSave.Run(force=>Task.FromException(new Exception("offline")),()=> { drained=true; return Task.CompletedTask; }));
+            Assert.False(drained);
+        }
         [Test] public void FailedReauthenticationNeverDeletesBackend()
         {
             bool deleted = false;
@@ -29,8 +39,8 @@ namespace Orcub.Tests
             try
             {
                 AnalyticsConsent.Resolve(false);
-                Assert.True(AnalyticsConsent.BackendAllowed("error"));
-                foreach (var kind in new[] { "session_start", "level_start", "ad_offer", "iap", "daily_gift_claim" }) Assert.False(AnalyticsConsent.BackendAllowed(kind));
+                Assert.True(AnalyticsConsent.BackendAllowed("error")); Assert.True(AnalyticsConsent.BackendAllowed("level_start")); Assert.True(AnalyticsConsent.BackendAllowed("level_end"));
+                foreach (var kind in new[] { "session_start", "ad_offer", "iap", "daily_gift_claim" }) Assert.False(AnalyticsConsent.BackendAllowed(kind));
                 AnalyticsConsent.Resolve(true); Assert.True(AnalyticsConsent.BackendAllowed("level_start"));
             }
             finally { AnalyticsConsent.Resolve(false); }

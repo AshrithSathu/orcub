@@ -41,7 +41,7 @@ impl Install {
         ] {
             label(s, 128)?;
         }
-        if !["ios", "android", "editor"].contains(&self.platform.as_str()) {
+        if !["ios", "ios-dev", "android", "editor"].contains(&self.platform.as_str()) {
             return Err(ApiError::bad("invalid platform"));
         }
         self.device_ram_mb = self.device_ram_mb.min(131072);
@@ -80,6 +80,8 @@ pub struct Batch {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Event {
+    #[serde(default)]
+    pub dev: bool,
     pub event_id: Uuid,
     pub kind: String,
     pub occurred_at: DateTime<Utc>,
@@ -551,6 +553,7 @@ mod tests {
     #[test]
     fn revenue_backdating_is_bounded() {
         let e = Event {
+            dev: false,
             event_id: Uuid::new_v4(),
             kind: "ad_paid".into(),
             occurred_at: Utc::now() - chrono::Duration::days(31),
@@ -561,6 +564,7 @@ mod tests {
     #[test]
     fn raw_pii_rejected() {
         let e = Event {
+            dev: false,
             event_id: Uuid::new_v4(),
             kind: "future".into(),
             occurred_at: Utc::now(),
@@ -571,6 +575,7 @@ mod tests {
     #[test]
     fn unknown_metrics_bounded() {
         let e = Event {
+            dev: false,
             event_id: Uuid::new_v4(),
             kind: "future".into(),
             occurred_at: Utc::now(),

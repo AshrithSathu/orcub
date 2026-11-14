@@ -26,9 +26,14 @@ namespace Orcub.Ads
 #endif
         bool Simulated => Application.isEditor;
         bool Supported => Application.isEditor || Application.platform == RuntimePlatform.IPhonePlayer;
+        Newtonsoft.Json.Linq.JToken deferredPolicy; bool deferredEntitlement, inLevel;
+        Action deferredCaps;
+        public void BeginLevel() { inLevel=true; }
+        public void EndLevel() { inLevel=false; deferredCaps?.Invoke(); deferredCaps=null; if(deferredPolicy!=null) { var p=deferredPolicy; deferredPolicy=null; ApplyBackendPolicy(p,deferredEntitlement); } }
         public void ApplyBackendPolicy(Newtonsoft.Json.Linq.JToken p, bool entitlement)
         {
             policy.RemoveAds = entitlement;
+            if(inLevel) { deferredPolicy=p?.DeepClone(); deferredEntitlement=entitlement; return; }
             config.firstInterstitialLevel = (int?)p?["interstitial_min_level"] ?? 8;
             config.levelsBetweenInterstitials = (int?)p?["interstitial_min_levels_apart"] ?? 3;
             config.maxInterstitialsPerSession = (bool?)p?["interstitial_enabled"] == false ? 0 : ((int?)p?["interstitial_session_cap"] ?? 6);
@@ -51,10 +56,13 @@ namespace Orcub.Ads
             policy = new AdPolicy(config, Now);
             ClientGateway.AdCaps = (interval, interstitialCap, rewardedCap) =>
             {
-                config.interstitialIntervalSeconds = Math.Max(0, interval);
-                config.interstitialDailyCap = Math.Max(0, interstitialCap); config.rewardedDailyCap = Math.Max(0, rewardedCap);
+                void Apply() { config.interstitialIntervalSeconds = Math.Max(0, interval);
+                config.interstitialDailyCap = Math.Max(0, interstitialCap); config.rewardedDailyCap = Math.Max(0, rewardedCap); }
+                if(inLevel) deferredCaps=Apply; else Apply();
             };
             AdsGateway.Service = this;
+            Orcub.Core.ConsumableGateway.LevelStarted=BeginLevel;
+            Orcub.Core.ConsumableGateway.LevelEnded=EndLevel;
             // Delay all privacy forms until a completed level, including UMP's optional ATT message.
             if (PlayerPrefs.GetInt("Ads.FirstLevelCompleted", 0) != 0)
             {
@@ -72,6 +80,7 @@ namespace Orcub.Ads
         }
         public void RecordWin(int completedLevelNumber)
         {
+            EndLevel();
             levelNumber = completedLevelNumber;
             pendingWin = true;
             policy.RecordWin();
@@ -159,14 +168,20 @@ namespace Orcub.Ads
             load();
         }
         public void RewardedOfferShown(string placement) => TrackAd("ad_offer", placement.StartsWith("rewarded_") ? placement : "rewarded_" + placement);
-        public void ShowRewarded(string placement, Action onReward, Action onClosedWithoutReward)
+        public async void ShowRewarded(string placement, Action onReward, Action onClosedWithoutReward)
         {
             placement = "rewarded_" + placement;
             if (!RewardedReady) { FailAd(placement, "not_ready"); onClosedWithoutReward?.Invoke(); return; }
             showing = true;
             policy.RecordRewarded(Now);
-            if (Simulated) { policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); StartCoroutine(Simulate(() => { TrackAd("ad_reward", placement); onReward?.Invoke(); })); return; }
+            if (Simulated) { policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); StartCoroutine(Simulate(() => { if(placement.Contains("lives")) { Orcub.Core.ConsumableGateway.AdRefillEarned?.Invoke(Guid.NewGuid().ToString()); _ = Orcub.Core.Lives.RefillFromAd(placement); } TrackAd("ad_reward", placement); onReward?.Invoke(); })); return; }
+            string nonce=null;
+            if(placement.Contains("lives")) {
+                try { nonce=await Orcub.Core.ConsumableGateway.PrepareAdRefill.Invoke("rewarded_lives"); } catch(Exception) { }
+                if(string.IsNullOrEmpty(nonce)) { showing=false; onClosedWithoutReward?.Invoke(); return; }
+            }
             var ad = rewarded; rewarded = null;
+            if(nonce!=null) ad.SetServerSideVerificationOptions(new ServerSideVerificationOptions { UserId=ClientServices.Instance.PlayerId, CustomData=nonce });
             ad.OnAdFullScreenContentOpened += () => callbacks.Enqueue(() => { policy.RecordRewardedImpression(); TrackAd("ad_shown", placement); });
             ad.OnAdPaid += value => callbacks.Enqueue(() => RecordPaid(placement, value, config.rewardedUnitId, ad.GetResponseInfo()?.GetMediationAdapterClassName()));
             bool earned = false, closed = false, finalized = false;
@@ -185,11 +200,12 @@ namespace Orcub.Ads
             }
             ad.OnAdFullScreenContentClosed += () => callbacks.Enqueue(Finish);
             ad.OnAdFullScreenContentFailed += _ => callbacks.Enqueue(() => { FailAd(placement, "show_failed"); Finish(); });
-            ad.Show(_ => callbacks.Enqueue(() =>
+            ad.Show(reward => callbacks.Enqueue(() =>
             {
                 if (earned || finalized) return;
                 earned = true;
                 TrackAd("ad_reward", placement);
+                if(nonce!=null) { Orcub.Core.ConsumableGateway.AdRefillEarned.Invoke(nonce); _ = Orcub.Core.Lives.RefillFromAd(placement); }
                 onReward?.Invoke();
             }));
         }
@@ -247,7 +263,7 @@ namespace Orcub.Ads
         {
             if (Instance != this) return;
             rewarded?.Destroy(); interstitial?.Destroy();
-            AdsGateway.Service = null; Instance = null;
+            AdsGateway.Service = null; Orcub.Core.ConsumableGateway.LevelStarted=null; Orcub.Core.ConsumableGateway.LevelEnded=null; Instance = null;
         }
     }
 }

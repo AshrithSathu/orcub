@@ -1,4 +1,4 @@
-WITH e AS (SELECT * FROM events WHERE player_id=$1),
+WITH e AS (SELECT * FROM events WHERE NOT dev AND NOT EXISTS(SELECT 1 FROM installs dev WHERE dev.player_id=events.player_id AND dev.metadata->>'platform' IN ('editor','ios-dev')) AND player_id=$1),
 p AS (SELECT * FROM purchases WHERE player_id=$1),
 a AS (SELECT payload->>'currency' currency,sum((payload->>'value_micros')::bigint) micros FROM e WHERE kind='ad_paid' GROUP BY 1),
 i AS (SELECT currency,sum(price_milliunits) milliunits FROM p WHERE NOT revoked AND environment='Production' GROUP BY 1),

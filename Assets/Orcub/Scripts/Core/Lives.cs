@@ -28,6 +28,8 @@ namespace Orcub.Core
             return ConsumableGateway.Spend?.Invoke("life") ?? false;
         }
 
+        public static System.Threading.Tasks.Task<bool> RefillFromAd(string placement) => ConsumableGateway.RefillFromAd?.Invoke(placement) ?? System.Threading.Tasks.Task.FromResult(false);
+        public static System.Threading.Tasks.Task<bool> RefillWithGold() => ConsumableGateway.RefillWithGold?.Invoke() ?? System.Threading.Tasks.Task.FromResult(false);
         public static void Refill() => ConsumableGateway.Refill?.Invoke();
 
         public static string FormatTimer(int seconds) => $"{seconds / 60:00}:{seconds % 60:00}";

@@ -20,7 +20,7 @@ namespace Orcub.Store
         static void Boot() { if (Service == null) new GameObject("OrcubStore").AddComponent<StoreRuntime>(); }
         async void Start()
         {
-            DontDestroyOnLoad(gameObject);
+            instance=this; DontDestroyOnLoad(gameObject);
             var kit = gameObject.AddComponent<NativeStoreKit>();
             Service = new StoreService(kit, this, this);
             consumption = new WalletConsumption(this, this, Service.Wallet); Consumption = consumption;
@@ -29,15 +29,40 @@ namespace Orcub.Store
             ConsumableGateway.BeginAttempt = id => consumption.AttemptReference = id;
             ConsumableGateway.SecondsToNext = () => consumption.SecondsToNext(DateTimeOffset.UtcNow);
             ConsumableGateway.Refill = Refill;
+            ConsumableGateway.PrepareAdRefill=PrepareAdRefill;
+            ConsumableGateway.AdRefillEarned=AdRefillEarned;
+            ConsumableGateway.FlushSpends=consumption.Reconcile;
+            ConsumableGateway.MigrateSpends=consumption.Migrate;
+            ConsumableGateway.RefillFromAd = RefillLivesFromAd;
+            ConsumableGateway.RefillWithGold = RefillWithGold;
             Service.Wallet.Changed += () => { if (AdService.Instance != null) AdService.Instance.RemoveAds = Service.Wallet.RemoveAds; };
-            try { await Service.Initialize(); await consumption.Reconcile(); } catch (Exception) { Debug.LogWarning("Store unavailable; retry on foreground"); }
+            try { await consumption.Reconcile(); await Service.Initialize(); await consumption.Reconcile(); } catch (Exception) { Debug.LogWarning("Store unavailable; retry on foreground"); }
         }
-        async void Refill()
+        string earnedNonce; bool earnedApplied;
+        public static async Task<string> PrepareAdRefill(string placement)
         {
-            string key = Read("refill." + PlayerId);
-            if (string.IsNullOrEmpty(key)) { key = Guid.NewGuid().ToString(); Write("refill." + PlayerId, key); }
-            try { await Service.Wallet.Spend(new SpendSink("refill_lives", key), key); Write("refill." + PlayerId, ""); }
-            catch (Exception) { Debug.LogWarning("Wallet refill unavailable"); }
+            if (Service==null || ClientServices.Instance==null) return null;
+            using var response=await ClientServices.Instance.Request("/v1/ads/nonce","POST",new { player_id=ClientServices.Instance.PlayerId,placement });
+            if(response.responseCode!=200) return null;
+            return (string)JObject.Parse(response.downloadHandler.text)["nonce"];
+        }
+        public static void AdRefillEarned(string nonce) { if (instance!=null) { instance.earnedNonce=nonce; instance.earnedApplied=false; } }
+        static StoreRuntime instance;
+        public static Task<bool> RefillLivesFromAd(string placement)
+        {
+            if(instance==null || string.IsNullOrEmpty(instance.earnedNonce)) return Task.FromResult(false);
+            if(instance.earnedApplied) return Task.FromResult(true);
+            instance.earnedApplied=Consumption.ApplyAdRefill(instance.earnedNonce);
+            return Task.FromResult(instance.earnedApplied);
+        }
+        void Refill() { _ = RefillLivesFromAd("rewarded_lives"); }
+        public static async Task<bool> RefillWithGold()
+        {
+            if(Service==null) return false;
+            string key=instance.Read("refill."+instance.PlayerId);
+            if(string.IsNullOrEmpty(key)) { key=Guid.NewGuid().ToString(); instance.Write("refill."+instance.PlayerId,key); }
+            try { await Service.Wallet.Spend(new SpendSink("refill_lives",key),key); instance.Write("refill."+instance.PlayerId,""); return Consumption.Count("life",DateTimeOffset.UtcNow)==5; }
+            catch(Exception) { return false; }
         }
         void Update()
         {
@@ -47,7 +72,7 @@ namespace Orcub.Store
             owner = PlayerId;
             if (Service != null) _ = Reload();
         }
-        async Task Reload() { try { await Service.Initialize(); await consumption.Reconcile(); } catch (Exception) { } }
+        async Task Reload() { try { await consumption.Reconcile(); await Service.Initialize(); await consumption.Reconcile(); } catch (Exception) { } }
         public async Task PrepareAccount()
         {
             var deadline = Time.realtimeSinceStartupAsDouble + 20;
@@ -59,20 +84,34 @@ namespace Orcub.Store
         public async Task<JObject> Request(string path, string method, object body = null)
         {
             using var response = await ClientServices.Instance.Request(path, method, body);
-            if (response.responseCode != 200) throw new StoreHttpException(response.responseCode);
+            if(response.responseCode==401) {
+                var previous=PlayerId; response.Dispose(); await ClientServices.Instance.RenewInstall();
+                path=path.Replace(previous,PlayerId);
+                if(body!=null) { var renewed=JObject.FromObject(body); if(renewed["player_id"]!=null) renewed["player_id"]=PlayerId; body=renewed; }
+                return await RetryRequest(path,method,body);
+            }
+            if (response.responseCode != 200) { double.TryParse(response.GetResponseHeader("Retry-After"),out var retry); throw new StoreHttpException(response.responseCode, response.downloadHandler.text,retry); }
             var result = JObject.Parse(response.downloadHandler.text);
             if (path.StartsWith("/v1/config") && AdService.Instance != null) AdService.Instance.ApplyBackendPolicy(result["ad_policy"], Service.Wallet.RemoveAds || (bool?)result["player_value"]?["remove_ads"] == true);
             return result;
         }
+        async Task<JObject> RetryRequest(string path,string method,object body)
+        {
+            using var response=await ClientServices.Instance.Request(path,method,body);
+            if(response.responseCode!=200) { double.TryParse(response.GetResponseHeader("Retry-After"),out var retry); throw new StoreHttpException(response.responseCode,response.downloadHandler.text,retry); }
+            return JObject.Parse(response.downloadHandler.text);
+        }
         public void Track(string kind, object data) => ClientServices.Instance.Track(kind, data);
         public string Read(string key) => PlayerPrefs.GetString("orcub.store." + key, "");
         public void Write(string key, string value) { PlayerPrefs.SetString("orcub.store." + key, value); PlayerPrefs.Save(); }
+        double nextForeground;
         async void OnApplicationFocus(bool focused)
         {
-            if (!focused || Service == null) return;
-            try { await PrepareAccount(); await Service.Initialize(); } catch (Exception) { }
+            if (!focused || Service == null || Time.realtimeSinceStartupAsDouble<nextForeground) return;
+            nextForeground=Time.realtimeSinceStartupAsDouble+300;
+            try { await consumption.Reconcile(); await PrepareAccount(); await Service.Initialize(); } catch (Exception) { }
             await consumption.Reconcile();
         }
-        void OnDestroy() { Consumption = null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
+        void OnDestroy() { Consumption = null; ConsumableGateway.PrepareAdRefill=null; ConsumableGateway.AdRefillEarned=null; ConsumableGateway.FlushSpends=null; ConsumableGateway.MigrateSpends=null; ConsumableGateway.RefillFromAd=null; ConsumableGateway.RefillWithGold=null; instance=null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
     }
 }

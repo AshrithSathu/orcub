@@ -34,6 +34,19 @@ namespace Orcub.Tests
             Assert.True(Guid.TryParse((string)json["events"][0]["event_id"], out _));
         }
         [Test] public void CorruptQueueDoesNotBreakStartup() { File.WriteAllText(path, "broken"); Assert.AreEqual(0, new EventQueue(path).Count); }
+        [Test] public async Task ConsentHoldsAndReleasesOptionalEventsWithoutStarvingProofs()
+        {
+            AnalyticsConsent.Resolve(false); var q=new EventQueue(path);
+            q.Add("session_start",new { session_id=Guid.NewGuid().ToString() }); q.Add("level_end",new { level=1 });
+            Assert.AreEqual(1,q.Batch(AnalyticsConsent.BackendAllowed).Length); Assert.AreEqual(2,q.Count);
+            AnalyticsConsent.Resolve(true); Assert.AreEqual(2,q.Batch(AnalyticsConsent.BackendAllowed).Length);
+            AnalyticsConsent.Resolve(false); await q.Stop();
+        }
+        [Test] public void ParseableCorruptQueueSkipsMissingAndDuplicateIds()
+        {
+            var id=Guid.NewGuid().ToString(); File.WriteAllText(path,"[{event_id:null},{event_id:'"+id+"'},{event_id:'"+id+"'}]");
+            Assert.AreEqual(1,new EventQueue(path).Count);
+        }
         [Test] public void OversizeEventIsRejected() { var q = new EventQueue(path); q.Add("bad", new { text = new string('x', EventQueue.MaxBatchBytes) }); Assert.AreEqual(0, q.Count); }
         [Test] public void ConflictNeverRestoresSpentConsumables()
         {

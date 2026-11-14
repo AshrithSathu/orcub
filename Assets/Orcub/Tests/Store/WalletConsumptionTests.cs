@@ -14,6 +14,7 @@ namespace Orcub.Tests
             public bool Offline, LoseAcknowledgement;
             public long Reject;
             public int Debits, Hints = 3, LifeBalance = 2;
+            public JArray ConfirmedAds = new JArray();
             public DateTimeOffset Stamp = DateTimeOffset.UtcNow.AddSeconds(-1900);
             public readonly List<string> Keys = new List<string>();
             readonly Dictionary<string,string> cache = new Dictionary<string,string>();
@@ -27,7 +28,7 @@ namespace Orcub.Tests
                     var r = JObject.FromObject(body);
                     Keys.Add((string)r["idempotency_key"]);
                     if (Offline) throw new Exception("offline");
-                    if (Reject != 0) throw new StoreHttpException(Reject);
+                    if (Reject != 0) throw new StoreHttpException(Reject, Reject==409 ? "insufficient inventory" : null);
                     if (consumed.Add((string)r["idempotency_key"]))
                     {
                         Debits++;
@@ -41,7 +42,7 @@ namespace Orcub.Tests
                 return Task.FromResult(new JObject());
             }
             public JObject State => new JObject { ["player_id"] = PlayerId, ["gold"] = 10, ["remove_ads"] = false,
-                ["inventory"] = new JObject { ["hint"] = Hints }, ["lives"] = LifeBalance, ["lives_updated_at"] = Stamp.ToString("o") };
+                ["rewarded_nonces"]=ConfirmedAds, ["inventory"] = new JObject { ["hint"] = Hints }, ["lives"] = LifeBalance, ["lives_updated_at"] = Stamp.ToString("o") };
             public void Track(string kind, object data) {}
             public string Read(string key) => cache.TryGetValue(key, out var s) ? s : "";
             public void Write(string key, string value) => cache[key] = value;
@@ -91,14 +92,14 @@ namespace Orcub.Tests
             Assert.AreEqual(0,JArray.Parse(f.Read("consume.player")).Count);
             Assert.AreEqual(0,c.Count("booster_hint",DateTimeOffset.UtcNow)); Assert.False(c.TrySpend("booster_hint"));
         }
-        [Test] public async Task ServerFailureKeepsQueueAndOtherClientErrorsDropIt()
+        [Test] public async Task ServerFailureAndNonBalanceClientErrorsKeepQueue()
         {
             var f = new Fake(); var store = new StoreService(f,f,f); await store.Wallet.Refresh();
             var c = new WalletConsumption(f,f,store.Wallet); f.Reject = 503;
             Assert.True(c.TrySpend("booster_hint")); await c.Reconcile();
             Assert.AreEqual(1,JArray.Parse(f.Read("consume.player")).Count);
             f.Reject = 400; await c.Reconcile();
-            Assert.AreEqual(0,JArray.Parse(f.Read("consume.player")).Count);
+            Assert.AreEqual(1,JArray.Parse(f.Read("consume.player")).Count);
         }
         [Test] public async Task FreshOfflinePlayerHasBackendDefaultsAndLifeSpendsRegenerateOffline()
         {
@@ -133,6 +134,58 @@ namespace Orcub.Tests
             Assert.AreEqual(1,JArray.Parse(f.Read("consume.player")).Count);
             f.PlayerId = "other"; Assert.AreEqual(5,c.Count("life",DateTimeOffset.UtcNow));
             f.PlayerId = "player"; Assert.AreEqual(4,c.Count("life",DateTimeOffset.UtcNow));
+        }
+        [Test] public async Task ProvisionalAdSurvivesPreconfirmationRefreshAndReconcilesByNonce()
+        {
+            var f=new Fake { LifeBalance=0,Stamp=DateTimeOffset.UtcNow }; var store=new StoreService(f,f,f); await store.Wallet.Refresh();
+            var c=new WalletConsumption(f,f,store.Wallet); Assert.True(c.ApplyAdRefill("ad-nonce")); Assert.AreEqual(5,c.Count("life",DateTimeOffset.UtcNow));
+            f.Stamp=DateTimeOffset.UtcNow; await store.Wallet.Refresh(); Assert.AreEqual(5,c.Count("life",DateTimeOffset.UtcNow));
+            f.ConfirmedAds.Add("ad-nonce"); f.LifeBalance=5; await store.Wallet.Refresh();
+            Assert.AreEqual(5,c.Count("life",DateTimeOffset.UtcNow)); Assert.False(c.ApplyAdRefill("ad-nonce"));
+            f.LifeBalance=3; await store.Wallet.Refresh(); Assert.AreEqual(3,c.Count("life",DateTimeOffset.UtcNow));
+        }
+        [Test] public void ParseableCorruptWalletAndConsumeCacheCannotBreakCounts()
+        {
+            var f=new Fake(); f.Write("wallet.player","{player_id:'other',gold:1,remove_ads:false}");
+            f.Write("consume.player","[{kind:'life',count:'bad'}]");
+            f.Write("provisional.player","{lives:'bad',inventory:[]}");
+            var c=new WalletConsumption(f,f,new StoreService(f,f,f).Wallet);
+            Assert.DoesNotThrow(()=>c.Count("life",DateTimeOffset.UtcNow));
+            Assert.DoesNotThrow(()=>c.Count("booster_hint",DateTimeOffset.UtcNow));
+        }
+        [Test] public void ProvisionalRefillHonoursDailyCapAcrossReloads()
+        {
+            var f=new Fake(); var c=new WalletConsumption(f,f,new StoreService(f,f,f).Wallet);
+            for(int i=0;i<20;i++) Assert.True(c.ApplyAdRefill(Guid.NewGuid().ToString()));
+            c=new WalletConsumption(f,f,new StoreService(f,f,f).Wallet);
+            Assert.False(c.ApplyAdRefill(Guid.NewGuid().ToString()));
+        }
+        [TestCase(401)] [TestCase(429)] public async Task TransientStatusRetainsQueue(int status)
+        {
+            var f=new Fake(); var store=new StoreService(f,f,f); await store.Wallet.Refresh(); f.Reject=status;
+            var c=new WalletConsumption(f,f,store.Wallet); Assert.True(c.TrySpend("booster_hint")); await c.Reconcile();
+            Assert.AreEqual(1,JArray.Parse(f.Read("consume.player")).Count);
+        }
+        [Test] public async Task LinkMigratesPendingAndCorruptCacheRecovers()
+        {
+            var f=new Fake(); var store=new StoreService(f,f,f); await store.Wallet.Refresh(); f.Offline=true;
+            var c=new WalletConsumption(f,f,store.Wallet); c.TrySpend("booster_hint"); await c.Reconcile();
+            c.Migrate("player","canonical"); f.PlayerId="canonical";
+            Assert.AreEqual(1,JArray.Parse(f.Read("consume.canonical")).Count);
+            f.Write("consume.broken","garbage"); f.PlayerId="broken";
+            Assert.DoesNotThrow(()=>c.Count("life",DateTimeOffset.UtcNow));
+            Assert.AreEqual("garbage",f.Read("quarantine.consume.broken"));
+        }
+        [Test] public async Task UnlimitedDoesNotQueueAndAdNonceAppliesOnce()
+        {
+            var f=new Fake(); var store=new StoreService(f,f,f); await store.Wallet.Refresh();
+            var snapshot=store.Wallet.Snapshot; snapshot["unlimited_until"]=DateTimeOffset.UtcNow.AddMinutes(30).ToString("o");
+            var c=new WalletConsumption(f,f,store.Wallet); c.Count("life",DateTimeOffset.UtcNow);
+            // LoadCache re-adopts persisted snapshot; seed that cache too.
+            f.Write("wallet.player",snapshot.ToString()); c=new WalletConsumption(f,f,new StoreService(f,f,f).Wallet);
+            Assert.True(c.TrySpend("life")); Assert.AreEqual(0,JArray.Parse(f.Read("consume.player")).Count);
+            Assert.True(c.ApplyAdRefill("nonce")); Assert.False(c.ApplyAdRefill("nonce"));
+            Assert.AreEqual(5,c.Count("life",DateTimeOffset.UtcNow));
         }
         [Test] public async Task LivesDisplayMirrorsThirtyMinuteRegeneration()
         {

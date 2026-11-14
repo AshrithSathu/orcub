@@ -1,5 +1,5 @@
-WITH e AS (SELECT *, (occurred_at AT TIME ZONE 'UTC')::date AS day FROM events WHERE occurred_at >= $1 AND occurred_at < $2),
-p AS (SELECT *, (purchased_at AT TIME ZONE 'UTC')::date AS day FROM purchases WHERE purchased_at >= $1 AND purchased_at < $2 AND NOT revoked AND environment='Production'),
+WITH e AS (SELECT *, (occurred_at AT TIME ZONE 'UTC')::date AS day FROM events WHERE NOT dev AND NOT EXISTS(SELECT 1 FROM installs dev WHERE dev.player_id=events.player_id AND dev.metadata->>'platform' IN ('editor','ios-dev')) AND occurred_at >= $1 AND occurred_at < $2),
+p AS (SELECT *, (purchased_at AT TIME ZONE 'UTC')::date AS day FROM purchases WHERE NOT EXISTS(SELECT 1 FROM installs dev WHERE dev.player_id=purchases.player_id AND dev.metadata->>'platform' IN ('editor','ios-dev')) AND purchased_at >= $1 AND purchased_at < $2 AND NOT revoked AND environment='Production'),
 dau AS (SELECT day,count(DISTINCT player_id) n FROM e WHERE kind='session_start' GROUP BY 1),
 i AS (SELECT day,currency,sum(price_milliunits)*1000 revenue,count(DISTINCT player_id) payers FROM p WHERE currency IS NOT NULL GROUP BY 1,2),
 a AS (SELECT day,payload->>'currency' currency,sum((payload->>'value_micros')::bigint) revenue FROM e WHERE kind='ad_paid' GROUP BY 1,2),

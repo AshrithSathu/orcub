@@ -31,7 +31,7 @@ async fn owner(s: &Arc<App>, h: &HeaderMap, id: Uuid) -> Result<Uuid> {
     }
     Ok(id)
 }
-async fn lock(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
+pub(crate) async fn lock(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
     sqlx::query("SELECT id FROM players WHERE id=$1 FOR UPDATE")
         .bind(id)
         .fetch_optional(&mut **tx)
@@ -43,27 +43,21 @@ async fn lock(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
         .await?;
     Ok(())
 }
-async fn regenerate(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
-    sqlx::query("UPDATE wallets SET lives=LEAST(5,lives+floor(extract(epoch FROM (now()-lives_updated_at))/1800)::int), lives_updated_at=CASE WHEN lives+floor(extract(epoch FROM (now()-lives_updated_at))/1800)>=5 THEN now() ELSE lives_updated_at+floor(extract(epoch FROM (now()-lives_updated_at))/1800)*interval '30 minutes' END WHERE player_id=$1").bind(id).execute(&mut **tx).await?;
-    Ok(())
-}
-async fn snapshot(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
-    regenerate(tx, id).await?;
-    Ok(sqlx::query_scalar("SELECT to_jsonb(w) || jsonb_build_object('remove_ads',EXISTS(SELECT 1 FROM purchases WHERE player_id=$1 AND product_id='com.orcub.puzzle.remove_ads' AND NOT revoked)) FROM wallets w WHERE player_id=$1").bind(id).fetch_one(&mut **tx).await?)
+pub(crate) async fn snapshot(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
+    Ok(sqlx::query_scalar("SELECT to_jsonb(w) || jsonb_build_object('lives',LEAST(5,lives+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))::int),'lives_updated_at',CASE WHEN lives+floor(extract(epoch FROM (now()-lives_updated_at))/1800)>=5 THEN now() ELSE lives_updated_at+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))*interval '30 minutes' END,'applied_keys',COALESCE((SELECT jsonb_agg(idempotency_key) FROM wallet_ledger WHERE player_id=$1 AND reason='consume'),'[]'::jsonb),'rewarded_nonces',COALESCE((SELECT jsonb_agg(nonce) FROM rewarded_nonces WHERE player_id=$1 AND confirmed_at IS NOT NULL),'[]'::jsonb),'remove_ads',EXISTS(SELECT 1 FROM purchases WHERE player_id=$1 AND product_id='com.orcub.puzzle.remove_ads' AND NOT revoked)) FROM wallets w WHERE player_id=$1").bind(id).fetch_one(&mut **tx).await?)
 }
 pub(crate) async fn save_fields(tx: &mut Tx<'_>, id: Uuid, data: &mut SaveData) -> Result<()> {
     sqlx::query("INSERT INTO wallets(player_id) VALUES($1) ON CONFLICT DO NOTHING")
         .bind(id)
         .execute(&mut **tx)
         .await?;
-    regenerate(tx, id).await?;
     daily::save_fields(tx, id, data).await?;
     data.inventory.clear();
     data.workshop.clear();
     data.lives = 0;
     Ok(())
 }
-async fn entry(
+pub(crate) async fn entry(
     tx: &mut Tx<'_>,
     id: Uuid,
     delta: i64,
@@ -94,6 +88,12 @@ pub(crate) async fn wallet(
     let id = owner(&s, &h, q.player_id).await?;
     let mut tx = s.pool.begin().await?;
     lock(&mut tx, id).await?;
+    sqlx::query(
+        "UPDATE wallets SET consume_floor=GREATEST(consume_floor,now()) WHERE player_id=$1",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
     let v = snapshot(&mut tx, id).await?;
     tx.commit().await?;
     Ok(([("cache-control", "no-store")], Json(v)).into_response())
@@ -106,6 +106,10 @@ pub struct Consume {
     count: i32,
     attempt_ref: Uuid,
     idempotency_key: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    occurred_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rewarded_nonce: Option<Uuid>,
 }
 pub async fn consume(
     State(s): State<Arc<App>>,
@@ -123,7 +127,12 @@ pub async fn consume(
     let id = owner(&s, &h, b.player_id).await?;
     let mut tx = s.pool.begin().await?;
     lock(&mut tx, id).await?;
-    regenerate(&mut tx, id).await?;
+    if let Some(nonce) = b.rewarded_nonce {
+        let confirmed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rewarded_nonces WHERE nonce=$1 AND player_id=$2 AND confirmed_at IS NOT NULL)").bind(nonce).bind(id).fetch_one(&mut *tx).await?;
+        if !confirmed {
+            return Err(ApiError::unavailable());
+        }
+    }
     let mut request = serde_json::to_value(&b).unwrap();
     request.as_object_mut().unwrap().remove("player_id");
     let old:Option<Value>=sqlx::query_scalar("SELECT request FROM wallet_ledger WHERE player_id=$1 AND (idempotency_key=$2 OR idempotency_key LIKE '%:' || $2)").bind(id).bind(b.idempotency_key.to_string()).fetch_optional(&mut *tx).await?;
@@ -132,8 +141,19 @@ pub async fn consume(
             return Err(ApiError(StatusCode::CONFLICT, "idempotency key reused"));
         }
     } else {
+        let floor: DateTime<Utc> =
+            sqlx::query_scalar("SELECT consume_floor FROM wallets WHERE player_id=$1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let at = b
+            .occurred_at
+            .unwrap_or_else(Utc::now)
+            .max(floor)
+            .min(Utc::now());
+        sqlx::query("UPDATE wallets SET lives=LEAST(5,lives+GREATEST(0,floor(extract(epoch FROM ($2-lives_updated_at))/1800))::int), lives_updated_at=CASE WHEN lives+floor(extract(epoch FROM ($2-lives_updated_at))/1800)>=5 THEN GREATEST($2,lives_updated_at) ELSE lives_updated_at+GREATEST(0,floor(extract(epoch FROM ($2-lives_updated_at))/1800))*interval '30 minutes' END, consume_floor=$2 WHERE player_id=$1").bind(id).bind(at).execute(&mut *tx).await?;
         let n = if b.kind == "life" {
-            sqlx::query("UPDATE wallets SET lives=CASE WHEN unlimited_until>now() THEN lives ELSE lives-$2 END,lives_updated_at=CASE WHEN lives=5 THEN now() ELSE lives_updated_at END WHERE player_id=$1 AND (lives >= $2 OR unlimited_until>now())").bind(id).bind(b.count).execute(&mut *tx).await?.rows_affected()
+            sqlx::query("UPDATE wallets SET lives=CASE WHEN (EXISTS(SELECT 1 FROM unlimited_windows WHERE player_id=$1 AND starts_at<=$3 AND ends_at>$3) OR EXISTS(SELECT 1 FROM rewarded_nonces WHERE player_id=$1 AND confirmed_at>=$3)) THEN lives ELSE lives-$2 END,lives_updated_at=CASE WHEN lives=5 THEN GREATEST($3,lives_updated_at) ELSE lives_updated_at END WHERE player_id=$1 AND (lives >= $2 OR (EXISTS(SELECT 1 FROM unlimited_windows WHERE player_id=$1 AND starts_at<=$3 AND ends_at>$3) OR EXISTS(SELECT 1 FROM rewarded_nonces WHERE player_id=$1 AND confirmed_at>=$3)))").bind(id).bind(b.count).bind(at).execute(&mut *tx).await?.rows_affected()
         } else {
             sqlx::query("UPDATE wallets SET inventory=jsonb_set(inventory,ARRAY[$2],to_jsonb((inventory->>$2)::int-$3)) WHERE player_id=$1 AND COALESCE((inventory->>$2)::int,0)>=$3").bind(id).bind(b.kind.trim_start_matches("booster_")).bind(b.count).execute(&mut *tx).await?.rows_affected()
         };
@@ -806,6 +826,16 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
         .bind(guest)
         .execute(&mut **tx)
         .await?;
+    sqlx::query("UPDATE unlimited_windows SET player_id=$1 WHERE player_id=$2")
+        .bind(canonical)
+        .bind(guest)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("UPDATE rewarded_nonces SET player_id=$1 WHERE player_id=$2")
+        .bind(canonical)
+        .bind(guest)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query("UPDATE wallet_aliases SET player_id=$1 WHERE player_id=$2")
         .bind(canonical)
         .bind(guest)
@@ -1268,6 +1298,85 @@ mod authority_tests {
         tx.commit().await.unwrap();
     }
     #[sqlx::test(migrations = "./migrations")]
+    async fn provisional_consumes_wait_for_ssv(pool: PgPool) {
+        let (id, h) = player(&pool).await;
+        let s = new_state(pool.clone(), "admin", false);
+        let nonce = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO rewarded_nonces(nonce,player_id,placement) VALUES($1,$2,'rewarded_lives')",
+        )
+        .bind(nonce)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let b = || Consume {
+            player_id: id,
+            kind: "life".into(),
+            count: 1,
+            attempt_ref: Uuid::new_v4(),
+            idempotency_key: Uuid::new_v4(),
+            occurred_at: Some(Utc::now()),
+            rewarded_nonce: Some(nonce),
+        };
+        assert_eq!(
+            consume(State(s.clone()), h.clone(), Json(b()))
+                .await
+                .unwrap_err()
+                .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        sqlx::query("UPDATE rewarded_nonces SET confirmed_at=now(),transaction_id='confirmed' WHERE nonce=$1").bind(nonce).execute(&pool).await.unwrap();
+        let _ = consume(State(s), h, Json(b())).await.unwrap();
+    }
+    #[sqlx::test(migrations = "./migrations")]
+    async fn occurred_at_clamp_and_unlimited_window(pool: PgPool) {
+        let (id, h) = player(&pool).await;
+        let s = new_state(pool.clone(), "admin", false);
+        let mut tx = pool.begin().await.unwrap();
+        lock(&mut tx, id).await.unwrap();
+        tx.commit().await.unwrap();
+        sqlx::query("UPDATE wallets SET lives=5,lives_updated_at=now()-interval '2 hours',consume_floor=now()-interval '2 hours',unlimited_until=now()-interval '30 minutes' WHERE player_id=$1").bind(id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO unlimited_windows VALUES($1,now()-interval '2 hours',now()-interval '30 minutes')").bind(id).execute(&pool).await.unwrap();
+        let make = |at| Consume {
+            player_id: id,
+            kind: "life".into(),
+            count: 1,
+            attempt_ref: Uuid::new_v4(),
+            idempotency_key: Uuid::new_v4(),
+            occurred_at: Some(at),
+            rewarded_nonce: None,
+        };
+        let _ = consume(
+            State(s.clone()),
+            h.clone(),
+            Json(make(Utc::now() - chrono::Duration::hours(1))),
+        )
+        .await
+        .unwrap();
+        let lives: i32 = sqlx::query_scalar("SELECT lives FROM wallets WHERE player_id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(lives, 5);
+        sqlx::query("UPDATE wallets SET unlimited_until=NULL,consume_floor=now(),lives_updated_at=now() WHERE player_id=$1").bind(id).execute(&pool).await.unwrap();
+        let _ = consume(
+            State(s),
+            h,
+            Json(make(Utc::now() - chrono::Duration::days(10))),
+        )
+        .await
+        .unwrap();
+        let floor: DateTime<Utc> =
+            sqlx::query_scalar("SELECT consume_floor FROM wallets WHERE player_id=$1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(floor > Utc::now() - chrono::Duration::seconds(10));
+    }
+    #[sqlx::test(migrations = "./migrations")]
     async fn consume_idempotency_limits_and_regeneration(pool: PgPool) {
         let (id, h) = player(&pool).await;
         let s = new_state(pool.clone(), "admin", false);
@@ -1280,6 +1389,8 @@ mod authority_tests {
         let b = || Consume {
             player_id: id,
             kind: "booster_hint".into(),
+            occurred_at: None,
+            rewarded_nonce: None,
             count: 1,
             attempt_ref: attempt,
             idempotency_key: key,
@@ -1310,6 +1421,8 @@ mod authority_tests {
         let next = Consume {
             player_id: id,
             kind: "life".into(),
+            occurred_at: None,
+            rewarded_nonce: None,
             count: 4,
             attempt_ref: attempt,
             idempotency_key: Uuid::new_v4(),
