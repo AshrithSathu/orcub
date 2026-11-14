@@ -1,0 +1,5 @@
+target
+.pg-test
+.env
+*.log
+.git

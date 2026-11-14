@@ -1,0 +1,43 @@
+{
+  "Version": 2,
+  "Variant": 0,
+  "TuningVersion": "v2.1",
+  "ModelVersion": "sim-logistic-v1",
+  "Features": {
+    "Moves": [
+      {
+        "Useful": true,
+        "Undo": false,
+        "ThinkSeconds": 2.5,
+        "LockedTouches": 0
+      }
+    ],
+    "Count": 1,
+    "Useful": 1,
+    "Think": 2.5,
+    "Locked": 0,
+    "Undo": 0
+  },
+  "ModelPrediction": 0.7,
+  "SkillEstimate": 1000,
+  "SkillConfidence": 0.1,
+  "LevelIndex": 3,
+  "StartedUtc": "2026-11-14T12:00:00Z",
+  "Plan": {
+    "variant": 0,
+    "extraMoves": 0,
+    "freeHintGlow": false,
+    "reason": "baseline",
+    "moveLimit": 20
+  },
+  "LevelRating": 900,
+  "RatingBefore": 1000,
+  "RatingAfter": 1005,
+  "Result": {
+    "Outcome": 0,
+    "MovesUsed": 12,
+    "Seconds": 45.5,
+    "BoostersUsed": 0,
+    "Continues": 0
+  }
+}
