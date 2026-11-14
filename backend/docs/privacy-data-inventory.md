@@ -1,6 +1,6 @@
 # First-party data inventory and policy inputs
 
-No raw IP, IDFA, IDFV, name, email, email hash, OAuth profile, advertising identifier, purchase receipt, access token or Firebase token is persisted. Only SHA-256 of a cryptographically random install secret is stored. Firebase tokens are checked in memory; their optional email/name claims are ignored. Unknown payloads allow numeric metrics only. Schema enforcement cannot identify personal information misused as an allowed label: clients must send enumerated machine codes, never user input.
+No raw IP, IDFA, IDFV, name, email, email hash, OAuth profile, advertising identifier, purchase receipt/JWS, access token or Firebase token is persisted. Only SHA-256 of a cryptographically random install secret is stored. Firebase tokens are checked in memory; their optional email/name claims are ignored. Unknown payloads allow numeric metrics only. Schema enforcement cannot identify personal information misused as an allowed label: clients must send enumerated machine codes, never user input.
 
 | Collection / every field | Purpose | Retention |
 |---|---|---|
@@ -18,7 +18,7 @@ No raw IP, IDFA, IDFV, name, email, email hash, OAuth profile, advertising ident
 | booster_used: level, booster | Assistance usage | Event retention |
 | ad_offer/shown/reward: placement, network; ad_failed: placement, network, code | Ad delivery, opt-in reward funnel | Event retention |
 | ad_paid: placement, network, value_micros, currency, precision | AdMob callback revenue estimates, per-currency ARPDAU | Event retention |
-| iap: product_id, value_micros, currency | Future purchase analytics; no transaction verification | Event retention |
+| iap: product_id, value_micros, currency | Client-reported analytics only; verified purchases stored separately | Event retention |
 | settings_changed: sound, haptics | Accessibility/preference insights | Event retention |
 | tutorial_step: step, completed | Onboarding funnel | Event retention |
 | error: code, context | Bounded diagnostic codes; no text, stack trace or URL | Event retention |
@@ -37,3 +37,11 @@ Export and deletion require a valid Firebase token for the linked UID (including
 Trust country headers only if a controlled ingress strips client-supplied copies and sets the authoritative value. Default is disabled/null. No GeoLite database or raw-address processing is included. Application logs omit IPs, headers, query strings and bodies; Cloud Run/load balancer/Postgres/proxy access logs must be configured separately to meet the no-IP requirement. Keep ADMIN_TOKEN and DATABASE_URL in a secret manager. Restrict exports to authorised operators, encrypt in transit/at rest, and do not retain exports indefinitely.
 
 Hourly purge runs while the server has CPU. For Cloud Run scale-to-zero, schedule the same image with argument `retention` as a Cloud Run Job at least daily; backlog is removed at next execution. Deduplication lasts only while event IDs are retained. Ingestion rejects client timestamps older than 400 days, and future clock skew above five minutes. Cohorts/analytics query retained data and cannot recover expired events.
+
+## Purchases and gold bars
+
+Apple processes payments. We store no card, bank, billing address or other payment details, and never persist signed transactions/JWS or App Store API private keys in the database. Purchase records contain transaction_id, original_transaction_id, player_id, product_id, environment, price_milliunits (nullable), currency (nullable), storefront (nullable), gold granted, benefits (catalog snapshot), purchased_at, created_at and revoked. Purpose: verify fulfilment, prevent duplicate grants, restore entitlements, handle refunds and measure revenue. Retained until linked account deletion; Apple keeps its own payment records under its policy.
+
+wallets stores player_id, gold, inventory by booster code, lives and unlimited_until. wallet_ledger stores id, player_id, delta, reason, ref_id, idempotency_key, bounded action request, balance_after and created_at. purchase_revocations stores transaction_id, optional player_id and created_at to block late refunded grants; unknown-owner tombstones are retained until reconciliation/deletion by an operator. wallet_aliases stores former player UUID token, canonical player_id and created_at for post-link restore. economy_offers stores player_id, first_shown_at and last_shown_at for expiry/cooldown. Known-owner rows export and cascade on account deletion. These support app functionality, customer support, fraud prevention, analytics and personalisation. Ledger request contains machine codes/UUIDs only, never signed transactions.
+
+Per-player revenue (separate currencies), payer status, Remove Ads, sessions, UTC days active, rewarded acceptance and a session-end/interstitial timing correlation are calculated from these records and retained telemetry. They reduce interstitial ad load and control starter-offer timing; they never affect puzzle difficulty. These calculations do not create new persistent profile tables. The owner must update App Store privacy labels for purchases/purchase history linked to the pseudonymous account and separately assess Apple, Firebase and AdMob collection.

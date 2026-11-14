@@ -1,4 +1,6 @@
+pub mod apple;
 pub mod auth;
+pub mod economy;
 pub mod model;
 use axum::{
     Json, Router,
@@ -129,6 +131,13 @@ pub fn router(s: Arc<App>) -> Router {
         .route("/v1/install", post(install))
         .route("/v1/events", post(events))
         .route("/v1/config", get(config))
+        .route("/v1/wallet", get(economy::wallet))
+        .route("/v1/wallet/spend", post(economy::spend))
+        .route("/v1/wallet/grant", post(economy::grant))
+        .route("/v1/iap/apple", post(economy::purchase))
+        .route("/v1/iap/restore", post(economy::restore))
+        .route("/v1/iap/apple/notifications", post(economy::notification))
+        .route("/v1/admin/revenue", get(economy::revenue))
         .route("/v1/save", put(save_put).get(save_get))
         .route("/v1/link", post(link))
         .route("/v1/account", delete(account_delete))
@@ -163,7 +172,14 @@ async fn guard(State(s): State<Arc<App>>, req: Request, next: Next) -> Response 
     let start = std::time::Instant::now();
     let method = req.method().clone();
     // Never log URLs (player ids/query strings), headers, tokens, bodies, or peer addresses.
-    let response = next.run(req).await;
+    let sensitive =
+        req.uri().path().starts_with("/v1/wallet") || req.uri().path().starts_with("/v1/iap");
+    let mut response = next.run(req).await;
+    if sensitive {
+        response
+            .headers_mut()
+            .insert("cache-control", HeaderValue::from_static("no-store"));
+    }
     tracing::info!(%method,status=response.status().as_u16(),elapsed_ms=start.elapsed().as_millis(),"request");
     response
 }
@@ -322,6 +338,7 @@ async fn config(
     tx.commit().await?;
     let mut value = s.config.clone();
     value["experiments"] = assignments;
+    economy::personalize(&s, q.player_id, &mut value).await?;
     let bytes = serde_json::to_vec(&value).map_err(|_| ApiError::bad("config"))?;
     let etag = format!("\"{}\"", hex(&Sha256::digest(&bytes)));
     let headers = [
@@ -487,6 +504,7 @@ async fn link(
             let rev = canonical.map(|r| r.get::<i64, _>("revision")).unwrap_or(0) + 1;
             sqlx::query("INSERT INTO saves(player_id,revision,data) VALUES($1,$2,$3) ON CONFLICT(player_id) DO UPDATE SET revision=$2,data=$3,updated_at=now()").bind(id).bind(rev).bind(serde_json::to_value(data).map_err(|_|ApiError::unavailable())?).execute(&mut *tx).await?;
         }
+        economy::merge(&mut tx, id, body.player_id).await?;
         sqlx::query("UPDATE installs SET player_id=$1 WHERE player_id=$2")
             .bind(id)
             .bind(body.player_id)
@@ -528,7 +546,7 @@ async fn account_export(State(s): State<Arc<App>>, h: HeaderMap) -> Result<Respo
         .execute(&mut *tx)
         .await?;
     let stream = async_stream::try_stream! {
-     for table in ["players","installs","experiments","saves","events"] {
+     for table in ["players","installs","experiments","saves","events","wallets","wallet_ledger","purchases","purchase_revocations","economy_offers","wallet_aliases"] {
       let filter=if table=="players"{"id"}else{"player_id"};
       let sql=if table=="installs"{format!("SELECT to_jsonb(t)-'credential_hash' AS data FROM {table} t WHERE {filter}=$1")}else{format!("SELECT to_jsonb(t) AS data FROM {table} t WHERE {filter}=$1")};
       let mut rows=sqlx::query(&sql).bind(id).fetch(&mut *tx);

@@ -1,0 +1,78 @@
+{
+  "version": "economy-v1",
+  "currency": "gold_bars",
+  "products": [
+    {
+      "id": "com.orcub.puzzle.starter_pack",
+      "kind": "non_consumable",
+      "price_usd_cents": 199,
+      "gold": 500,
+      "boosters": {
+        "hint": 3,
+        "undo": 3,
+        "unclamp": 3
+      },
+      "unlimited_lives_seconds": 3600
+    },
+    {
+      "id": "com.orcub.puzzle.gold_small",
+      "kind": "consumable",
+      "price_usd_cents": 99,
+      "gold": 100
+    },
+    {
+      "id": "com.orcub.puzzle.gold_medium",
+      "kind": "consumable",
+      "price_usd_cents": 499,
+      "gold": 600
+    },
+    {
+      "id": "com.orcub.puzzle.gold_large",
+      "kind": "consumable",
+      "price_usd_cents": 999,
+      "gold": 1400
+    },
+    {
+      "id": "com.orcub.puzzle.gold_huge",
+      "kind": "consumable",
+      "price_usd_cents": 1999,
+      "gold": 3200
+    },
+    {
+      "id": "com.orcub.puzzle.remove_ads",
+      "kind": "non_consumable",
+      "price_usd_cents": 399,
+      "gold": 0,
+      "entitlement": "remove_ads"
+    }
+  ],
+  "boosters": [
+    "hint",
+    "undo",
+    "unclamp"
+  ],
+  "sinks": {
+    "refill_lives": {
+      "gold": 90,
+      "lives": 5
+    },
+    "continue": {
+      "gold": 60,
+      "moves": 5,
+      "multiplier": 1.5
+    },
+    "booster": {
+      "gold": 40
+    }
+  },
+  "grants": {
+    "daily_gift": 20,
+    "level_reward": 5,
+    "level_reward_daily_cap": 20
+  },
+  "offers": {
+    "starter_min_level": 10,
+    "duration_hours": 48,
+    "repeat_cooldown_hours": 24
+  }
+}
