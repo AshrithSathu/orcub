@@ -69,6 +69,13 @@ namespace Orcub.Core
         public bool Active = true;
     }
 
+    public sealed class ModelSnapshot
+    {
+        public float[] Gaps;
+        public bool[] LinkActive;
+        public bool[] Removed;
+    }
+
     public enum RotateOutcome
     {
         Rotated,
@@ -200,6 +207,48 @@ namespace Orcub.Core
         }
 
         // ---------------------------------------------------------------- actions
+
+        public ModelSnapshot Capture()
+        {
+            var s = new ModelSnapshot
+            {
+                Gaps = new float[_rings.Count],
+                LinkActive = new bool[_links.Count],
+                Removed = new bool[_rings.Count],
+            };
+            for (int i = 0; i < _rings.Count; i++)
+            {
+                s.Gaps[i] = _rings[i].GapAngle;
+                s.Removed[i] = _rings[i].Removed;
+            }
+            for (int i = 0; i < _links.Count; i++) s.LinkActive[i] = _links[i].Active;
+            return s;
+        }
+
+        public void Restore(ModelSnapshot s)
+        {
+            if (s == null) throw new ArgumentNullException(nameof(s));
+            if (s.Gaps == null || s.Gaps.Length != _rings.Count ||
+                s.Removed == null || s.Removed.Length != _rings.Count ||
+                s.LinkActive == null || s.LinkActive.Length != _links.Count)
+                throw new ArgumentException("Snapshot dimensions do not match this puzzle.", nameof(s));
+
+            for (int i = 0; i < _rings.Count; i++)
+            {
+                _rings[i].GapAngle = s.Gaps[i];
+                _rings[i].Removed = s.Removed[i];
+            }
+            for (int i = 0; i < _links.Count; i++) _links[i].Active = s.LinkActive[i];
+        }
+
+        public bool ReleaseLink(int linkId)
+        {
+            var link = _links[linkId];
+            if (!link.Active) return false;
+            link.Active = false;
+            LinkReleased?.Invoke(link);
+            return true;
+        }
 
         public RotateOutcome Rotate(int ring, float deltaDegrees, List<Link> released = null)
         {
