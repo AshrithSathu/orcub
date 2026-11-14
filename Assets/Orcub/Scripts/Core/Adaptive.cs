@@ -59,6 +59,9 @@ namespace Orcub.Core
             return plan;
         }
 
+        /// <summary>Drops the active attempt without recording it (e.g. the player left before making a move).</summary>
+        public void CancelAttempt() => active = null;
+
         public void EndAttempt(AttemptResult r)
         {
             if (active == null) return;

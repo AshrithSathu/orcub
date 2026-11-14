@@ -34,6 +34,13 @@ namespace Orcub.Game
         int _levelIndex;
         LevelRules _rules;
         int _movesUsed, _bonusMoves;
+
+        // Adaptive difficulty: one attempt per LoadLevel, frozen plan, outcome recorded once.
+        Adaptive _adaptive;
+        LevelDef _def;
+        bool _attemptOpen;
+        float _attemptStart;
+        int _attemptBoosters, _attemptContinues;
         bool _usedAdContinue, _levelOver;
         float _winAt = -1f, _failCheckAt = -1f;
         int _winStars;
@@ -184,6 +191,7 @@ namespace Orcub.Game
         /// <summary>Leave the current level for home. Mid-level quits and abandoned fails cost a life.</summary>
         void GoHome(bool costsLife)
         {
+            EndAttempt(AttemptOutcome.Quit);
             if (costsLife) Lives.TrySpend();
             ShowHome();
         }
@@ -230,6 +238,7 @@ namespace Orcub.Game
             _levelIndex = index;
             _levelData = LevelLibrary.Get(_levelIndex);
             var def = _levelData != null ? _levelData.ToDef() : Levels.Basic10();
+            _def = def;
             Build(def);
             _rules = LevelRules.For(def, tutorial: _levelIndex < 3);
             _movesUsed = 0;
@@ -249,9 +258,11 @@ namespace Orcub.Game
         {
             int count = Mathf.Max(1, LevelLibrary.Count);
             _levelIndex = ((index % count) + count) % count;
+            EndAttempt(AttemptOutcome.Quit);   // restart / skip before a result counts as a quit
             Build(_levelIndex);
             if (Application.isPlaying)
             {
+                BeginAttempt();
                 HideRingsForIntro();
                 DropInRings();
             }
@@ -579,13 +590,14 @@ namespace Orcub.Game
                 {
                     _wreath?.Hide();
                     _usedAdContinue = true;
+                    _attemptContinues++;
                     _bonusMoves += ContinueMoves;
                     _levelOver = false;
                     _hud.SetMoves(MovesLeft, bump: true);
                     Haptics.Play(Haptics.Impact.Medium, 0.8f);
                 }),
-                onRetry: () => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain),
-                onHome: () => GoHome(costsLife: true));
+                onRetry: () => { EndAttempt(AttemptOutcome.Lose); SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain); },
+                onHome: () => { EndAttempt(AttemptOutcome.Lose); GoHome(costsLife: true); });
         }
 
         // ------------------------------------------------------------------ pause, lives
@@ -692,9 +704,66 @@ namespace Orcub.Game
                 return;
             }
             BoosterInventory.TrySpend(kind);
+            _attemptBoosters++;
             Haptics.Play(Haptics.Impact.Medium, 0.8f);
             _hud.SetBoosterCount(kind, BoosterInventory.Count(kind));
             _hud.SetBoosterReady(BoosterKind.Undo, _undo.Count > 0);
+        }
+
+        // ------------------------------------------------------------------ adaptive difficulty
+
+        /// <summary>
+        /// Freezes this attempt's plan: a player who keeps losing a level gets a few extra moves and,
+        /// after more losses, a free hint. Never fewer moves than the level's authored budget.
+        /// </summary>
+        void BeginAttempt()
+        {
+            _attemptStart = Time.time;
+            _attemptBoosters = _attemptContinues = 0;
+            _attemptOpen = false;
+            if (_def == null) return;
+            _adaptive ??= new Adaptive();
+            AttemptPlan plan;
+            try { plan = _adaptive.BeginAttempt(_levelIndex, _def); }
+            catch (Exception e) { Debug.LogWarning("Adaptive plan skipped: " + e.Message); return; }
+            _attemptOpen = true;
+            if (plan.ExtraMoves > 0)
+            {
+                _rules = LevelRules.For(_def, tutorial: _levelIndex < 3, extraMoves: plan.ExtraMoves);
+                UpdateHud();
+            }
+            if (plan.ExtraMoves > 0 || plan.FreeHintGlow) StartCoroutine(AnnounceAssist(plan));
+        }
+
+        System.Collections.IEnumerator AnnounceAssist(AttemptPlan plan)
+        {
+            int level = _levelIndex;
+            while (_inputLocked) yield return null;   // after the rings have landed
+            if (level != _levelIndex || _levelOver || _hud == null) yield break;
+            if (plan.FreeHintGlow && Hints.TryFind(_model, out var hint) && _rings[hint.Ring] != null)
+            {
+                if (hint.PullOut) _rings[hint.Ring].ShowPullHint();
+                else _rings[hint.Ring].ShowHint(hint.Delta);
+                _hud.ShowToast(plan.ExtraMoves > 0 ? $"+{plan.ExtraMoves} moves and a free hint" : "Here's a free hint");
+            }
+            else if (plan.ExtraMoves > 0) _hud.ShowToast($"+{plan.ExtraMoves} moves this time");
+        }
+
+        void EndAttempt(AttemptOutcome outcome)
+        {
+            if (!_attemptOpen || _adaptive == null) return;
+            _attemptOpen = false;
+            if (outcome == AttemptOutcome.Quit && _movesUsed == 0)
+            {
+                _adaptive.CancelAttempt();   // left without touching the board: not evidence of anything
+                return;
+            }
+            try
+            {
+                _adaptive.EndAttempt(new AttemptResult(outcome, _movesUsed, Time.time - _attemptStart,
+                    _attemptBoosters, _attemptContinues));
+            }
+            catch (Exception e) { Debug.LogWarning("Adaptive record skipped: " + e.Message); }
         }
 
         static string BoosterName(BoosterKind kind) => kind switch
@@ -715,6 +784,7 @@ namespace Orcub.Game
             _fx?.Cleared();
             _winStars = _rules.StarsFor(_movesUsed);
             Progress.RecordWin(_levelIndex, _winStars);
+            EndAttempt(AttemptOutcome.Win);
             _winAt = Time.time + 1.0f;   // let the last ring fly off and the chime ring first
         }
 
