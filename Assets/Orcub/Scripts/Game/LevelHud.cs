@@ -339,7 +339,7 @@ namespace Orcub.Game
         {
             var card = OpenCard();
             var title = Label(card, $"Level {level}", 84, Cream);
-            Anchor(title.rectTransform, 0f, 0.74f, 1f, 0.92f);
+            Anchor(title.rectTransform, 0f, 0.77f, 1f, 0.93f);
             Shadow(title);
 
             var full = new List<Image>();
@@ -347,16 +347,16 @@ namespace Orcub.Game
             {
                 float x0 = 0.08f + i * 0.285f, lift = i == 1 ? 0.05f : 0f;
                 var socket = Img(card, _art.uiStarClay, StarTan);
-                Anchor(socket.rectTransform, x0, 0.43f + lift, x0 + 0.27f, 0.71f + lift);
+                Anchor(socket.rectTransform, x0, 0.49f + lift, x0 + 0.27f, 0.74f + lift);
                 var star = Img(socket.transform, _art.uiStarClay, StarGold);
                 Anchor(star.rectTransform, 0, 0, 1, 1);
                 star.transform.localScale = Vector3.zero;
                 full.Add(star);
             }
             var next = Pill(card, "Next", Mint, 64, () => { ClosePopup(); onNext(); });
-            Anchor(next, 0.12f, 0.19f, 0.88f, 0.39f);
+            Anchor(next, 0.12f, 0.29f, 0.88f, 0.46f);
             var replay = TextLink(card, "Replay", () => { ClosePopup(); onReplay(); });
-            Anchor(replay, 0.3f, 0.04f, 0.7f, 0.16f);
+            Anchor(replay, 0.32f, 0.15f, 0.68f, 0.26f);   // inside the ring, clear of the arc ends
             StartCoroutine(PopStars(full, stars));
         }
 
@@ -388,15 +388,15 @@ namespace Orcub.Game
         {
             var card = OpenCard();
             var title = Label(card, "Out of moves", 76, Cream);
-            Anchor(title.rectTransform, 0f, 0.66f, 1f, 0.84f);
+            Anchor(title.rectTransform, 0f, 0.68f, 1f, 0.85f);
             Shadow(title);
             if (canWatchAd)
             {
                 var ad = Pill(card, $"+{bonusMoves} moves", Coral, 60, () => { ClosePopup(); onWatchAd(); }, _art.uiFilm);
-                Anchor(ad, 0.06f, 0.36f, 0.94f, 0.58f);
+                Anchor(ad, 0.06f, 0.4f, 0.94f, 0.6f);
             }
             var retry = TextLink(card, "Retry", () => { ClosePopup(); onRetry(); });
-            Anchor(retry, 0.3f, canWatchAd ? 0.18f : 0.4f, 0.7f, canWatchAd ? 0.3f : 0.54f);
+            Anchor(retry, 0.32f, canWatchAd ? 0.22f : 0.42f, 0.68f, canWatchAd ? 0.33f : 0.54f);
         }
 
         /// <summary>Placeholder for a rewarded video until the ads SDK is wired in.</summary>
