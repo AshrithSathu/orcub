@@ -22,6 +22,13 @@ namespace Orcub.Game
         /// </summary>
         public static Func<string, Task<bool>> BoosterUnlock;
 
+        /// <summary>
+        /// Event id of the level_start just queued (the gold continue's attempt reference: the server only accepts a
+        /// continue for an acknowledged level_start). MISSING API: Net has no LastLevelStartEventId yet, so this stays
+        /// null and the gold continue row is hidden until ClientServices binds it (like LastLevelEndEventId).
+        /// </summary>
+        public static Func<string> LastLevelStartEventId;
+
         // ------------------------------------------------------------------ level rewards (GAME_WIRING.md, review f)
 
         /// <summary>Event id of the level_end just queued (ClientServices.LastLevelEndEventId).</summary>

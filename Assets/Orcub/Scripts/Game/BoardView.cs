@@ -17,7 +17,7 @@ namespace Orcub.Game
     /// refused with a shake and costs nothing; Undo rebuilds every mechanic view from the restored model.
     /// </summary>
     [ExecuteAlways]
-    public sealed class BoardView : MonoBehaviour
+    public sealed partial class BoardView : MonoBehaviour
     {
         enum DragMode { None, Rotate, Pull, Locked }
 
@@ -159,6 +159,7 @@ namespace Orcub.Game
             _home = HomeScreen.Create(transform, _kit, _fx, onPlay: () => PlayLevel(Frontier), onMap: ShowChapters,
                 onSettings: () => _account.OpenSettings());
             _account = AccountFlow.Create(transform, _kit, _home);
+            ShopFlow.Create(transform, _kit, () => _account.OpenSettings(), () => _hud != null && _hud.Shown, msg => _hud?.ShowToast(msg));
             _map = MapScreen.Create(transform, _kit, onPlayLevel: PlayLevel, onBack: ShowChapters);
             _chapters = ChaptersScreen.Create(transform, _kit, onOpen: ShowMap, onBack: ShowHome);
             _home.Hide();
@@ -212,6 +213,7 @@ namespace Orcub.Game
             _chapters.Hide();
             _home.Show();
             LevelLibrary.Prefetch(Frontier);   // warm the next generated boards before Play is tapped
+            MaybeOfferStarter();
         }
 
         /// <summary>Home → All levels (chapter cards) → one chapter's map → level-start sheet → play.</summary>
@@ -331,6 +333,7 @@ namespace Orcub.Game
             _movesUsed = 0;
             _bonusMoves = 0;
             _usedAdContinue = false;
+            _goldContinues = 0;
             _levelOver = false;
             _winAt = _failCheckAt = -1f;
             _undo.Clear();
@@ -965,7 +968,7 @@ namespace Orcub.Game
             if (MovesLeft > 0 && !stuck) return;
             _levelOver = true;
             _stuck = stuck;
-            _wreath?.Show();
+            _wreath?.Show(frame: false);   // the sheet leaves the board in view (approved out_of_moves_gold_B)
             if (stuck)
             {
                 bool canUndo = _undo.Count > 0 && BoosterInventory.Count(BoosterKind.Undo) > 0;
@@ -984,19 +987,27 @@ namespace Orcub.Game
             }
             bool canWatch = !_usedAdContinue;
             if (canWatch) AdsGateway.Service?.RewardedOfferShown("continue_moves");   // ad_offer: the video pill is visible
-            _hud?.ShowOutOfMoves(ContinueMoves, canWatch,
-                onWatchAd: () => ShowRewarded("continue_moves", () =>
-                {
-                    _wreath?.Hide();
-                    _usedAdContinue = true;
-                    _attemptContinues++;
-                    _bonusMoves += ContinueMoves;
-                    _levelOver = false;
-                    _hud.SetMoves(MovesLeft, bump: true);
-                    Haptics.Play(Haptics.Impact.Medium, 0.8f);
-                }),
+            var offer = new LevelHud.ContinueOffer { Moves = ContinueMoves, CanWatch = canWatch };
+            offer.OnWatch = () => ShowRewarded("continue_moves", () =>
+            {
+                _usedAdContinue = true;
+                Continued(ContinueMoves);
+            });
+            AddGoldContinue(offer);
+            _hud?.ShowOutOfMoves(offer,
                 onRetry: () => { EndAttempt(AttemptOutcome.Lose); SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain); },
                 onHome: () => { EndAttempt(AttemptOutcome.Lose); GoHome(costsLife: true); });
+        }
+
+        /// <summary>A continue (video or gold) landed: the attempt stays open and resumes with the extra moves.</summary>
+        void Continued(int moves)
+        {
+            _wreath?.Hide();
+            _attemptContinues++;
+            _bonusMoves += moves;
+            _levelOver = false;
+            _hud.SetMoves(MovesLeft, bump: true);
+            Haptics.Play(Haptics.Impact.Medium, 0.8f);
         }
 
         // ------------------------------------------------------------------ pause, lives
@@ -1086,8 +1097,13 @@ namespace Orcub.Game
             if (_levelOver) return;
             if (BoosterInventory.Count(kind) <= 0)
             {
-                Haptics.Notify(Haptics.Notice.Warning);
-                _hud.ShowToast($"No {BoosterName(kind)}s left");   // shop arrives with the currency step
+                if (ShopFlow.Instance != null && ShopGateway.Current != null)
+                    ShopFlow.OfferBooster(kind, () => { if (this != null) UpdateHud(); });   // one for 40 gold
+                else
+                {
+                    Haptics.Notify(Haptics.Notice.Warning);
+                    _hud.ShowToast($"No {BoosterName(kind)}s left");
+                }
                 return;
             }
             string refusal = null;
@@ -1260,6 +1276,7 @@ namespace Orcub.Game
             _levelOver = true;
             _fx?.Cleared();
             _winStars = _rules.StarsFor(_movesUsed);
+            _starterAfterWin = true;
             Progress.RecordWin(_levelIndex, _winStars);
             LevelLibrary.Prefetch(_levelIndex + 1);   // the frontier moved: warm the next boards
             _account.RecordWin(_levelIndex + 1);   // may wait for the tracking pre-prompt

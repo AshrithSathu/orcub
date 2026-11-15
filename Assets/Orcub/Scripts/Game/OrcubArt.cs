@@ -105,6 +105,10 @@ namespace Orcub.Game
         [Tooltip("Whitened copies of the clay shell, tinted cream at runtime so the coat reads against the tan clamp.")]
         public Sprite clayIntactLight, clayCrackedLight;
         public Sprite bossBadge, goldBar;
+        [Header("Shop (approved shop_v1, Art/Shop)")]
+        public Sprite goldBarSmall, goldParticle, starterBundle, removeAdsArt, infinityHeart, ribbon;
+        [Tooltip("Gold pack art in catalog order: 100, 600, 1400, 3200.")]
+        public Sprite[] goldPacks = new Sprite[0];
         public string[] introKeys = new string[0];
         public Sprite[] introIcons = new Sprite[0];
 

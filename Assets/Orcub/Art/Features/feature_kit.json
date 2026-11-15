@@ -1,0 +1,102 @@
+{
+  "samples": 64,
+  "ppu": 200,
+  "border_order": [
+    "left",
+    "bottom",
+    "right",
+    "top"
+  ],
+  "sprites": {
+    "calendar": {
+      "file": "calendar.png",
+      "width": 300,
+      "height": 280,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Cream clay calendar: coral header, tan binding rings, plum day squares."
+    },
+    "calendar_check": {
+      "file": "calendar_check.png",
+      "width": 300,
+      "height": 280,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Cream clay calendar carrying a mint check (daily streak)."
+    },
+    "gift_open": {
+      "file": "gift_open.png",
+      "width": 360,
+      "height": 300,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Cream gift box opening: lid with coral bow tipped up to the left."
+    },
+    "bell": {
+      "file": "bell.png",
+      "width": 300,
+      "height": 280,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Gold clay bell with three short cream rays (notification opt-in)."
+    },
+    "hand": {
+      "file": "hand.png",
+      "width": 300,
+      "height": 300,
+      "ppu": 200,
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "tintable": false,
+      "border": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "note": "Cream clay pointing hand, index finger to the upper left."
+    }
+  }
+}

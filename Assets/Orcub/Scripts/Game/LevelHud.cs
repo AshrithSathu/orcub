@@ -51,12 +51,15 @@ namespace Orcub.Game
         RectTransform _popup, _card;
         bool _creamCard;
         bool _keepBar;              // the "New gear!" sheet leaves the top bar in view (approved intro card B)
+        bool _dimBar;               // anchored fail sheets (approved out_of_moves_gold_B) leave the HUD dimmed in view
         Action _onDismiss;          // what closing the open sheet means (intro: "Got it")
         RectTransform _levelRt, _movesRt, _dividerRt;
         Image _boss;
         Color OnCard => _creamCard ? UiKit.Ink : UiKit.Cream;
 
         public bool PopupOpen => _popup != null;
+        /// <summary>The level HUD is on screen (a level is being played), as opposed to a menu.</summary>
+        public bool Shown => _targetAlpha > 0.5f;
 
         public static LevelHud Create(Transform parent, OrcubArt art, bool devTools)
         {
@@ -269,7 +272,7 @@ namespace Orcub.Game
 
         void Update()
         {
-            float target = _popup != null && !_keepBar ? 0f : _targetAlpha;   // a card owns the screen: top bar and tray step back
+            float target = _popup != null && !_keepBar ? (_dimBar ? Mathf.Min(_targetAlpha, 0.45f) : 0f) : _targetAlpha;   // a card owns the screen: top bar and tray step back
             _group.alpha = Mathf.MoveTowards(_group.alpha, target, Time.unscaledDeltaTime * 5f);
             _group.interactable = _group.blocksRaycasts = target > 0.5f && _popup == null;
 
@@ -489,6 +492,7 @@ namespace Orcub.Game
             _popup = null;
             _card = null;
             _keepBar = false;
+            _dimBar = false;
             _onDismiss = null;
         }
 
@@ -688,28 +692,215 @@ namespace Orcub.Game
             }
         }
 
-        /// <summary>
-        /// Out of moves: one "+N moves" pill (rewarded ad, once), then Retry · Home. The dead-end variant (review e,
-        /// M5: rust or a spring left no way out) has its own title and, instead of the video pill, an Undo pill.
-        /// </summary>
+        /// <summary>Legacy entry (tools): video-only offer.</summary>
         public void ShowOutOfMoves(int bonusMoves, bool canWatchAd, Action onWatchAd, Action onRetry, Action onHome,
             string title = "Out of moves", Action onUndo = null)
         {
-            var card = OpenCard();
-            Title(card, title, 0.68f, 0.85f, 76);
-            bool pill = canWatchAd || onUndo != null;
-            if (onUndo != null)
+            var offer = new ContinueOffer { Moves = bonusMoves, CanWatch = canWatchAd, OnWatch = onWatchAd, Title = title };
+            if (onUndo != null) offer.Extra.Add(("Undo", _art.iconUndo, onUndo));
+            ShowOutOfMoves(offer, onRetry, onHome);
+        }
+
+        /// <summary>What the out-of-moves sheet offers. Gold and video rows are hidden when unavailable.</summary>
+        public sealed class ContinueOffer
+        {
+            public string Title = "Out of moves";
+            public int Moves = 5;
+            public int GoldPrice;
+            /// <summary>Gold continue (null hides the row). Receives the idempotency key of this intent.</summary>
+            public Func<string, System.Threading.Tasks.Task<SpendResult>> SpendGold;
+            /// <summary>After a confirmed gold continue: the moves the server granted (0 on a replayed key).</summary>
+            public Action<int> OnGoldContinued;
+            public bool CanWatch;
+            public Action OnWatch;
+            /// <summary>Dead-end rescues (Undo, Unclamp) shown instead of the gold / video rows.</summary>
+            public readonly List<(string label, Sprite glyph, Action action)> Extra = new List<(string, Sprite, Action)>();
+            /// <summary>Shown in place of "Add N moves" (dead ends: why the board is stuck).</summary>
+            public string Subtitle;
+        }
+
+        /// <summary>
+        /// Out of moves (approved out_of_moves_gold_B): an anchored cream sheet that leaves the board in view. Header
+        /// (broken-lamp art, title, close X = Home), "Add 5 moves" with the gold balance, ONE mint
+        /// "+5 moves for 60 gold" (price escalates x1.5 per gold continue; the tap is the confirmation of the shown
+        /// price; pending + inline retry; not enough gold opens the shop), a coral "Watch video for +5" (once per
+        /// attempt), then Retry · Home. Dead ends (rust / spring) swap the continue rows for Undo / Unclamp.
+        /// </summary>
+        public void ShowOutOfMoves(ContinueOffer offer, Action onRetry, Action onHome)
+        {
+            ClosePopup();
+            _creamCard = true;
+            _dimBar = true;
+            _onDismiss = onHome;
+            var popup = _popup = UiKit.Rect("Popup", _cards);
+            UiKit.Anchor(_popup, 0, 0, 1, 1);
+            var scrim = _popup.gameObject.AddComponent<Image>();
+            scrim.color = new Color(0.05f, 0.01f, 0.03f, 0f);
+            StartCoroutine(FadeScrim(scrim, 0.45f));
+
+            var kit = _kit;
+            var ink = UiKit.Ink;
+            const float side = 52f;
+            var sheet = UiKit.Rect("MovesSheet", _popup);
+            sheet.anchorMin = new Vector2(0.03f, 0f);
+            sheet.anchorMax = new Vector2(0.97f, 0f);
+            sheet.pivot = new Vector2(0.5f, 0f);
+            var bg = kit.MakeImage(sheet, _art.sheet != null ? _art.sheet : _art.uiCard, _art.sheet != null ? Color.white : UiKit.CardCream);
+            bg.type = Image.Type.Sliced;
+            bg.raycastTarget = true;
+            UiKit.Anchor(bg.rectTransform, 0, 0, 1, 1);
+            bg.rectTransform.offsetMin = new Vector2(0f, -60f);
+
+            // the sheet's content is laid out top-down above the home indicator (safe-area bottom)
+            float safeBottom = _safe.anchorMin.y * _canvasRect.rect.height;
+            float y = 44f;
+            bool pending = false;
+            var buttons = new List<RectTransform>();
+            void Lock(bool on) { foreach (var b in buttons) ShopUi.SetInteractable(b, !on); }
+            void Close(Action then) { if (_popup != popup || pending) return; ClosePopup(); then?.Invoke(); }
+
+            // header: broken lamp (sits proud of the sheet's top edge), title, close
+            int lampIdx = Array.IndexOf(_art.workshopIds ?? new string[0], "lamp");
+            Sprite lamp = lampIdx >= 0 && lampIdx < _art.workshopBroken.Length ? _art.workshopBroken[lampIdx] : _art.chapterLamp;
+            if (lamp != null)
             {
-                var undo = _kit.Pill(card, "Undo", UiKit.Mint, UiKit.Title, () => { ClosePopup(); onUndo(); }, _art.iconUndo, UiKit.Ink);
-                UiKit.Anchor(undo, 0.06f, 0.4f, 0.94f, 0.6f);
+                var l = kit.MakeImage(sheet, lamp, Color.white);
+                var lrt = l.rectTransform;
+                lrt.anchorMin = lrt.anchorMax = new Vector2(0f, 1f);
+                lrt.pivot = new Vector2(0f, 1f);
+                lrt.sizeDelta = new Vector2(176f, 176f);
+                lrt.anchoredPosition = new Vector2(34f, 50f);
             }
-            else if (canWatchAd)
+            var head = AccountUi.Row(sheet, "Head", y, 116f, lamp != null ? 196f : side, 150f);
+            var title = kit.MakeText(head, offer.Title, 90, ink, TextAnchor.MiddleLeft);
+            UiKit.Anchor(title.rectTransform, 0, 0, 1, 1);
+            AccountUi.Fit(title, 640f, 90, UiKit.Title);
+            var close = ShopUi.Close(kit, sheet, 40f, 40f, () => Close(onHome));
+            buttons.Add(close);
+            y += 116f + 22f;
+
+            bool continues = offer.Extra.Count == 0 && (offer.SpendGold != null || offer.CanWatch);
+            Text st = null;   // the subtitle doubles as the gold row's error line (no layout shift, no gap)
+            if (continues || offer.Subtitle != null)
             {
-                var ad = _kit.Pill(card, $"+{bonusMoves} moves", UiKit.Coral, UiKit.Title, () => { ClosePopup(); onWatchAd(); }, _art.uiFilm);
-                UiKit.Anchor(ad, 0.06f, 0.4f, 0.94f, 0.6f);
+                var sub = AccountUi.Row(sheet, "Sub", y, 64f, side + 6f, side);
+                st = kit.MakeText(sub, offer.Subtitle ?? $"Add {offer.Moves} moves", UiKit.Body + 4, ink, TextAnchor.MiddleLeft);
+                UiKit.Anchor(st.rectTransform, 0, 0, 1, 1);
+                if (offer.SpendGold != null)
+                {   // the balance the price is paid from
+                    var bal = UiKit.Rect("Balance", sub);
+                    bal.anchorMin = new Vector2(0.55f, 0f);
+                    bal.anchorMax = new Vector2(1f, 1f);
+                    bal.offsetMin = bal.offsetMax = Vector2.zero;
+                    var bt = kit.MakeText(bal, ShopCatalog.Gold(ShopGateway.Current?.Gold ?? 0), UiKit.Body, ink, TextAnchor.MiddleRight);
+                    UiKit.Anchor(bt.rectTransform, 0, 0, 1, 1);
+                    var gi = kit.MakeImage(bal, ShopUi.GoldIcon(_art), Color.white);
+                    var grt = gi.rectTransform;
+                    grt.anchorMin = grt.anchorMax = new Vector2(1f, 0.5f);
+                    grt.pivot = new Vector2(1f, 0.5f);
+                    grt.sizeDelta = new Vector2(76f, 46f);
+                    grt.anchoredPosition = new Vector2(-(bt.preferredWidth + 14f), 0f);
+                    StartCoroutine(TrackBalance(bt, grt));
+                }
+                y += 64f + 18f;
             }
-            float y = pill ? 0.2f : 0.42f;
-            LinkPair(card, "Retry", onRetry, "Home", onHome, y, y + 0.12f);
+
+            Text helper = null;
+            if (offer.Extra.Count > 0)
+            {
+                foreach (var (label, glyph, action) in offer.Extra)
+                {
+                    var row = AccountUi.Row(sheet, label, y, 150f, side, side);
+                    var pill = kit.Pill(row, label, UiKit.Mint, UiKit.Title, () => Close(action), glyph, ink);
+                    UiKit.Anchor(pill, 0, 0, 1, 1);
+                    buttons.Add(pill);
+                    y += 150f + 22f;
+                }
+            }
+            else
+            {
+                if (offer.SpendGold != null)
+                {
+                    var row = AccountUi.Row(sheet, "Gold", y, 150f, side, side);
+                    string idle = $"+{offer.Moves} moves for {offer.GoldPrice} gold";
+                    var gold = kit.Pill(row, idle, UiKit.Mint, UiKit.Title, () => { }, ShopUi.GoldIcon(_art), Color.white);
+                    UiKit.Anchor(gold, 0, 0, 1, 1);
+                    buttons.Add(gold);
+                    var label = gold.GetComponentInChildren<Text>();
+                    y += 150f + 26f;
+                    helper = st;
+                    string subtitle = st != null ? st.text : "";
+                    var spend = new GoldSpend();
+                    bool applied = false;
+                    var b = gold.GetComponent<Button>();
+                    b.onClick.RemoveAllListeners();
+                    b.onClick.AddListener(async () =>
+                    {
+                        if (pending || _popup != popup || applied) return;
+                        Haptics.Play(Haptics.Impact.Light, 0.6f);
+                        pending = true;
+                        Lock(true);
+                        label.text = "Adding moves…";
+                        if (helper != null) { helper.text = subtitle; helper.color = ink; helper.fontSize = UiKit.Body + 4; }
+                        var r = await spend.Run(offer.SpendGold, () => ShopFlow.OpenShop(), ShopGateway.Current?.Gold ?? 0, offer.GoldPrice);
+                        pending = false;
+                        if (this == null || _popup != popup) return;   // the sheet was closed meanwhile
+                        Lock(false);
+                        label.text = idle;
+                        if (r.Ok)
+                        {
+                            applied = true;
+                            Haptics.Notify(Haptics.Notice.Success);
+                            ClosePopup();
+                            offer.OnGoldContinued?.Invoke(r.ExtraMoves);
+                            return;
+                        }
+                        if (spend.Error != null && helper != null)
+                        {
+                            helper.text = spend.Error;
+                            helper.color = AccountUi.DeleteRed;
+                            AccountUi.Fit(helper, 520f, UiKit.Body + 4, UiKit.Caption);
+                            Haptics.Notify(Haptics.Notice.Warning);
+                        }
+                    });
+                }
+                if (offer.CanWatch)
+                {
+                    var row = AccountUi.Row(sheet, "Video", y, 134f, side + 6f, side + 6f);
+                    var video = kit.Pill(row, $"Watch video for +{offer.Moves}", UiKit.Coral, UiKit.Title - 4, () => Close(offer.OnWatch), _art.uiFilm, UiKit.Cream);
+                    UiKit.Anchor(video, 0, 0, 1, 1);
+                    buttons.Add(video);
+                    y += 134f + 20f;
+                }
+            }
+
+            y += 18f;
+            var pair = AccountUi.Row(sheet, "RetryHome", y, 132f, side, side);
+            var retry = kit.Pill(pair, "Retry", UiKit.CardCream, UiKit.Title, () => Close(onRetry));
+            UiKit.Anchor(retry, 0f, 0f, 0.48f, 1f);
+            var home = kit.Pill(pair, "Home", UiKit.CardCream, UiKit.Title, () => Close(onHome));
+            UiKit.Anchor(home, 0.52f, 0f, 1f, 1f);
+            buttons.Add(retry);
+            buttons.Add(home);
+            y += 132f + 40f;
+
+            sheet.sizeDelta = new Vector2(0f, y + safeBottom);
+            var slide = sheet.gameObject.AddComponent<CanvasGroup>();
+            StartCoroutine(SlideUp(sheet, slide));
+        }
+
+        IEnumerator TrackBalance(Text label, RectTransform icon)
+        {
+            while (label != null)
+            {
+                string v = ShopCatalog.Gold(ShopGateway.Current?.Gold ?? 0);
+                if (label.text != v)
+                {
+                    label.text = v;
+                    icon.anchoredPosition = new Vector2(-(label.preferredWidth + 14f), 0f);
+                }
+                yield return new WaitForSecondsRealtime(0.3f);
+            }
         }
 
         /// <summary>Pause / settings: sound + haptics, Restart (costs a life), Resume, and a Home link.</summary>
@@ -809,6 +1000,7 @@ namespace Orcub.Game
             var body = UiKit.Rect("Body", sheet);
             UiKit.Anchor(body, 0.05f, 0.06f, 0.95f, 0.96f);
             var ink = UiKit.Ink;
+            bool busy = false;   // a gold refill is pending: every other control is inert
 
             // header: lamp art, title, close X
             if (_art.chapterLamp != null)
@@ -820,7 +1012,7 @@ namespace Orcub.Game
             var title = _kit.MakeText(body, "Out of lives", UiKit.Display, ink);
             UiKit.Anchor(title.rectTransform, 0.2f, 0.82f, 0.84f, 1f);
             var close = _kit.RoundButton(body, "Close", _art.glyphClose != null ? _art.glyphClose : _art.uiRound, UiKit.CardCream, UiKit.Coral,
-                () => { if (_popup == popup) { ClosePopup(); onBack?.Invoke(); } });
+                () => { if (_popup == popup && !busy) { ClosePopup(); onBack?.Invoke(); } });
             UiKit.Anchor(close, 0.86f, 0.84f, 1f, 1f);
             close.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
 
@@ -849,12 +1041,15 @@ namespace Orcub.Game
             var goldText = gold.GetComponentInChildren<Text>();
             var goldButton = gold.GetComponent<Button>();
             goldButton.onClick.RemoveAllListeners();
-            bool busy = false;
+            var lockable = new RectTransform[3];   // close, video, wait: inert while the refill is pending
             goldButton.onClick.AddListener(async () =>
             {
                 if (busy || refillGold == null) return;
-                busy = true;
                 Haptics.Play(Haptics.Impact.Light, 0.6f);
+                var port = ShopGateway.Current;
+                if (port != null && port.Gold < ShopCatalog.RefillGold) { ShopFlow.OpenShop(); return; }   // not enough gold: the shop
+                busy = true;
+                ShopUi.SetInteractable(lockable[0], false); ShopUi.SetInteractable(lockable[1], false); ShopUi.SetInteractable(lockable[2], false);
                 goldText.text = "Refilling…";
                 helper.text = "Refills all 5 lives";
                 bool ok;
@@ -862,6 +1057,7 @@ namespace Orcub.Game
                 catch (Exception) { ok = false; }
                 if (this == null || _popup != popup) return;   // the sheet was closed meanwhile
                 busy = false;
+                foreach (var l in lockable) ShopUi.SetInteractable(l, true);
                 if (ok)
                 {
                     Haptics.Notify(Haptics.Notice.Success);
@@ -876,10 +1072,11 @@ namespace Orcub.Game
 
             // secondary: rewarded video, quiet cream row
             var video = _kit.Pill(body, "Watch video for 1 life", UiKit.CardCream, UiKit.Label,
-                () => { if (_popup == popup) { ClosePopup(); onRefillAd?.Invoke(); } }, _art.uiFilm, ink);
+                () => { if (_popup == popup && !busy) { ClosePopup(); onRefillAd?.Invoke(); } }, _art.uiFilm, ink);
             UiKit.Anchor(video, 0.02f, 0.14f, 0.98f, 0.3f);
-            var wait = _kit.Link(body, "Wait", OnCard, () => { if (_popup == popup) { ClosePopup(); onBack?.Invoke(); } });
+            var wait = _kit.Link(body, "Wait", OnCard, () => { if (_popup == popup && !busy) { ClosePopup(); onBack?.Invoke(); } });
             UiKit.Anchor(wait, 0.35f, 0f, 0.65f, 0.12f);
+            lockable[0] = close; lockable[1] = video; lockable[2] = wait;
 
             var slide = sheet.gameObject.AddComponent<CanvasGroup>();
             StartCoroutine(SlideUp(sheet, slide));

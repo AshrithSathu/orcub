@@ -1,0 +1,6 @@
+{
+  "name": "Orcub.Features",
+  "rootNamespace": "Orcub.Features",
+  "references": ["Orcub.Runtime", "Orcub.Net", "Orcub.Store", "Orcub.Daily", "Orcub.Ads", "Unity.Newtonsoft.Json"],
+  "autoReferenced": true
+}

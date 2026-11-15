@@ -558,6 +558,7 @@ namespace Orcub.EditorTools
 
             art.bossBadge = ImportUiIcon($"{dir}/boss_badge.png");
             art.goldBar = ImportUiIcon("Assets/Orcub/Art/Shop/gold_bar.png");
+            ImportShopKit(art);
             string[] intros = { "ratchet", "linked", "colour_clamp", "key_padlock", "rust_oil", "spring", "clay", "mix" };
             art.introKeys = intros;
             art.introIcons = intros.Select(k => ImportUiIcon($"{dir}/intro_{k}.png")).ToArray();
@@ -616,6 +617,42 @@ namespace Orcub.EditorTools
                 wrote = true;
             }
             if (wrote) AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+        }
+
+        /// <summary>Shop kit (build_shop_kit.py): currency, packs, starter bundle, remove-ads, 9-slice ribbon.</summary>
+        public static void ImportShopKit(OrcubArt art)
+        {
+            const string dir = "Assets/Orcub/Art/Shop";
+            art.goldBarSmall = ImportUiIcon($"{dir}/gold_bar_small.png");
+            art.goldParticle = ImportUiIcon($"{dir}/gold_particle.png");
+            art.starterBundle = ImportUiIcon($"{dir}/starter_bundle.png");
+            art.removeAdsArt = ImportUiIcon($"{dir}/remove_ads.png");
+            art.infinityHeart = ImportUiIcon($"{dir}/infinity_heart.png");
+            art.goldPacks = new[] { "pack_100", "pack_600", "pack_1400", "pack_3200" }
+                .Select(n => ImportUiIcon($"{dir}/{n}.png")).ToArray();
+            var ti = (TextureImporter)AssetImporter.GetAtPath($"{dir}/ribbon.png");
+            if (ti != null)
+            {
+                ti.textureType = TextureImporterType.Sprite;
+                ti.spriteImportMode = SpriteImportMode.Single;
+                ti.alphaIsTransparency = true;
+                ti.mipmapEnabled = false;
+                ti.textureCompression = TextureImporterCompression.Uncompressed;
+                ti.spritePixelsPerUnit = 100;
+                ti.spriteBorder = new Vector4(68, 48, 68, 48);
+                ti.SaveAndReimport();
+                art.ribbon = AssetDatabase.LoadAssetAtPath<Sprite>($"{dir}/ribbon.png");
+            }
+            EditorUtility.SetDirty(art);
+        }
+
+        [MenuItem("Orcub/Import Shop Kit")]
+        static void ImportShopKitMenu()
+        {
+            var art = AssetDatabase.LoadAssetAtPath<OrcubArt>(ArtAssetPath);
+            if (art == null) { Debug.LogWarning("[Orcub] OrcubArt asset missing"); return; }
+            ImportShopKit(art);
+            AssetDatabase.SaveAssets();
         }
 
         static Sprite ImportUiIcon(string path)

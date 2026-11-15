@@ -182,6 +182,17 @@ MonoBehaviour:
   clayCrackedLight: {fileID: 21300000, guid: 0582fe197ba1d4b05a74c98954188e7a, type: 3}
   bossBadge: {fileID: 21300000, guid: 20b2175a189b141949bf281b7c77c252, type: 3}
   goldBar: {fileID: 21300000, guid: ffd32f3cdd2b9484fa40d546577d8d07, type: 3}
+  goldBarSmall: {fileID: 21300000, guid: 18e6983a3704444d78820cbba69e9035, type: 3}
+  goldParticle: {fileID: 21300000, guid: 138615f93dc304643b4a34dbe3c7a5b6, type: 3}
+  starterBundle: {fileID: 21300000, guid: 43ee3dcb4efa04d5a8ba518b620da1fb, type: 3}
+  removeAdsArt: {fileID: 21300000, guid: 6358cecf0dc524e529eb1111fb111a1c, type: 3}
+  infinityHeart: {fileID: 21300000, guid: 18b252a42a63b421db429244334931f7, type: 3}
+  ribbon: {fileID: 21300000, guid: 5694ad918f33f439994c72ead4686568, type: 3}
+  goldPacks:
+  - {fileID: 21300000, guid: e9f67cc6372284737bf5d171c38854a6, type: 3}
+  - {fileID: 21300000, guid: d3fec6f28be2c49b8af7159b257c6163, type: 3}
+  - {fileID: 21300000, guid: 66340d5132f6c4e48af5947e06378e68, type: 3}
+  - {fileID: 21300000, guid: 67afb45134a194508a86a880656036e2, type: 3}
   introKeys:
   - ratchet
   - linked

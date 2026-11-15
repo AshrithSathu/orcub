@@ -14,7 +14,7 @@ namespace Orcub.EditorTools
     /// Dev tool: in play mode, walks every screen and card and saves a screenshot of each at the Game view's size
     /// (set it to a phone, e.g. iPhone 12 Pro 1170x2532). Used for design review passes.
     /// </summary>
-    public static class OrcubShots
+    public static partial class OrcubShots
     {
         const BindingFlags Flags = BindingFlags.NonPublic | BindingFlags.Instance;
 
