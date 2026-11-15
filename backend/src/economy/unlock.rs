@@ -27,9 +27,9 @@ pub(super) async fn claim(tx: &mut Tx<'_>, id: Uuid, b: &Action) -> Result<Value
     if progress.is_some_and(|progress| progress < level) {
         return Err(ApiError(StatusCode::CONFLICT, "booster_unlock_locked"));
     }
-    let reward = json!({"gold":0,"inventory":{kind:3},"unlimited_minutes":0});
+    let reward = json!({"gold":0,"inventory":{kind:1},"unlimited_minutes":0});
     let receipt = json!({"source":"booster_unlock","kind":kind,"reward":reward});
-    sqlx::query("UPDATE wallets SET inventory=jsonb_set(inventory,ARRAY[$2],to_jsonb(COALESCE((inventory->>$2)::int,0)+3)) WHERE player_id=$1").bind(id).bind(kind).execute(&mut **tx).await?;
+    sqlx::query("UPDATE wallets SET inventory=jsonb_set(inventory,ARRAY[$2],to_jsonb(COALESCE((inventory->>$2)::int,0)+1)) WHERE player_id=$1").bind(id).bind(kind).execute(&mut **tx).await?;
     entry(
         tx,
         id,
@@ -87,7 +87,7 @@ mod tests {
                     .fetch_one(&pool)
                     .await
                     .unwrap();
-            assert_eq!(inventory[kind], 3);
+            assert_eq!(inventory[kind], 1);
         }
         let count:i64 = sqlx::query_scalar("SELECT count(*) FROM wallet_ledger WHERE player_id=$1 AND reason='booster_unlock' AND delta=0").bind(id).fetch_one(&pool).await.unwrap();
         assert_eq!(count, 3);
@@ -139,8 +139,8 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(inventory["hint"], 9); // 3 original plus 3 purchased from each guest.
-        assert_eq!(inventory["undo"], 3); // First guest carries, second guest is excluded.
+        assert_eq!(inventory["hint"], 11); // 1 original plus 5 purchased from each guest.
+        assert_eq!(inventory["undo"], 1); // First guest carries, second guest is excluded.
         assert_eq!(grant_kind(&pool, canonical, "hint").await.unwrap(), receipt);
         let count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM booster_unlock_claims WHERE player_id=$1")
