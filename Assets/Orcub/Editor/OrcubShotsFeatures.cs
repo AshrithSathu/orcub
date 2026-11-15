@@ -126,5 +126,52 @@ namespace Orcub.EditorTools
             bv.GetType().GetMethod("AddGoldContinue", Flags).Invoke(bv, new object[] { offer });
             Hud.ShowOutOfMoves(offer, () => { }, () => { });
         }
+
+        // ------------------------------------------------------------------ tutorial
+
+        static TutorialFlow Flow => (TutorialFlow)Board.GetType().GetField("_tutorial", Flags).GetValue(Board);
+
+        static void ResetTutorialPrefs()
+        {
+            foreach (TutorialStep s in Enum.GetValues(typeof(TutorialStep))) PlayerPrefs.DeleteKey("orcub.tutorial." + (int)s);
+        }
+
+        [MenuItem("Orcub/Capture Tutorial")]
+        public static void CaptureTutorial()
+        {
+            Begin("t");
+            Add(0f, () => { ClearOverlays(); ResetTutorialPrefs(); CallBoard("PlayLevel", 0); }, null);
+            Add(2.6f, () => Flow.Begin(1, 1), null);
+            Add(1.1f, null, "t01_rotate");
+            Add(0f, () =>
+            {   // a real tap move on the clamped ring: the clamp releases and the lesson advances by itself
+                var bv = Board;
+                int ring = (int)bv.GetType().GetField("_tutRing", Flags).GetValue(bv);
+                bv.GetType().GetMethod("CountMove", Flags).Invoke(bv, null);
+                bv.GetType().GetMethod("StartSmartSpin", Flags).Invoke(bv, new object[] { ring, new GestureTracker(bv.Model, ring) });
+            }, null);
+            AddUntil(() => Flow.Current == TutorialStep.Release);
+            Add(0.5f, null, "t02_released");
+            AddUntil(() => Flow.Current == TutorialStep.Pull);
+            Add(0.9f, null, "t03_pull");
+            Add(0f, () => CallBoard("PlayLevel", 1), null);
+            Add(2.8f, () => Flow.Begin(2, 2), null);
+            Add(0.8f, null, "t04_moves");
+            foreach (var (level, step, shot) in new[] { (5, TutorialStep.UnlockHint, "t05_unlock_hint"), (8, TutorialStep.UnlockUndo, "t06_unlock_undo"), (12, TutorialStep.UnlockUnclamp, "t07_unlock_unclamp") })
+            {
+                int l = level;
+                Add(0f, () => CallBoard("PlayLevel", l - 1), null);
+                Add(2.8f, () =>
+                {
+                    foreach (var u in TutorialFlow.Unlocks) Hud.SetBoosterLocked(u.kind, u.level > l);   // as a player first reaching it
+                    Flow.Begin(l, l);
+                }, null);
+                Add(0.8f, null, shot);
+            }
+            Add(0f, () => { Flow.End(); Hud.SetBoosterLocked(BoosterKind.Unclamp, true); CallBoard("UseBooster", BoosterKind.Unclamp); }, null);
+            Add(0.35f, null, "t08_locked_toast");
+            Add(0f, () => { ResetTutorialPrefs(); CallBoard("ShowHome"); }, null);
+            Start();
+        }
     }
 }

@@ -160,6 +160,7 @@ namespace Orcub.Game
                 onSettings: () => _account.OpenSettings());
             _account = AccountFlow.Create(transform, _kit, _home);
             ShopFlow.Create(transform, _kit, () => _account.OpenSettings(), () => _hud != null && _hud.Shown, msg => _hud?.ShowToast(msg));
+            InitTutorial();
             _map = MapScreen.Create(transform, _kit, onPlayLevel: PlayLevel, onBack: ShowChapters);
             _chapters = ChaptersScreen.Create(transform, _kit, onOpen: ShowMap, onBack: ShowHome);
             _home.Hide();
@@ -237,6 +238,7 @@ namespace Orcub.Game
         /// </summary>
         void CancelLevelStart()
         {
+            EndTutorial();
             _session++;
             if (_loading != null) { StopCoroutine(_loading); _loading = null; }
             HideLevelLoader();
@@ -509,6 +511,7 @@ namespace Orcub.Game
                 if (Current()) _inputLocked = false;
             }
             if (!Current()) yield break;
+            BeginTutorial();
             if (plan.ExtraMoves > 0 || plan.FreeHintGlow) yield return AnnounceAssist(plan, session);
         }
 
@@ -532,6 +535,7 @@ namespace Orcub.Game
             _hud.SetGoal(colours);
             foreach (var r in _model.Rings) if (r.Removed) _hud.MarkGoalFreed(r.Id);
             foreach (BoosterKind k in Enum.GetValues(typeof(BoosterKind))) _hud.SetBoosterCount(k, BoosterInventory.Count(k));
+            ApplyBoosterLocks();
             _hud.SetBoosterReady(BoosterKind.Undo, _undo.Count > 0);
         }
 
@@ -648,7 +652,7 @@ namespace Orcub.Game
             }
 
             Vector2 screen = pointer.position.ReadValue();
-            if (pointer.press.wasPressedThisFrame && _hud != null && _hud.Covers(screen)) return; // HUD button
+            if (pointer.press.wasPressedThisFrame && (_hud != null && _hud.Covers(screen) || TutorialCovers(screen))) return; // HUD / Skip
             Vector2 world = cam.ScreenToWorldPoint(screen);
             world = _content.InverseTransformPoint(world);
 
@@ -867,6 +871,7 @@ namespace Orcub.Game
             _featurePending = true;
             _hud?.SetMoves(Mathf.Max(0, MovesLeft), bump: true);
             _hud?.SetBoosterReady(BoosterKind.Undo, true);
+            _tutorial?.OnMove();
         }
 
         /// <summary>
@@ -967,6 +972,7 @@ namespace Orcub.Game
             bool stuck = MovesLeft > 0 && Deadlock.IsDead(_model);
             if (MovesLeft > 0 && !stuck) return;
             _levelOver = true;
+            EndTutorial();
             _stuck = stuck;
             _wreath?.Show(frame: false);   // the sheet leaves the board in view (approved out_of_moves_gold_B)
             if (stuck)
@@ -1095,6 +1101,12 @@ namespace Orcub.Game
             if (_active >= 0) return;   // a finger is on a ring; the tap is ignored silently
             FinishSpins();              // H1: a running tap spin completes its move before the booster acts
             if (_levelOver) return;
+            if (_hud.BoosterLocked(kind))
+            {
+                Haptics.Notify(Haptics.Notice.Warning);
+                _hud.ShowToast($"{char.ToUpper(BoosterName(kind)[0])}{BoosterName(kind).Substring(1)} unlocks at level {TutorialFlow.UnlockLevel(kind)}");
+                return;
+            }
             if (BoosterInventory.Count(kind) <= 0)
             {
                 if (ShopFlow.Instance != null && ShopGateway.Current != null)
@@ -1165,6 +1177,7 @@ namespace Orcub.Game
             Haptics.Play(Haptics.Impact.Medium, 0.8f);
             _hud.SetBoosterCount(kind, BoosterInventory.Count(kind));
             _hud.SetBoosterReady(BoosterKind.Undo, _undo.Count > 0);
+            _tutorial?.OnBooster(kind);
         }
 
         // ------------------------------------------------------------------ adaptive difficulty
@@ -1274,6 +1287,7 @@ namespace Orcub.Game
         void OnSolved()
         {
             _levelOver = true;
+            EndTutorial();
             _fx?.Cleared();
             _winStars = _rules.StarsFor(_movesUsed);
             _starterAfterWin = true;
@@ -1346,11 +1360,13 @@ namespace Orcub.Game
             _rings[id].FreeHint = false;
             _rings[id].FlyAway(dir, speed);
             _fx?.PullOut(_model.Rings[id].Radius);
+            _tutorial?.OnPulled();
             return true;
         }
 
         void OnLinkReleased(Link link)
         {
+            _tutorial?.OnReleased();
             if (_holders[link.Id] != null) _holders[link.Id].Release();
             _fx?.Release();
             if (_crumbs != null)

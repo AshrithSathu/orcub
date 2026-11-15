@@ -43,6 +43,12 @@ namespace Orcub.Game
         readonly Dictionary<BoosterKind, int> _boosterCounts = new Dictionary<BoosterKind, int>();
         readonly Dictionary<BoosterKind, bool> _boosterReady = new Dictionary<BoosterKind, bool>();
         RectTransform _toast;
+        CanvasGroup _topBand, _goalBand, _trayGroup;
+        readonly Dictionary<BoosterKind, Text> _captions = new Dictionary<BoosterKind, Text>();
+        readonly HashSet<BoosterKind> _locked = new HashSet<BoosterKind>();
+        readonly Dictionary<BoosterKind, Image> _lockIcons = new Dictionary<BoosterKind, Image>();
+        BoosterKind? _spotlight;
+        RectTransform _freeBadge;
         float _livesRefresh;
         readonly List<RectTransform> _hitAreas = new List<RectTransform>();
         float _targetAlpha = 1f;
@@ -145,6 +151,7 @@ namespace Orcub.Game
             var kit = _kit;
             var band = UiKit.Rect("TopBand", _safe);
             UiKit.Anchor(band, 0f, 1f - TopBandFraction, 1f, 1f);
+            _topBand = band.gameObject.AddComponent<CanvasGroup>();
             var slab = kit.MakeImage(band, _art.uiSlab, UiKit.Slab, sliced: true).rectTransform;
             UiKit.Anchor(slab, SideMargin, 0.12f, 1f - SideMargin, 0.94f);
             var face = Face(slab);
@@ -205,6 +212,7 @@ namespace Orcub.Game
         {
             var kit = _kit;
             var goal = UiKit.Rect("Goal", _safe);
+            _goalBand = goal.gameObject.AddComponent<CanvasGroup>();
             UiKit.Anchor(goal, SideMargin + 0.05f, 1f - TopBandFraction - GoalBandFraction, 1f - SideMargin - 0.05f, 1f - TopBandFraction);
             var pill = kit.MakeImage(goal, _art.uiSlab, UiKit.Slab, sliced: true).rectTransform;
             UiKit.Anchor(pill, 0f, 0.04f, 1f, 0.96f);
@@ -221,6 +229,7 @@ namespace Orcub.Game
             float y0 = (_devTools ? DevBandFraction : 0f) + 0.012f;
             var tray = UiKit.Rect("Tray", _safe);
             UiKit.Anchor(tray, SideMargin, y0, 1f - SideMargin, y0 + TrayFraction);
+            _trayGroup = tray.gameObject.AddComponent<CanvasGroup>();
             var shelf = kit.Card(tray, 0.7f);
             UiKit.Anchor(shelf.rectTransform, 0f, 0f, 1f, 1f);
             _hitAreas.Add(tray);   // the whole shelf belongs to the UI, never the board
@@ -249,6 +258,7 @@ namespace Orcub.Game
                 var caption = kit.MakeText(slot, label, UiKit.Caption, UiKit.Ink, TextAnchor.UpperCenter);
                 UiKit.Anchor(caption.rectTransform, 0f, 0f, 1f, 0.27f);
                 _boosters[kind] = (button.GetComponent<Image>(), count);
+                _captions[kind] = caption;
             }
         }
 
@@ -377,10 +387,89 @@ namespace Orcub.Game
             if (!_boosters.TryGetValue(kind, out var b)) return;
             int count = _boosterCounts.TryGetValue(kind, out var c) ? c : 0;
             bool ready = !_boosterReady.TryGetValue(kind, out var r) || r;
+            bool locked = _locked.Contains(kind), spot = _spotlight == kind;
+            var badge = (RectTransform)b.badge.transform.parent;
+            b.badge.gameObject.SetActive(!locked);
             b.badge.text = count > 0 ? count.ToString() : "+";
-            b.button.color = count > 0 && ready ? UiKit.Coral : UiKit.Dim;
+            badge.gameObject.SetActive(!spot);
+            b.button.color = locked ? AccountUi.TileTan : spot ? UiKit.Mint : count > 0 && ready ? UiKit.Coral : UiKit.Dim;
             var glyph = b.button.transform.childCount > 0 ? b.button.transform.GetChild(0).GetComponent<Image>() : null;
-            if (glyph != null) glyph.color = new Color(UiKit.Cream.r, UiKit.Cream.g, UiKit.Cream.b, ready ? 1f : 0.55f);
+            if (glyph != null)
+            {
+                glyph.color = spot ? new Color(0.98f, 0.85f, 0.3f) : new Color(UiKit.Cream.r, UiKit.Cream.g, UiKit.Cream.b, locked ? 0.7f : ready ? 1f : 0.55f);
+            }
+            if (_captions.TryGetValue(kind, out var cap)) cap.color = new Color(UiKit.Ink.r, UiKit.Ink.g, UiKit.Ink.b, locked ? 0.45f : 1f);
+            // locked boosters (approved tutorial_v1 boosters_B): a small lock in the count badge
+            if (locked && !_lockIcons.ContainsKey(kind) && _art.homeLock != null)
+            {
+                var l = _kit.MakeImage(badge, _art.homeLock, UiKit.Ink);
+                UiKit.Anchor(l.rectTransform, 0.24f, 0.2f, 0.76f, 0.8f);
+                _lockIcons[kind] = l;
+            }
+            if (_lockIcons.TryGetValue(kind, out var li)) li.gameObject.SetActive(locked);
+        }
+
+        /// <summary>Before its unlock level a booster shows a lock (tapping it explains when it unlocks).</summary>
+        public void SetBoosterLocked(BoosterKind kind, bool locked)
+        {
+            if (locked ? !_locked.Add(kind) : !_locked.Remove(kind)) return;
+            RefreshBooster(kind);
+        }
+
+        public bool BoosterLocked(BoosterKind kind) => _locked.Contains(kind);
+
+        /// <summary>The unlock card's booster: mint, with a "1 free" badge (null clears it).</summary>
+        public void SetBoosterSpotlight(BoosterKind? kind)
+        {
+            var old = _spotlight;
+            _spotlight = kind;
+            if (old.HasValue) RefreshBooster(old.Value);
+            if (_freeBadge != null) { Destroy(_freeBadge.gameObject); _freeBadge = null; }
+            if (!kind.HasValue || !_boosters.TryGetValue(kind.Value, out var b)) return;
+            RefreshBooster(kind.Value);
+            _freeBadge = UiKit.Rect("Free", b.button.transform);
+            _freeBadge.anchorMin = _freeBadge.anchorMax = new Vector2(0.5f, 1f);
+            _freeBadge.pivot = new Vector2(0.5f, 0.5f);
+            var t = _kit.MakeText(_freeBadge, "1 free", UiKit.Caption, UiKit.Ink);
+            _freeBadge.sizeDelta = new Vector2(t.preferredWidth + 56f, 64f);
+            _freeBadge.anchoredPosition = new Vector2(30f, -6f);
+            var pill = _kit.MakeImage(_freeBadge, _art.uiPill, UiKit.CardCream, sliced: true);
+            UiKit.Anchor(pill.rectTransform, 0, 0, 1, 1);
+            pill.transform.SetAsFirstSibling();
+            UiKit.Anchor(t.rectTransform, 0, 0.06f, 1, 0.94f);
+        }
+
+        /// <summary>Tutorial focus: dims the top bands and / or the tray (they stay usable; never a lock).</summary>
+        public void SetTutorialDim(bool top, bool tray)
+        {
+            float a = 0.42f;
+            if (_topBand != null) _topBand.alpha = top ? a : 1f;
+            if (_goalBand != null) _goalBand.alpha = top ? a : 1f;
+            if (_trayGroup != null) _trayGroup.alpha = tray ? a : 1f;
+        }
+
+        /// <summary>Screen rect of a booster button (tutorial pointers).</summary>
+        public Rect BoosterScreenRect(BoosterKind kind) =>
+            _boosters.TryGetValue(kind, out var b) ? ScreenRect((RectTransform)b.button.transform) : default;
+
+        /// <summary>Screen y of the tray's top edge and of the goal band's bottom edge (tutorial layout).</summary>
+        public float TrayTopScreen => _trayGroup != null ? ScreenRect((RectTransform)_trayGroup.transform).yMax : 0f;
+        public float GoalBottomScreen => _goalBand != null ? ScreenRect((RectTransform)_goalBand.transform).yMin : UnityEngine.Screen.height;
+
+        /// <summary>The moves lesson borrows the goal band's space (approved tut_moves_A has none).</summary>
+        public void SetGoalHidden(bool hidden)
+        {
+            if (_goalBand != null) _goalBand.alpha = hidden ? 0f : 1f;
+        }
+
+        /// <summary>Screen rect of the move counter (tutorial pointers).</summary>
+        public Rect MovesScreenRect => ScreenRect(_movesRt);
+
+        static Rect ScreenRect(RectTransform rt)
+        {
+            var c = new Vector3[4];
+            rt.GetWorldCorners(c);   // screen-space overlay: world corners are screen pixels
+            return new Rect(c[0].x, c[0].y, c[2].x - c[0].x, c[2].y - c[0].y);
         }
 
         /// <summary>Short message just above the booster tray; replaces any toast already showing.</summary>
