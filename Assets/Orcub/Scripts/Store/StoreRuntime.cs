@@ -23,7 +23,7 @@ namespace Orcub.Store
             instance=this; DontDestroyOnLoad(gameObject);
             var kit = gameObject.AddComponent<NativeStoreKit>();
             Service = new StoreService(kit, this, this);
-            Orcub.Game.ClientGateway.ClaimLevelReward=ClaimLevelReward;
+            Orcub.Game.ClientGateway.ClaimLevelReward=ClaimLevelReward; Orcub.Game.ClientGateway.PlayerId=()=>PlayerId;
             Orcub.Game.ClientGateway.BoosterUnlock=Service.ClaimBoosterUnlock;
             consumption = new WalletConsumption(this, this, Service.Wallet); Consumption = consumption;
             ConsumableGateway.Count = kind => consumption.Count(kind, DateTimeOffset.UtcNow);
@@ -48,8 +48,11 @@ namespace Orcub.Store
         {
             if(Time.realtimeSinceStartupAsDouble < nextUnlockRetry || retryingUnlocks || Service==null || string.IsNullOrEmpty(PlayerId)) return;
             retryingUnlocks=true;
-            try { foreach(var kind in Orcub.Game.BoosterUnlocks.Due(Progress.HighestUnlocked+1,
-                kind => Read("unlock-claimed."+PlayerId+"."+kind)=="1"))
+            try { var due=Orcub.Game.BoosterUnlocks.Due(Progress.HighestUnlocked+1,
+                kind => Read("unlock-claimed."+PlayerId+"."+kind)=="1");
+                // review m, M2: the server's unlock gate needs this progress uploaded (level_start / level_end / save)
+                if(due.Count>0 && ClientServices.Instance!=null) { try { await ClientServices.Instance.Flush(); } catch(Exception) { } }
+                foreach(var kind in due)
                 if(!await Service.ClaimBoosterUnlock(kind)) {
                     unlockFailures=Math.Min(unlockFailures+1,8);
                     nextUnlockRetry=Time.realtimeSinceStartupAsDouble+15*Math.Pow(2,unlockFailures);
@@ -145,6 +148,6 @@ namespace Orcub.Store
             try { await consumption.Reconcile(); await PrepareAccount(); await Service.Initialize(); } catch (Exception) { }
             await consumption.Reconcile();
         }
-        void OnDestroy() { Orcub.Game.ClientGateway.ClaimLevelReward=null; Orcub.Game.ClientGateway.BoosterUnlock=null; Consumption = null; ConsumableGateway.HasPendingSpends=null; ConsumableGateway.PrepareAdRefill=null; ConsumableGateway.AdRefillEarned=null; ConsumableGateway.FlushSpends=null; ConsumableGateway.MigrateSpends=null; ConsumableGateway.RefillFromAd=null; ConsumableGateway.RefillWithGold=null; instance=null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
+        void OnDestroy() { Orcub.Game.ClientGateway.ClaimLevelReward=null; Orcub.Game.ClientGateway.PlayerId=null; Orcub.Game.ClientGateway.BoosterUnlock=null; Consumption = null; ConsumableGateway.HasPendingSpends=null; ConsumableGateway.PrepareAdRefill=null; ConsumableGateway.AdRefillEarned=null; ConsumableGateway.FlushSpends=null; ConsumableGateway.MigrateSpends=null; ConsumableGateway.RefillFromAd=null; ConsumableGateway.RefillWithGold=null; instance=null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
     }
 }

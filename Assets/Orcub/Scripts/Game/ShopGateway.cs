@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 namespace Orcub.Game
 {
     /// <summary>How a StoreKit purchase / restore ended, as the shop UI needs to present it.</summary>
-    public enum PurchaseOutcome { Purchased, Pending, Failed, Cancelled, Unavailable }
+    public enum PurchaseOutcome { Purchased, Pending, Failed, Cancelled, Unavailable, NothingToRestore }
 
     /// <summary>Why a gold spend (continue, booster) did not go through.</summary>
     public enum SpendError { None, InsufficientGold, Offline, Unavailable }
@@ -13,8 +13,23 @@ namespace Orcub.Game
     {
         public readonly SpendError Error;
         public readonly int ExtraMoves;   // continue only: the server's effect (0 on a replayed key)
-        public SpendResult(SpendError error, int extraMoves = 0) { Error = error; ExtraMoves = extraMoves; }
+        /// <summary>
+        /// review m, L6: the store had already confirmed this key before (its effect isn't repeated). Only then may a
+        /// caller that never applied the effect apply it from its own rules; a 0-move fresh answer grants nothing.
+        /// </summary>
+        public readonly bool Replayed;
+        public SpendResult(SpendError error, int extraMoves = 0, bool replayed = false) { Error = error; ExtraMoves = extraMoves; Replayed = replayed; }
         public bool Ok => Error == SpendError.None;
+    }
+
+    /// <summary>
+    /// One spend intent's idempotency key, owned by whatever outlives the sheet showing it (review m, M3: BoardView
+    /// keeps the gold continue's intent per attempt). Unresolved while a key was sent without a definite answer.
+    /// </summary>
+    public sealed class SpendIntent
+    {
+        public string Key;
+        public bool Unresolved => Key != null;
     }
 
     /// <summary>
@@ -187,6 +202,7 @@ namespace Orcub.Game
             switch (outcome)
             {
                 case PurchaseOutcome.Purchased: SetMessage("Purchases restored.", Tone.Success); break;
+                case PurchaseOutcome.NothingToRestore: SetMessage("No purchases to restore.", Tone.Info); break;   // review m, L2
                 case PurchaseOutcome.Pending: SetMessage("Some purchases are still pending. We’ll add them soon.", Tone.Info); break;
                 case PurchaseOutcome.Cancelled: SetMessage(null, Tone.Quiet); break;
                 case PurchaseOutcome.Unavailable: SetMessage("The store isn’t available right now. Try again later.", Tone.Error); break;
@@ -211,28 +227,34 @@ namespace Orcub.Game
     {
         public bool Busy { get; private set; }
         public string Error { get; private set; }
-        string _key;
+        readonly SpendIntent _intent;
+
+        /// <param name="intent">Shared key holder (kept across sheet reopens); null = this sheet's own.</param>
+        public GoldSpend(SpendIntent intent = null) { _intent = intent ?? new SpendIntent(); }
+
+        public bool Unresolved => _intent.Unresolved;
 
         /// <summary>
         /// Runs one spend. The idempotency key is kept across a failed attempt (a retry of the same intent
-        /// must reuse it) and dropped after success or a definite refusal.
+        /// must reuse it, even from a reopened sheet) and dropped after success or a definite refusal. An unresolved
+        /// key skips the balance check: the server may already have taken the gold, and replays the same key.
         /// </summary>
         public async Task<SpendResult> Run(Func<string, Task<SpendResult>> spend, Action openShop, long gold, int price)
         {
             if (Busy) return new SpendResult(SpendError.Unavailable);
             Error = null;
-            if (gold < price) { openShop?.Invoke(); return new SpendResult(SpendError.InsufficientGold); }
-            _key ??= Guid.NewGuid().ToString();
+            if (gold < price && !_intent.Unresolved) { openShop?.Invoke(); return new SpendResult(SpendError.InsufficientGold); }
+            _intent.Key ??= Guid.NewGuid().ToString();
             Busy = true;
             SpendResult r;
-            try { r = await spend(_key); }
+            try { r = await spend(_intent.Key); }
             catch (Exception) { r = new SpendResult(SpendError.Offline); }
             Busy = false;
             switch (r.Error)
             {
-                case SpendError.None: _key = null; break;
-                case SpendError.InsufficientGold: _key = null; openShop?.Invoke(); break;
-                case SpendError.Unavailable: _key = null; Error = "Not available right now"; break;
+                case SpendError.None: _intent.Key = null; break;
+                case SpendError.InsufficientGold: _intent.Key = null; openShop?.Invoke(); break;
+                case SpendError.Unavailable: _intent.Key = null; Error = "Not available right now"; break;
                 default: Error = "Couldn’t connect. Try again"; break;
             }
             return r;

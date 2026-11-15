@@ -64,6 +64,55 @@ namespace Orcub.Game
         Color OnCard => _creamCard ? UiKit.Ink : UiKit.Cream;
 
         public bool PopupOpen => _popup != null;
+
+        float _sheetTop = -1f;      // an open floating fail sheet's top edge (canvas units above the screen bottom)
+
+        /// <summary>HUD canvas units for a length in screen pixels.</summary>
+        public float ScreenToUnits(float pixels)
+        {
+            var c = GetComponent<Canvas>();
+            float k = c != null && c.scaleFactor > 0f ? c.scaleFactor : 1f;
+            return pixels / k;
+        }
+
+        /// <summary>A length in HUD canvas units as a share of the safe area's height (the board's fit space).</summary>
+        public float UnitsToSafeFraction(float units) =>
+            _safe != null && _safe.rect.height > 1f ? units / _safe.rect.height : 0f;
+
+        /// <summary>
+        /// Top of the open out-of-moves / out-of-lives sheet as a share of the safe height (0 when none). The board
+        /// re-fits above it, as in the approved out_of_moves_gold_B.
+        /// </summary>
+        public float SheetTopFraction
+        {
+            get
+            {
+                if (_popup == null || _sheetTop <= 0f || _safe == null || _canvasRect == null) return 0f;
+                float safeBottom = _safe.anchorMin.y * _canvasRect.rect.height;
+                return UnitsToSafeFraction(_sheetTop - safeBottom);
+            }
+        }
+
+        /// <summary>Approved floating sheets: side margins and a gap above the home indicator, all corners rounded.</summary>
+        const float SheetSide = 0.04f;
+        float SheetFloor => Mathf.Max(_safe.anchorMin.y * _canvasRect.rect.height + 30f, 96f);
+
+        /// <summary>The cream clay card behind a floating sheet: rounded on all four corners (not the bottom-sheet art).</summary>
+        void FloatingCard(RectTransform sheet)
+        {
+            var bg = AccountUi.Panel(_kit, sheet, UiKit.CardCream, 104f);
+            bg.raycastTarget = true;
+        }
+
+        void Float(RectTransform sheet, float height)
+        {
+            sheet.anchorMin = new Vector2(SheetSide, 0f);
+            sheet.anchorMax = new Vector2(1f - SheetSide, 0f);
+            sheet.pivot = new Vector2(0.5f, 0f);
+            sheet.sizeDelta = new Vector2(0f, height);
+            sheet.anchoredPosition = new Vector2(0f, SheetFloor);
+            _sheetTop = SheetFloor + height;
+        }
         /// <summary>The level HUD is on screen (a level is being played), as opposed to a menu.</summary>
         public bool Shown => _targetAlpha > 0.5f;
 
@@ -598,6 +647,7 @@ namespace Orcub.Game
         {
             if (_popup != null) Destroy(_popup.gameObject);
             _popup = null;
+            _sheetTop = -1f;
             _card = null;
             _keepBar = false;
             _dimBar = false;
@@ -726,12 +776,13 @@ namespace Orcub.Game
 
         static IEnumerator SlideUp(RectTransform sheet, CanvasGroup g)
         {
-            float h = sheet.rect.height + 80f, t = 0f;
+            float rest = sheet.anchoredPosition.y;
+            float h = sheet.rect.height + rest + 80f, t = 0f;
             while (t < 1f && sheet != null)
             {
                 t += Time.unscaledDeltaTime / 0.28f;
                 float k = UiKit.EaseOut(Mathf.Clamp01(t));
-                sheet.anchoredPosition = new Vector2(0f, -h * (1f - k));
+                sheet.anchoredPosition = new Vector2(0f, rest - h * (1f - k));
                 g.alpha = Mathf.Clamp01(t * 3f);
                 yield return null;
             }
@@ -819,8 +870,10 @@ namespace Orcub.Game
             public int GoldPrice;
             /// <summary>Gold continue (null hides the row). Receives the idempotency key of this intent.</summary>
             public Func<string, System.Threading.Tasks.Task<SpendResult>> SpendGold;
-            /// <summary>After a confirmed gold continue: the moves the server granted (0 on a replayed key).</summary>
-            public Action<int> OnGoldContinued;
+            /// <summary>After a confirmed gold continue: the server's answer (moves, or a replay of this key).</summary>
+            public Action<SpendResult> OnGoldContinued;
+            /// <summary>The continue's idempotency key holder, owned by the attempt (null = this sheet's own).</summary>
+            public SpendIntent Intent;
             public bool CanWatch;
             public Action OnWatch;
             /// <summary>Dead-end rescues (Undo, Unclamp) shown instead of the gold / video rows.</summary>
@@ -852,17 +905,10 @@ namespace Orcub.Game
             var ink = UiKit.Ink;
             const float side = 52f;
             var sheet = UiKit.Rect("MovesSheet", _popup);
-            sheet.anchorMin = new Vector2(0.03f, 0f);
-            sheet.anchorMax = new Vector2(0.97f, 0f);
-            sheet.pivot = new Vector2(0.5f, 0f);
-            var bg = kit.MakeImage(sheet, _art.sheet != null ? _art.sheet : _art.uiCard, _art.sheet != null ? Color.white : UiKit.CardCream);
-            bg.type = Image.Type.Sliced;
-            bg.raycastTarget = true;
-            UiKit.Anchor(bg.rectTransform, 0, 0, 1, 1);
-            bg.rectTransform.offsetMin = new Vector2(0f, -60f);
+            Float(sheet, 1000f);   // height set once laid out
+            FloatingCard(sheet);
 
-            // the sheet's content is laid out top-down above the home indicator (safe-area bottom)
-            float safeBottom = _safe.anchorMin.y * _canvasRect.rect.height;
+            // review m, L11: a floating card above the home indicator (approved out_of_moves_gold_B), laid out top-down
             float y = 44f;
             bool pending = false;
             var buttons = new List<RectTransform>();
@@ -873,15 +919,16 @@ namespace Orcub.Game
             int lampIdx = Array.IndexOf(_art.workshopIds ?? new string[0], "lamp");
             Sprite lamp = lampIdx >= 0 && lampIdx < _art.workshopBroken.Length ? _art.workshopBroken[lampIdx] : _art.chapterLamp;
             if (lamp != null)
-            {
+            {   // inside the card's header, beside the title (never past the card's edge)
                 var l = kit.MakeImage(sheet, lamp, Color.white);
+                l.preserveAspect = true;
                 var lrt = l.rectTransform;
                 lrt.anchorMin = lrt.anchorMax = new Vector2(0f, 1f);
-                lrt.pivot = new Vector2(0f, 1f);
-                lrt.sizeDelta = new Vector2(176f, 176f);
-                lrt.anchoredPosition = new Vector2(34f, 50f);
+                lrt.pivot = new Vector2(0f, 0.5f);
+                lrt.sizeDelta = new Vector2(140f, 140f);
+                lrt.anchoredPosition = new Vector2(side, -(y + 58f));
             }
-            var head = AccountUi.Row(sheet, "Head", y, 116f, lamp != null ? 196f : side, 150f);
+            var head = AccountUi.Row(sheet, "Head", y, 116f, lamp != null ? side + 160f : side, 150f);
             var title = kit.MakeText(head, offer.Title, 90, ink, TextAnchor.MiddleLeft);
             UiKit.Anchor(title.rectTransform, 0, 0, 1, 1);
             AccountUi.Fit(title, 640f, 90, UiKit.Title);
@@ -932,7 +979,11 @@ namespace Orcub.Game
                 if (offer.SpendGold != null)
                 {
                     var row = AccountUi.Row(sheet, "Gold", y, 150f, side, side);
-                    string idle = $"+{offer.Moves} moves for {offer.GoldPrice} gold";
+                    var spend = new GoldSpend(offer.Intent);
+                    // M3: an earlier tap of this attempt is still unresolved (lost response): the same key is retried,
+                    // so the row offers the retry rather than a new price
+                    string Idle() => spend.Unresolved ? $"Retry +{offer.Moves} moves" : $"+{offer.Moves} moves for {offer.GoldPrice} gold";
+                    string idle = Idle();
                     var gold = kit.Pill(row, idle, UiKit.Mint, UiKit.Title, () => { }, ShopUi.GoldIcon(_art), Color.white);
                     UiKit.Anchor(gold, 0, 0, 1, 1);
                     buttons.Add(gold);
@@ -940,7 +991,6 @@ namespace Orcub.Game
                     y += 150f + 26f;
                     helper = st;
                     string subtitle = st != null ? st.text : "";
-                    var spend = new GoldSpend();
                     bool applied = false;
                     var b = gold.GetComponent<Button>();
                     b.onClick.RemoveAllListeners();
@@ -956,13 +1006,13 @@ namespace Orcub.Game
                         pending = false;
                         if (this == null || _popup != popup) return;   // the sheet was closed meanwhile
                         Lock(false);
-                        label.text = idle;
+                        label.text = Idle();
                         if (r.Ok)
                         {
                             applied = true;
                             Haptics.Notify(Haptics.Notice.Success);
                             ClosePopup();
-                            offer.OnGoldContinued?.Invoke(r.ExtraMoves);
+                            offer.OnGoldContinued?.Invoke(r);
                             return;
                         }
                         if (spend.Error != null && helper != null)
@@ -994,7 +1044,7 @@ namespace Orcub.Game
             buttons.Add(home);
             y += 132f + 40f;
 
-            sheet.sizeDelta = new Vector2(0f, y + safeBottom);
+            Float(sheet, y);
             var slide = sheet.gameObject.AddComponent<CanvasGroup>();
             StartCoroutine(SlideUp(sheet, slide));
         }
@@ -1101,12 +1151,8 @@ namespace Orcub.Game
             // the dimmed screen stays inactive: the scrim image blocks taps (raycast target)
 
             var sheet = UiKit.Rect("LivesSheet", _popup);
-            UiKit.Anchor(sheet, 0.03f, 0f, 0.97f, 0.41f);
-            var bg = _kit.MakeImage(sheet, _art.sheet != null ? _art.sheet : _art.uiCard, _art.sheet != null ? Color.white : UiKit.CardCream);
-            bg.type = Image.Type.Sliced;
-            bg.raycastTarget = true;
-            UiKit.Anchor(bg.rectTransform, 0, 0, 1, 1);
-            bg.rectTransform.offsetMin = new Vector2(0f, -60f);
+            Float(sheet, _canvasRect.rect.height * 0.37f);   // review m, L11: floating card (approved out_of_lives_gold_B)
+            FloatingCard(sheet);
             var body = UiKit.Rect("Body", sheet);
             UiKit.Anchor(body, 0.05f, 0.06f, 0.95f, 0.96f);
             var ink = UiKit.Ink;

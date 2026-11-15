@@ -62,8 +62,9 @@ namespace Orcub.Tests
         }
 
         [Test]
-        public void Drain_StopsAtTheFirstFailure_KeepingEveryLaterClaim()
+        public void Drain_ARefusedClaim_NeverHoldsBackLaterClaims()
         {
+            // review m, H2 supersedes review i's strict order: the server's frontier pays past gaps
             RewardClaims.Add(1, "a");
             RewardClaims.Add(2, "b");
             RewardClaims.Add(3, "c");
@@ -71,18 +72,18 @@ namespace Orcub.Tests
             ClientGateway.ClaimLevelReward = (index, id) =>
             {
                 calls.Add(index);
-                if (index == 2) throw new InvalidOperationException("reward_sequence_pending");
+                if (index == 2) throw new RewardPendingException();
                 return Task.FromResult(5);
             };
             var granted = new List<int>();
             Assert.IsTrue(RewardClaims.Drain((i, g) => granted.Add(i), attempts: 1).IsCompleted);
-            CollectionAssert.AreEqual(new[] { 1, 2 }, calls, "claims run in order and stop at the refusal");
-            CollectionAssert.AreEqual(new[] { 1 }, granted);
-            CollectionAssert.AreEqual(new[] { 2, 3 }, RewardClaims.Pending().ConvertAll(c => c.Index));
+            CollectionAssert.AreEqual(new[] { 1, 2, 3 }, calls, "each claim is tried, in order");
+            CollectionAssert.AreEqual(new[] { 1, 3 }, granted);
+            CollectionAssert.AreEqual(new[] { 2 }, RewardClaims.Pending().ConvertAll(c => c.Index), "the refused claim stays for a retry");
 
             ClientGateway.ClaimLevelReward = (index, id) => Task.FromResult(5);
             RewardClaims.Drain((i, g) => granted.Add(i), attempts: 1);
-            CollectionAssert.AreEqual(new[] { 1, 2, 3 }, granted, "a later drain pays the rest in order");
+            CollectionAssert.AreEqual(new[] { 1, 3, 2 }, granted, "a later drain pays it once its evidence arrived");
             Assert.AreEqual(0, RewardClaims.Pending().Count);
         }
 
@@ -93,23 +94,24 @@ namespace Orcub.Tests
             RewardClaims.Add(21, "next");
             int calls = 0;
             bool capped = true;
-            ClientGateway.ClaimLevelReward = (index, id) => { calls++; return Task.FromResult(capped ? RewardClaims.Deferred : 5); };
+            ClientGateway.ClaimLevelReward = (index, id) => { calls++; return Task.FromResult(capped && index == 20 ? RewardClaims.Deferred : 5); };
             var granted = new List<int>();
 
             RewardClaims.Drain((i, g) => granted.Add(i), attempts: 1);
-            Assert.AreEqual(1, calls);
+            Assert.AreEqual(2, calls, "a deferred claim never holds back the next one (review n, 3)");
+            CollectionAssert.AreEqual(new[] { 21 }, granted);
             var head = RewardClaims.Pending()[0];
-            Assert.AreEqual(20, head.Index, "a capped claim is kept, never dropped");
+            Assert.AreEqual(20, head.Index, "a deferred claim is kept, never dropped");
             Assert.AreEqual("2026-11-16", head.NotBefore);
-            Assert.AreEqual(2, RewardClaims.Pending().Count);
+            Assert.AreEqual(1, RewardClaims.Pending().Count);
 
             RewardClaims.Drain((i, g) => granted.Add(i), attempts: 1);   // still today: not even tried
-            Assert.AreEqual(1, calls);
+            Assert.AreEqual(2, calls);
 
             _now = _now.AddHours(3);   // past UTC midnight
             capped = false;
             RewardClaims.Drain((i, g) => granted.Add(i), attempts: 1);
-            CollectionAssert.AreEqual(new[] { 20, 21 }, granted);
+            CollectionAssert.AreEqual(new[] { 21, 20 }, granted);
             Assert.AreEqual(0, RewardClaims.Pending().Count);
         }
 

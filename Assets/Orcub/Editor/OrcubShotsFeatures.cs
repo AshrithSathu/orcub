@@ -144,9 +144,14 @@ namespace Orcub.EditorTools
         public static void CaptureTutorial()
         {
             Begin("t");
-            Add(0f, () => { ClearOverlays(); ResetTutorialPrefs(); CallBoard("PlayLevel", 0); }, null);
-            Add(2.6f, () => Flow.Begin(1, 1), null);
-            Add(1.1f, null, "t01_rotate");
+            // review m: every tutorial level is played as a player first reaching it (BoardView.CaptureFrontier), so
+            // the booster locks, the steps and their reserved layout are the real ones, not staged over a high frontier
+            double t0 = 0;
+            bool Waited(double s) => EditorApplication.timeSinceStartup - t0 > s;
+            void Play(int index) { ClearOverlays(); BoardView.CaptureFrontier = index; Orcub.Core.Lives.Refill(); CallBoard("PlayLevel", index); t0 = EditorApplication.timeSinceStartup; }
+            Add(0f, () => { ResetTutorialPrefs(); Play(0); }, null);
+            AddUntil(() => Flow.Current == TutorialStep.Rotate || Waited(8));
+            Add(0.9f, null, "t01_rotate");
             Add(0f, () =>
             {   // a real tap move on the clamped ring: the clamp releases and the lesson advances by itself
                 var bv = Board;
@@ -158,23 +163,21 @@ namespace Orcub.EditorTools
             Add(0.5f, null, "t02_released");
             AddUntil(() => Flow.Current == TutorialStep.Pull);
             Add(0.9f, null, "t03_pull");
-            Add(0f, () => CallBoard("PlayLevel", 1), null);
-            Add(2.8f, () => Flow.Begin(2, 2), null);
+            Add(0f, () => Play(1), null);
+            AddUntil(() => Flow.Current == TutorialStep.Moves || Waited(8));
             Add(0.8f, null, "t04_moves");
             foreach (var (level, step, shot) in new[] { (5, TutorialStep.UnlockHint, "t05_unlock_hint"), (8, TutorialStep.UnlockUndo, "t06_unlock_undo"), (12, TutorialStep.UnlockUnclamp, "t07_unlock_unclamp") })
             {
                 int l = level;
-                Add(0f, () => CallBoard("PlayLevel", l - 1), null);
-                Add(2.8f, () =>
-                {
-                    foreach (var u in TutorialFlow.Unlocks) Hud.SetBoosterLocked(u.kind, u.level > l);   // as a player first reaching it
-                    Flow.Begin(l, l);
-                }, null);
+                var st = step;
+                Add(0f, () => Play(l - 1), null);
+                AddUntil(() => Flow.Current == st || Waited(10));
                 Add(0.8f, null, shot);
             }
-            Add(0f, () => { Flow.End(); Hud.SetBoosterLocked(BoosterKind.Unclamp, true); CallBoard("UseBooster", BoosterKind.Unclamp); }, null);
+            Add(0f, () => Play(10), null);   // level 11: Unclamp still locked
+            Add(2.8f, () => CallBoard("UseBooster", BoosterKind.Unclamp), null);
             Add(0.35f, null, "t08_locked_toast");
-            Add(0f, () => { ResetTutorialPrefs(); CallBoard("ShowHome"); }, null);
+            Add(0f, () => { BoardView.CaptureFrontier = null; ResetTutorialPrefs(); CallBoard("ShowHome"); }, null);
             Start();
         }
 

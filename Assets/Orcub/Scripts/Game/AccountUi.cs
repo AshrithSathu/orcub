@@ -237,11 +237,34 @@ namespace Orcub.Game
         float _scrimAlpha, _rise;
         Action _onScrimTap;
 
+        // review m, H1: every open overlay (shop, booster sheet, settings, account / daily sheets) is an input lock
+        // for the board, which reads the pointer directly. Registered on Create, gone once destroyed (a destroyed
+        // overlay compares equal to null, so this also holds in edit-mode tests and after Destroy without OnDestroy).
+        static readonly System.Collections.Generic.List<AccountOverlay> s_open = new System.Collections.Generic.List<AccountOverlay>();
+
+        /// <summary>Overlays currently on screen (closing ones included until they are destroyed).</summary>
+        public static int OpenCount
+        {
+            get
+            {
+                for (int i = s_open.Count - 1; i >= 0; i--) if (s_open[i] == null) s_open.RemoveAt(i);
+                return s_open.Count;
+            }
+        }
+
+        public static bool AnyOpen => OpenCount > 0;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetRegistry() => s_open.Clear();
+
+        void OnDestroy() => s_open.Remove(this);
+
         public static AccountOverlay Create(Transform parent, UiKit kit, string name, int order, float scrimAlpha,
             bool felt = false, Action onScrimTap = null)
         {
             var (canvas, safe) = UiKit.Screen(name, parent, order);
             var o = canvas.gameObject.AddComponent<AccountOverlay>();
+            s_open.Add(o);
             o.Safe = safe;
             o._scrimAlpha = scrimAlpha;
             o._onScrimTap = onScrimTap;

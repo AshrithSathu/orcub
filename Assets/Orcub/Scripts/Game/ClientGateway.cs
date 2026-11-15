@@ -31,9 +31,16 @@ namespace Orcub.Game
 
         // ------------------------------------------------------------------ level rewards (GAME_WIRING.md, review f)
 
+        /// <summary>The signed-in (or guest) player id, for scoping local queues to their owner. Bound by the Store.</summary>
+        public static Func<string> PlayerId;
+
         /// <summary>Event id of the level_end just queued (ClientServices.LastLevelEndEventId).</summary>
         public static Func<string> LastLevelEndEventId;
-        /// <summary>StoreRuntime.ClaimLevelReward(levelIndex, eventId): gold granted (0 on replay); throws when not ready.</summary>
+        /// <summary>
+        /// StoreRuntime.ClaimLevelReward(levelIndex, eventId): gold granted (0 on replay or final refusal), or
+        /// <see cref="RewardClaims.DeferredWith"/> when the server queued the level behind today's cap. Throws
+        /// <see cref="RewardPendingException"/> when the win's level_end isn't on the server, anything else when not ready.
+        /// </summary>
         public static Func<int, string, Task<int>> ClaimLevelReward;
 
         // ------------------------------------------------------------------ daily loop (backend/docs/daily-client-followups.md)

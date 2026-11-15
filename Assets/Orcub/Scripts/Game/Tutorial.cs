@@ -41,7 +41,8 @@ namespace Orcub.Game
     ///
     /// Rules: tutorial steps run only on the player's newest level (never on replays). Level 1 teaches rotate →
     /// release → pull, level 2 the move counter. Booster unlock cards appear at levels 5 (Hint), 8 (Undo) and
-    /// 12 (Unclamp), or within two levels after if that level was skipped past; each once.
+    /// 12 (Unclamp), or within two levels after if that level was skipped past; each once (review m, M2: an
+    /// unlock card counts as seen the moment it is shown, whether or not the player uses the booster that level).
     /// </summary>
     public sealed class TutorialFlow
     {
@@ -81,19 +82,30 @@ namespace Orcub.Game
             return null;
         }
 
+        /// <summary>The step a level would teach, without starting it (layout reserves its space up front).</summary>
+        public TutorialStep Peek(int displayedLevel, int frontierDisplayed)
+        {
+            if (displayedLevel != frontierDisplayed) return TutorialStep.None;   // replays never teach
+            if (displayedLevel == 1 && !_store.Done(TutorialStep.Rotate)) return TutorialStep.Rotate;
+            if (displayedLevel == 1 && !_store.Done(TutorialStep.Pull)) return TutorialStep.Pull;
+            if (displayedLevel == 2 && !_store.Done(TutorialStep.Moves)) return TutorialStep.Moves;
+            foreach (var u in Unlocks)
+                if (displayedLevel >= u.level && displayedLevel <= u.level + 2 && !_store.Done(u.step)) return u.step;
+            return TutorialStep.None;
+        }
+
         /// <summary>The step to start when a level's board has landed (None: nothing to teach).</summary>
         public TutorialStep Begin(int displayedLevel, int frontierDisplayed)
         {
             Set(TutorialStep.None);
-            if (displayedLevel != frontierDisplayed) return Current;   // replays never teach
-            if (displayedLevel == 1 && !_store.Done(TutorialStep.Rotate)) Set(TutorialStep.Rotate);
-            else if (displayedLevel == 1 && !_store.Done(TutorialStep.Pull)) Set(TutorialStep.Pull);
-            else if (displayedLevel == 2 && !_store.Done(TutorialStep.Moves)) Set(TutorialStep.Moves);
-            else
-                foreach (var u in Unlocks)
-                    if (displayedLevel >= u.level && displayedLevel <= u.level + 2 && !_store.Done(u.step)) { Set(u.step); break; }
+            var step = Peek(displayedLevel, frontierDisplayed);
+            if (KindOf(step).HasValue) _store.MarkDone(step);   // M2: each unlock card once, even if it isn't used
+            Set(step);
             return Current;
         }
+
+        /// <summary>Is an unlock card for this booster on screen (its "1 free" spotlight)?</summary>
+        public bool Spotlights(Orcub.Core.BoosterKind kind) => KindOf(Current) == kind;
 
         /// <summary>A clamp let go of its ring: the rotate lesson worked.</summary>
         public void OnReleased()
@@ -161,10 +173,17 @@ namespace Orcub.Game
         /// <summary>The level ended or was left: hide the step. Unfinished steps return the next time.</summary>
         public void End() => Set(TutorialStep.None);
 
+        readonly HashSet<TutorialStep> _reported = new HashSet<TutorialStep>();
+
         void Finish(TutorialStep step, bool completed)
         {
-            if (_store.Done(step)) return;
-            _store.MarkDone(step);
+            // unlock cards are marked done when shown; their outcome (used / skipped) is still reported once
+            if (KindOf(step).HasValue) { if (!_reported.Add(step)) return; _store.MarkDone(step); }
+            else
+            {
+                if (_store.Done(step)) return;
+                _store.MarkDone(step);
+            }
             _track?.Invoke("tutorial_step", new TutorialStepEvent { step = (int)step, completed = completed });
         }
 

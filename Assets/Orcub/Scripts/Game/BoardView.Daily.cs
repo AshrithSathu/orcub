@@ -75,6 +75,7 @@ namespace Orcub.Game
             _hud.SetVisible(true);
             _plan = AttemptPlan.Neutral();
             _fallbackData = null;
+            _layoutReserve = 0f;
             Build(_levelIndex, data);
             _rules = LevelRules.For(_def);
             UpdateHud();
@@ -133,13 +134,8 @@ namespace Orcub.Game
         void ShowDailyFail(bool stuck)
         {
             var offer = new LevelHud.ContinueOffer { Title = stuck ? (FrozenHolds() ? "Rusted solid" : "No way out") : "Out of moves" };
-            if (stuck && _undo.Count > 0 && BoosterInventory.Count(BoosterKind.Undo) > 0)
-                offer.Extra.Add(("Undo", art.iconUndo, () =>
-                {
-                    _wreath?.Hide();
-                    _levelOver = false;
-                    UseBooster(BoosterKind.Undo);
-                }));
+            if (stuck && _undo.Count > 0 && BoosterInventory.Count(BoosterKind.Undo) > 0 && !_hud.BoosterLocked(BoosterKind.Undo))   // review m, L4
+                offer.Extra.Add(("Undo", art.iconUndo, () => Rescue(BoosterKind.Undo)));
             _hud?.ShowOutOfMoves(offer, onRetry: RetryDaily, onHome: BackToDaily);
         }
 
@@ -152,6 +148,9 @@ namespace Orcub.Game
             _streakAttempt = null;
             var port = DailyGateway.Current;
             if (port == null) return;
+            // review m, M1: a ready bonus for a booster that is still locked here waits for its unlock level (the
+            // service keeps it pending until WinStart is called), so it is never handed out unusable
+            if (StreakBonusWaits(port, _levelIndex)) return;
             _streakAttempt = Guid.NewGuid().ToString();
             try { _freeBooster = port.WinStart(_streakAttempt); }
             catch (Exception e) { Debug.LogWarning("Win streak start skipped: " + e.Message); _streakAttempt = null; }
@@ -194,9 +193,18 @@ namespace Orcub.Game
             if (port == null || (port.Wins <= 0 && !port.BonusReady)) return;
             var below = _hud.BelowCard();   // one strip per card (BelowCard replaces any earlier one)
             if (below == null) return;
-            var strip = DailyUi.Strip(_kit, below, port.BonusReady ? 3 : port.Wins, port.NextBonus);
+            // M1: when the bonus waits for its booster's unlock, the strip says so instead of "ready"
+            int waits = StreakBonusWaits(port, _levelIndex + 1) ? TutorialFlow.UnlockLevel(port.NextBonus) : 0;
+            var strip = DailyUi.Strip(_kit, below, port.BonusReady ? 3 : port.Wins, port.NextBonus, waits);
             strip.anchoredPosition = Vector2.zero;
         }
+
+        /// <summary>A ready streak bonus whose booster is still locked at this level (displayed level + frontier).</summary>
+        static bool StreakBonusWaits(IDailyPort port, int levelIndex) =>
+            port != null && StreakBonusWaits(port.BonusReady, port.NextBonus, levelIndex, Frontier);
+
+        public static bool StreakBonusWaits(bool bonusReady, BoosterKind next, int levelIndex, int frontierIndex) =>
+            bonusReady && TutorialFlow.Locked(next, levelIndex + 1, frontierIndex + 1);
 
         int BoosterShown(BoosterKind k) => BoosterInventory.Count(k) + (_freeBooster == k ? 1 : 0);
 
@@ -205,7 +213,7 @@ namespace Orcub.Game
         System.Collections.IEnumerator OfferOptInSoon()
         {
             yield return new WaitForSecondsRealtime(0.7f);
-            if (_dailyFlow != null && FindFirstObjectByType<AccountOverlay>() == null) _dailyFlow.TryOfferOptIn();
+            if (_dailyFlow != null && !AccountOverlay.AnyOpen) _dailyFlow.TryOfferOptIn();
         }
 
         /// <summary>Home: the daily gift (once per UTC day per session) or, after a win, the opt-in.</summary>
@@ -213,7 +221,7 @@ namespace Orcub.Game
         {
             yield return new WaitForSecondsRealtime(0.9f);   // after Home and any starter offer have settled
             if (_home == null || !_home.Visible || _dailyFlow == null || ShopFlow.Instance != null && ShopFlow.Instance.ShopOpen) yield break;
-            if (FindFirstObjectByType<AccountOverlay>() != null) yield break;   // an account / shop sheet is up
+            if (AccountOverlay.AnyOpen) yield break;   // an account / shop sheet is up
             if (_dailyFlow.TryOfferGift()) yield break;
             if (afterWin) _dailyFlow.TryOfferOptIn();
         }

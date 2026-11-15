@@ -80,24 +80,40 @@ namespace Orcub.Features
             try { await s.Restore(); }
             catch (Exception) { failed = true; }
             finally { s.Failed -= Bad; s.Pending -= Wait; }
-            return failed ? PurchaseOutcome.Failed : pending ? PurchaseOutcome.Pending : PurchaseOutcome.Purchased;
+            if (failed) return PurchaseOutcome.Failed;
+            if (pending) return PurchaseOutcome.Pending;
+            return s.LastRestoredCount == 0 ? PurchaseOutcome.NothingToRestore : PurchaseOutcome.Purchased;   // review m, L2
         }
 
         public async Task<SpendResult> SpendContinue(string levelStartEventId, string actionKey)
         {
             var s = Service;
             if (s == null) return new SpendResult(SpendError.Unavailable);
-            try
+            // the server accepts a continue only for a level_start it has received: upload it first. Flush returns
+            // at once while another flush is in flight (and sends one batch), so an "attempt missing" answer waits for
+            // the upload and retries the same key (review n, 2); no gold moves on that refusal.
+            for (int tries = 0; ; tries++)
             {
-                // the server accepts a continue only for a level_start it has received: upload it first
-                if (ClientServices.Instance != null) await ClientServices.Instance.Flush();
-                var effect = await s.Wallet.Spend(new SpendSink("continue", levelStartEventId), actionKey);
-                return new SpendResult(SpendError.None, (int?)effect?["extra_moves"] ?? 0);
+                try
+                {
+                    if (ClientServices.Instance != null) await ClientServices.Instance.Flush();
+                    var effect = await s.Wallet.Spend(new SpendSink("continue", levelStartEventId), actionKey);
+                    // a null effect: the store already confirmed this key earlier (review m, L6)
+                    return new SpendResult(SpendError.None, (int?)effect?["extra_moves"] ?? 0, replayed: effect == null);
+                }
+                catch (StoreHttpException e) when (e.Status == 400 && AttemptMissing(e))
+                {
+                    if (tries >= 2) return new SpendResult(SpendError.Offline);   // keep the key; the player taps again
+                    await Task.Delay(1200);
+                }
+                catch (StoreHttpException e) { return new SpendResult(Map(e)); }
+                catch (ArgumentException) { return new SpendResult(SpendError.Unavailable); }
+                catch (Exception) { return new SpendResult(SpendError.Offline); }
             }
-            catch (StoreHttpException e) { return new SpendResult(Map(e)); }
-            catch (ArgumentException) { return new SpendResult(SpendError.Unavailable); }
-            catch (Exception) { return new SpendResult(SpendError.Offline); }
         }
+
+        static bool AttemptMissing(StoreHttpException e) =>
+            e.Message != null && e.Message.IndexOf("attempt missing", StringComparison.OrdinalIgnoreCase) >= 0;
 
         public async Task<SpendResult> BuyBooster(string kind, string actionKey)
         {

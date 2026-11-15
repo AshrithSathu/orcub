@@ -179,10 +179,12 @@ namespace Orcub.Game
         }
 
         /// <summary>Win-streak line under the track: "One more win for a free Hint." etc.</summary>
-        public static string WinsLine(int wins, BoosterKind next)
+        /// <param name="waitsForLevel">&gt; 0: the bonus is earned but its booster unlocks at that level (review m, M1).</param>
+        public static string WinsLine(int wins, BoosterKind next, int waitsForLevel = 0)
         {
             string name = next == BoosterKind.Hint ? "Hint" : next == BoosterKind.Undo ? "Undo" : "Unclamp";
             int left = Math.Max(0, 3 - wins);
+            if (left == 0 && waitsForLevel > 0) return $"Free {name} saved for level {waitsForLevel}";
             return left == 0 ? $"Free {name} ready" : left == 1 ? $"One more win for a free {name}." : $"Win {left} more in a row for a free {name}.";
         }
     }

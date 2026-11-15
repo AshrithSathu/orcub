@@ -28,7 +28,53 @@ namespace Orcub.Game
         {
             if (_tutorial == null || _levelOver || _hud == null || _model == null) return;
             _tutRing = -1;
+            var kind = TutorialFlow.KindOf(_tutorial.Peek(_levelIndex + 1, Frontier + 1));
+            if (kind.HasValue && BoosterInventory.Count(kind.Value) <= 0)
+            {
+                // review m, M2: the unlock card's free charge (the server's booster_unlock grant) hasn't landed yet.
+                // Never point at an empty booster (its tap would open the 40-gold sheet): wait for the grant this
+                // level; if it doesn't arrive, the card stays unseen for the next level in its window.
+                StartCoroutine(BeginWhenGranted(kind.Value, _session, _model));
+                return;
+            }
             _tutorial.Begin(_levelIndex + 1, Frontier + 1);
+        }
+
+        System.Collections.IEnumerator BeginWhenGranted(BoosterKind kind, int session, PuzzleModel model)
+        {
+            bool Current() => session == _session && model == _model && !_levelOver && _tutorial != null;
+            while (Current() && BoosterInventory.Count(kind) <= 0) yield return new WaitForSecondsRealtime(0.5f);
+            if (!Current() || _tutorial.Current != TutorialStep.None) yield break;
+            if (_hud != null) UpdateHud();   // the tray shows the granted charge
+            _tutorial.Begin(_levelIndex + 1, Frontier + 1);
+        }
+
+        // ------------------------------------------------------------------ layout reserve (review m, L11)
+
+        /// <summary>HUD units above the tray kept free of rings this level: the tutorial's Skip row or unlock callout.</summary>
+        float _layoutReserve;
+
+        /// <summary>
+        /// Decided before the board is built (so it never jumps mid-level): the level-1 / level-2 lessons keep a
+        /// Skip row clear above the tray, the unlock cards keep room for their callout and Skip. Board fits above.
+        /// </summary>
+        float TutorialReserve(int index)
+        {
+            if (_tutorial == null || _hud == null) return 0f;
+            var step = _tutorial.Peek(index + 1, Frontier + 1);
+            switch (step)
+            {
+                case TutorialStep.None: return 0f;
+                case TutorialStep.Rotate:
+                case TutorialStep.Release:
+                case TutorialStep.Pull:
+                case TutorialStep.Moves: return TutorialOverlay.SkipRowHeight;
+                default:
+                    var kind = TutorialFlow.KindOf(step);
+                    if (!kind.HasValue) return 0f;
+                    float boosterAboveTray = _hud.ScreenToUnits(_hud.BoosterScreenRect(kind.Value).yMax - _hud.TrayTopScreen);
+                    return Mathf.Max(TutorialOverlay.SkipRowHeight, boosterAboveTray + TutorialOverlay.UnlockCalloutTop + 24f);
+            }
         }
 
         void EndTutorial() => _tutorial?.End();

@@ -88,7 +88,6 @@ namespace Orcub.Game
         bool _inputLocked;
         SplashView _splash;
         int _session;              // bumped when a level start is cancelled (Home) or replaced: stale callbacks bail
-        bool _boosterUnlockBusy;
         SpinSet.TurnFn _turnFn;
 
         // Drag state
@@ -158,7 +157,8 @@ namespace Orcub.Game
             _home = HomeScreen.Create(transform, _kit, _fx, onPlay: () => PlayLevel(Frontier), onMap: ShowChapters,
                 onSettings: () => _account.OpenSettings(), onDaily: () => ShowDaily());
             _account = AccountFlow.Create(transform, _kit, _home);
-            ShopFlow.Create(transform, _kit, () => _account.OpenSettings(), () => _hud != null && _hud.Shown, msg => _hud?.ShowToast(msg));
+            // review m, L7: a purchase made from a fail sheet (cards canvas, above the HUD's toast) gets the receipt instead
+            ShopFlow.Create(transform, _kit, () => _account.OpenSettings(), () => _hud != null && _hud.Shown && !_hud.PopupOpen, msg => _hud?.ShowToast(msg));
             InitTutorial();
             InitDaily();
             _map = MapScreen.Create(transform, _kit, onPlayLevel: PlayLevel, onBack: ShowChapters);
@@ -202,7 +202,13 @@ namespace Orcub.Game
         // ------------------------------------------------------------------ screens
 
         /// <summary>The next level the player hasn't beaten (home's Play button).</summary>
-        static int Frontier => Mathf.Max(0, Progress.HighestUnlocked);   // infinite saga: no upper bound
+        static int Frontier => CaptureFrontier ?? Mathf.Max(0, Progress.HighestUnlocked);   // infinite saga: no upper bound
+
+        /// <summary>
+        /// Editor captures only: play as a player whose furthest level is this index (booster locks, tutorial steps
+        /// and their layout as a new player sees them) without touching saved progress. Null in the game.
+        /// </summary>
+        public static int? CaptureFrontier;
 
         void ShowHome()
         {
@@ -345,6 +351,7 @@ namespace Orcub.Game
             _bonusMoves = 0;
             _usedAdContinue = false;
             _goldContinues = 0;
+            _continueIntent = new SpendIntent();   // M3: one continue intent per attempt
             _levelOver = false;
             _winAt = _failCheckAt = -1f;
             _undo.Clear();
@@ -405,6 +412,7 @@ namespace Orcub.Game
         /// <param name="choices">The prepared variants (M4: selection and build use this fixed array, never a blocking fetch).</param>
         void StartLevel(int index, LevelData fallback, LevelData[] choices, bool faulted = false)
         {
+            _layoutReserve = TutorialReserve(index);   // before the board is fitted
             _fallbackData = fallback;
             if (fallback == null && (choices == null || choices.Length == 0)) choices = new[] { ReadyData(index, 0) };
             BeginAttempt(fallback, choices);
@@ -431,7 +439,6 @@ namespace Orcub.Game
             DropInRings();
             LevelLibrary.Prefetch(index + 1);   // keep the next window warm
             WarmSolver(index + 1);
-            ClaimBoosterUnlocks(index);
             StartCoroutine(AfterLanding(_plan, _session));
         }
 
@@ -455,40 +462,6 @@ namespace Orcub.Game
             var defs = new List<LevelDef>(next.Length);
             foreach (var d in next) if (d != null) defs.Add(d.ToDef());
             _ = MechanicSolver.Warm(defs);
-        }
-
-        // ------------------------------------------------------------------ booster tutorial unlock grants
-
-        /// <summary>
-        /// Hint unlocks at level 5, Undo at 8, Unclamp at 12 (displayed numbers). Each one asks the wallet for its
-        /// booster_unlock grant once; the server is idempotent per player and kind, so a retry after a failure (or
-        /// after a reinstall) is safe. Unbound gateway (no client API yet): nothing happens.
-        /// </summary>
-        void ClaimBoosterUnlocks(int index)
-        {
-            if (ClientGateway.BoosterUnlock == null || _boosterUnlockBusy) return;
-            var due = BoosterUnlocks.Due(index + 1, kind => PlayerPrefs.GetInt(BoosterUnlocks.Key(kind), 0) == 1);
-            if (due.Count == 0) return;
-            _ = ClaimBoosterUnlocks(due);
-        }
-
-        async System.Threading.Tasks.Task ClaimBoosterUnlocks(List<string> kinds)
-        {
-            _boosterUnlockBusy = true;
-            try
-            {
-                foreach (var kind in kinds)
-                {
-                    bool ok;
-                    try { ok = await ClientGateway.BoosterUnlock(kind); }
-                    catch (Exception e) { Debug.LogWarning("booster_unlock " + kind + " pending: " + e.Message); ok = false; }
-                    if (!ok) continue;   // retried at the next level start
-                    PlayerPrefs.SetInt(BoosterUnlocks.Key(kind), 1);
-                    PlayerPrefs.Save();
-                    if (this != null && _hud != null) UpdateHud();
-                }
-            }
-            finally { _boosterUnlockBusy = false; }
         }
 
         // ------------------------------------------------------------------ "New gear!" intro
@@ -614,6 +587,7 @@ namespace Orcub.Game
 
             _bounds = ComputeBounds();
             _fitAspect = -1f;
+            _snapFit = true;
             FitCamera();
         }
 
@@ -665,17 +639,27 @@ namespace Orcub.Game
                 CheckOutOfMoves();
             }
 
+            StepFit();
             FitCamera();
             HandlePointer();
             StepSpins(Time.deltaTime);
             if (!_spins.Busy && _active < 0) FinishFeature();
         }
 
+        /// <summary>
+        /// review m, H1: the board reads the pointer directly (no EventSystem), so every overlay is an explicit lock:
+        /// the board's own lock, the splash, or ANY open overlay (shop, booster sheet, settings, daily / account sheets).
+        /// </summary>
+        public static bool BoardInputBlocked(bool inputLocked, bool splashBlocking) =>
+            inputLocked || splashBlocking || AccountOverlay.AnyOpen;
+
         void HandlePointer()
         {
             var pointer = Pointer.current;
             if (pointer == null || cam == null) return;
-            if (_inputLocked || (_splash != null && _splash.IsBlocking))
+            // review m, H1: any open overlay (shop, booster sheet, settings, daily / account sheets) blocks the board,
+            // and a ring held from before the overlay opened is let go
+            if (BoardInputBlocked(_inputLocked, _splash != null && _splash.IsBlocking))
             {
                 if (_active >= 0) { _rings[_active].IsHeld = false; _active = -1; _mode = DragMode.None; }
                 return;
@@ -1010,7 +994,7 @@ namespace Orcub.Game
             if (stuck)
             {
                 var dead = new LevelHud.ContinueOffer { Title = FrozenHolds() ? "Rusted solid" : "No way out" };
-                if (_undo.Count > 0 && BoosterShown(BoosterKind.Undo) > 0)
+                if (_undo.Count > 0 && BoosterShown(BoosterKind.Undo) > 0 && !_hud.BoosterLocked(BoosterKind.Undo))   // review m, L4
                     dead.Extra.Add(("Undo", art.iconUndo, () => Rescue(BoosterKind.Undo)));
                 // M2: an owned Unclamp that can open something rescues the board (a frozen ring's own clamp first)
                 if (BoosterShown(BoosterKind.Unclamp) > 0 && !_hud.BoosterLocked(BoosterKind.Unclamp) && FailFlow.RescueLink(_model) >= 0)
@@ -1054,6 +1038,7 @@ namespace Orcub.Game
         {
             _wreath?.Hide();
             _levelOver = false;
+            _failCheckAt = Time.time + 0.4f;   // review m, L4: if the booster refuses, the dead-end card comes back
             UseBooster(kind);
         }
 
@@ -1164,61 +1149,43 @@ namespace Orcub.Game
             if (_active >= 0) return;   // a finger is on a ring; the tap is ignored silently
             FinishSpins();              // H1: a running tap spin completes its move before the booster acts
             if (_levelOver) return;
+            string name = BoosterName(kind);
             if (_hud.BoosterLocked(kind))
             {
                 Haptics.Notify(Haptics.Notice.Warning);
-                _hud.ShowToast($"{char.ToUpper(BoosterName(kind)[0])}{BoosterName(kind).Substring(1)} unlocks at level {TutorialFlow.UnlockLevel(kind)}");
+                _hud.ShowToast($"{char.ToUpper(name[0])}{name.Substring(1)} unlocks at level {TutorialFlow.UnlockLevel(kind)}");
                 return;
             }
             if (BoosterShown(kind) <= 0)
             {
-                if (ShopFlow.Instance != null && ShopGateway.Current != null)
+                // review m, M2: the unlock card's free charge is never sold: while its grant is still landing, wait
+                if (_tutorial != null && _tutorial.Spotlights(kind))
+                    _hud.ShowToast($"Your free {DailyUi.BoosterName(kind)} is on its way");
+                else if (ShopFlow.Instance != null && ShopGateway.Current != null)
                     ShopFlow.OfferBooster(kind, () => { if (this != null) UpdateHud(); });   // one for 40 gold
                 else
                 {
                     Haptics.Notify(Haptics.Notice.Warning);
-                    _hud.ShowToast($"No {BoosterName(kind)}s left");
+                    _hud.ShowToast($"No {name}s left");
                 }
                 return;
             }
+
+            // 1) can it act? (no side effects yet)
             string refusal = null;
+            Hint hint = default;
+            int linkId = -1;
             switch (kind)
             {
                 case BoosterKind.Hint:
-                    if (Hints.TryFind(_model, out var hint) && _rings[hint.Ring] != null)
-                    {
-                        ClearHints();
-                        if (hint.PullOut) _rings[hint.Ring].ShowPullHint();
-                        else _rings[hint.Ring].ShowHint(hint.Delta);
-                        _hud.ShowToast(hint.PullOut ? "Pull this gear out" : "Turn this gear");
-                    }
-                    else refusal = "No hint for this board";
+                    if (!Hints.TryFind(_model, out hint) || _rings[hint.Ring] == null) refusal = "No hint for this board";
                     break;
                 case BoosterKind.Undo:
-                    if (_undo.Count > 0)
-                    {
-                        var (snap, moves) = _undo.Pop();
-                        ClearViews();
-                        _model.Restore(snap);
-                        _movesUsed = moves;
-                        BuildViews();
-                        UpdateHud();
-                        foreach (var r in _rings) if (r != null) r.Pulse();
-                        _failCheckAt = Time.time + 0.4f;   // still a dead end (rust / spring)? the card comes back
-                    }
-                    else refusal = "Nothing to undo yet";
+                    if (_undo.Count == 0) refusal = "Nothing to undo yet";
                     break;
                 case BoosterKind.Unclamp:
-                    int linkId = FailFlow.RescueLink(_model);   // a frozen ring's own clamp first (review i, M2)
-                    if (linkId < 0 || !_model.ReleaseLink(linkId)) refusal = "No clamps left";
-                    else
-                    {
-                        // L4: ReleaseLink assumes a release inside a gesture (move zero = that gesture). Outside one,
-                        // the next gesture is the first of the spring's K, so the badge counts down right away.
-                        _model.Links[linkId].ReleasedAt = _model.Moves;
-                        ClearHints();
-                        _failCheckAt = Time.time + 0.15f;
-                    }
+                    linkId = FailFlow.RescueLink(_model);   // a frozen ring's own clamp first (review i, M2)
+                    if (linkId < 0 || !_model.Links[linkId].Active) refusal = "No clamps left";
                     break;
             }
             if (refusal != null)
@@ -1227,6 +1194,46 @@ namespace Orcub.Game
                 _hud.ShowToast(refusal);
                 return;
             }
+
+            // 2) pay (review m, L5): the win-streak bonus first (attempt-local); otherwise the wallet must accept
+            // the spend before the booster acts, so a stale count never gives a free use
+            if (_freeBooster == kind) _freeBooster = null;
+            else if (!BoosterInventory.TrySpend(kind))
+            {
+                UpdateHud();
+                Haptics.Notify(Haptics.Notice.Warning);
+                _hud.ShowToast($"No {name}s left");
+                return;
+            }
+
+            // 3) act
+            switch (kind)
+            {
+                case BoosterKind.Hint:
+                    ClearHints();
+                    if (hint.PullOut) _rings[hint.Ring].ShowPullHint();
+                    else _rings[hint.Ring].ShowHint(hint.Delta);
+                    _hud.ShowToast(hint.PullOut ? "Pull this gear out" : "Turn this gear");
+                    break;
+                case BoosterKind.Undo:
+                    var (snap, moves) = _undo.Pop();
+                    ClearViews();
+                    _model.Restore(snap);
+                    _movesUsed = moves;
+                    BuildViews();
+                    UpdateHud();
+                    foreach (var r in _rings) if (r != null) r.Pulse();
+                    _failCheckAt = Time.time + 0.4f;   // still a dead end (rust / spring)? the card comes back
+                    break;
+                case BoosterKind.Unclamp:
+                    _model.ReleaseLink(linkId);
+                    // L4: ReleaseLink assumes a release inside a gesture (move zero = that gesture). Outside one,
+                    // the next gesture is the first of the spring's K, so the badge counts down right away.
+                    _model.Links[linkId].ReleasedAt = _model.Moves;
+                    ClearHints();
+                    _failCheckAt = Time.time + 0.15f;
+                    break;
+            }
             if (kind == BoosterKind.Undo && _attemptOpen)
             {
                 _gestures++;
@@ -1234,9 +1241,7 @@ namespace Orcub.Game
                 _adaptive.RecordMove(false, Time.unscaledTime - _lastGesture, _lockedTouches, true);
                 _lastGesture = Time.unscaledTime; _lockedTouches = 0;
             }
-            ClientGateway.Track("booster_used", new { level = _levelIndex, booster = BoosterName(kind) });
-            if (_freeBooster == kind) _freeBooster = null;   // the win-streak bonus goes first (attempt-local, no wallet)
-            else BoosterInventory.TrySpend(kind);
+            ClientGateway.Track("booster_used", new { level = _levelIndex, booster = name });
             _attemptBoosters++;
             Haptics.Play(Haptics.Impact.Medium, 0.8f);
             _hud.SetBoosterCount(kind, BoosterShown(kind));
@@ -1597,8 +1602,13 @@ namespace Orcub.Game
             Rect safe = SafeViewportRect();
             if (_hud != null && cam.targetTexture == null)
             {
-                // keep the top bar + goal pill and the booster tray clear; the board fills what's between
-                float top = LevelHud.TopReserve, bottom = _hud.BottomReserve;
+                // keep the top bar + goal pill and the booster tray clear; the board fills what's between. A tutorial
+                // reserve and an open fail sheet (approved out_of_moves_gold_B re-fits the board above it) lift the floor.
+                float top = LevelHud.TopReserve;
+                float target = FitBottomTarget();
+                if (_fitBottom < 0f || _snapFit) _fitBottom = target;
+                _snapFit = false;
+                float bottom = Mathf.Min(_fitBottom, 0.9f - top);
                 safe = new Rect(safe.x, safe.y + safe.height * bottom, safe.width, safe.height * (1f - top - bottom));
             }
             if (Mathf.Approximately(_fitAspect, cam.aspect) && safe == _fitSafeArea) return;
@@ -1623,6 +1633,26 @@ namespace Orcub.Game
                 float size = Mathf.Max(_bounds.width, _bounds.height) * 1.6f;
                 _glow.transform.localScale = Vector3.one * size;
             }
+        }
+
+        float _fitBottom = -1f;   // the board's floor (share of the safe height), eased toward FitBottomTarget
+        bool _snapFit = true;
+
+        float FitBottomTarget()
+        {
+            float b = _hud.BottomReserve + _hud.UnitsToSafeFraction(_layoutReserve);
+            float sheet = _hud.SheetTopFraction;
+            if (sheet > 0f) b = Mathf.Max(b, sheet + 0.012f);
+            return b;
+        }
+
+        /// <summary>Eases the board's floor when a fail sheet opens / closes (a level start snaps it).</summary>
+        void StepFit()
+        {
+            if (_hud == null || _fitBottom < 0f) return;
+            float target = FitBottomTarget();
+            if (Mathf.Abs(target - _fitBottom) < 0.0005f) { _fitBottom = target; return; }
+            _fitBottom = Mathf.Lerp(_fitBottom, target, 1f - Mathf.Exp(-Time.unscaledDeltaTime * 12f));
         }
 
         Rect SafeViewportRect()

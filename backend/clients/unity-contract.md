@@ -210,7 +210,18 @@ See ../docs/admob-ssv.md for nonce issuance, callback verification, conservative
 `level_reward` uses the winning level_end event ID as ref_id, grants once per level
 per player (5 normal, 50 for index modulo 20 equal to 19), and returns `granted`
 (0 on replay). Normal clears retain the configured daily cap; bosses have an
-independent cap of 3 per UTC day. Every earlier level must already have a reward marker (zero tolerance); LevelIndex outside 0..99999 is rejected. Missing evidence / sequence gaps return retryable 409; expired/ineligible evidence and daily caps return final 410. Merge credits remaining guest first clears only for levels the account has not already received.
+independent cap of 3 per UTC day. The server keeps a rewarded frontier: a claim
+advances it past earlier levels, paying the earlier wins it holds as evidence (gaps
+without a winning level_end advance unpaid), so claims need not arrive in order.
+LevelIndex outside 0..99999 is rejected with 400. When the winning level_end isn't on
+the server for this player the claim gets retryable 409 `{"error":"reward_pending"}`.
+Daily caps never produce an error: the response is
+`200 {"wallet":WALLET,"granted":N,"deferred":true}`, the level is queued and paid
+automatically, in level order up to the cap, at the start of a later wallet GET or
+grant. `granted` is everything paid by that call (backlog included). Replaying the
+same key on a later day returns `granted` 0. The server sends no 409/410
+`reward_cap` / `reward_deferred` / `reward_expired` for level rewards. Merge credits
+remaining guest first clears only for levels the account has not already received.
 
 `daily_puzzle_end` is essential first-party gameplay evidence, sent without consent
 and without ad identifiers. A 401 renews installation credentials and retries;

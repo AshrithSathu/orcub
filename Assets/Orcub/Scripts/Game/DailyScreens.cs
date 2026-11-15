@@ -214,7 +214,7 @@ namespace Orcub.Game
         }
 
         /// <summary>The win card's streak strip (track, "2/3 wins", next-reward line), under the wreath card.</summary>
-        public static RectTransform Strip(UiKit kit, RectTransform parent, int wins, BoosterKind next)
+        public static RectTransform Strip(UiKit kit, RectTransform parent, int wins, BoosterKind next, int waitsForLevel = 0)
         {
             var card = UiKit.Rect("WinStreak", parent);
             card.anchorMin = new Vector2(0f, 1f);
@@ -228,7 +228,7 @@ namespace Orcub.Game
             var count = kit.MakeText(AccountUi.Row(card, "Count", y, 66f, 30f, 30f), $"{Mathf.Min(wins, 3)}/3 wins", UiKit.Title - 4, UiKit.Ink);
             UiKit.Anchor(count.rectTransform, 0, 0, 1, 1);
             y += 66f;
-            var line = kit.MakeText(AccountUi.Row(card, "Line", y, 52f, 30f, 30f), DailyCalendar.WinsLine(wins, next), UiKit.Label, UiKit.Ink);
+            var line = kit.MakeText(AccountUi.Row(card, "Line", y, 52f, 30f, 30f), DailyCalendar.WinsLine(wins, next, waitsForLevel), UiKit.Label, UiKit.Ink);
             UiKit.Anchor(line.rectTransform, 0, 0, 1, 1);
             AccountUi.Fit(line, 800f, UiKit.Label, UiKit.Caption);
             y += 52f + 30f;
@@ -492,22 +492,24 @@ namespace Orcub.Game
             var port = DailyGateway.Current;
             var o = AccountOverlay.Create(parent, kit, "DailyGift", DailyFlow.SheetOrder, 0.55f);
             var card = o.Panel;
-            // the opening box sits proud of the sheet's top edge
+            // the opening box sits proud of the sheet's top edge (approved daily_gift_B). review m, d07: kept low and
+            // the sheet compact, so the box clears Home's task chip above the sheet
             var box = kit.MakeImage(card, FeatureArt.GiftOpen, Color.white);
+            box.preserveAspect = true;
             var brt = box.rectTransform;
             brt.anchorMin = brt.anchorMax = new Vector2(0.5f, 1f);
             brt.pivot = new Vector2(0.5f, 0f);
-            brt.sizeDelta = new Vector2(420f, 350f);
-            brt.anchoredPosition = new Vector2(-60f, -40f);
+            brt.sizeDelta = new Vector2(260f, 225f);
+            brt.anchoredPosition = new Vector2(-335f, -140f);   // left of the title, rising ~85 above the edge
 
-            float y = 60f;
-            var title = kit.MakeText(AccountUi.Row(card, "Title", y, 120f, 140f, 140f), "Daily gift", 96, UiKit.Ink);
+            float y = 50f;
+            var title = kit.MakeText(AccountUi.Row(card, "Title", y, 100f, 270f, 140f), "Daily gift", 86, UiKit.Ink);
             UiKit.Anchor(title.rectTransform, 0, 0, 1, 1);
             ShopUi.Close(kit, card, 40f, 40f, close);
-            y += 120f + 26f;
+            y += 100f + 20f;
 
             // today's gift, then what the next two days bring (the server rotates one reward per UTC day)
-            var row = AccountUi.Row(card, "Gifts", y, 300f, 46f, 46f);
+            var row = AccountUi.Row(card, "Gifts", y, 260f, 46f, 46f);
             ShopUi.InnerCard(kit, row, 60f, new Color(0.99f, 0.93f, 0.83f));
             string today = port?.TodayUtc ?? DailyCalendar.Key(DateTime.UtcNow.Date);
             string[] captions = { "Today", "Tomorrow", "Next day" };
@@ -527,19 +529,19 @@ namespace Orcub.Game
                 UiKit.Anchor(cap.rectTransform, 0f, 0.04f, 1f, 0.2f);
                 if (i > 0) { ic.color = new Color(tint.r, tint.g, tint.b, 0.45f); label.color = DailyUi.Muted; }
             }
-            y += 300f + 34f;
+            y += 260f + 24f;
 
-            var collectRow = AccountUi.Row(card, "Collect", y, 150f, 70f, 70f);
+            var collectRow = AccountUi.Row(card, "Collect", y, 136f, 70f, 70f);
             bool claimable = port != null && port.CanClaimGift;
             var collect = kit.Pill(collectRow, claimable ? "Collect gift" : "Collected today", claimable ? UiKit.Mint : AccountUi.TileTan, 80, () => { });
             UiKit.Anchor(collect, 0, 0, 1, 1);
             var label2 = collect.GetComponentInChildren<Text>();
-            y += 150f + 12f;
-            var helper = kit.MakeText(AccountUi.Row(card, "Helper", y, 52f, 46f, 46f),
+            y += 136f + 8f;
+            var helper = kit.MakeText(AccountUi.Row(card, "Helper", y, 46f, 46f, 46f),
                 claimable ? "" : $"Next gift {DailyCalendar.Countdown(DateTimeOffset.UtcNow, port?.NextGiftAt ?? DateTimeOffset.UtcNow).ToLowerInvariant()}",
                 UiKit.Label, AccountUi.InkSoft);
             UiKit.Anchor(helper.rectTransform, 0, 0, 1, 1);
-            y += 52f + 26f;
+            y += 46f + 18f;
 
             bool busy = false;
             var b = collect.GetComponent<Button>();
@@ -572,7 +574,7 @@ namespace Orcub.Game
             if (!claimable) ShopUi.SetInteractable(collect, false);
 
             AccountUi.Panel(kit, card, UiKit.CardCream, 104f);
-            o.BottomCard(y, 50f);
+            o.BottomCard(y, 40f);
             o.Enter();
             return o;
         }

@@ -97,13 +97,14 @@ namespace Orcub.Tests
             }
             finally { UnityEngine.Object.DestroyImmediate(go); }
         }
-        [TestCase(409,"reward_cap")] [TestCase(410,"reward_cap")]
-        [TestCase(409,"reward_deferred")] [TestCase(410,"deferred")]
-        [TestCase(410,"{\"error\":\"reward_cap\"}")]
-        public async Task CappedRewardIsDeferred(long status,string reason)
+        // review n: the server never sends a 409 / 410 cap error (a capped level is 200 deferred:true), so a 409
+        // other than reward_pending stays a plain retryable failure and 410 is final
+        [TestCase(409,"reward_cap")] [TestCase(409,"reward_deferred")]
+        public async Task UnknownConflictStaysRetryable(long status,string reason)
         {
             var f = new Fake { RejectStatus=status, RejectReason=reason };
-            Assert.AreEqual(Orcub.Game.RewardClaims.Deferred, await new StoreService(f,f,f).ClaimLevelReward(Guid.NewGuid().ToString()));
+            try { await new StoreService(f,f,f).ClaimLevelReward(Guid.NewGuid().ToString()); Assert.Fail("Expected refusal"); }
+            catch (StoreHttpException error) { Assert.AreEqual(409,error.Status); }
         }
         [TestCase(400)] [TestCase(422)] [TestCase(410)]
         public async Task PermanentRewardRefusalReturnsZero(long status)
@@ -111,14 +112,14 @@ namespace Orcub.Tests
             var f = new Fake { RejectStatus=status, RejectReason="reward_expired" };
             Assert.AreEqual(0, await new StoreService(f,f,f).ClaimLevelReward(Guid.NewGuid().ToString()));
         }
-        [TestCase("reward_pending")] [TestCase("reward_sequence_pending")]
-        public async Task PendingRewardRemainsRetryable(string reason)
+        [Test]
+        public async Task MissingEvidenceIsReportedAsRewardPending()
         {
-            var f = new Fake { RejectStatus=409, RejectReason=reason };
+            var f = new Fake { RejectStatus=409, RejectReason="{\"error\":\"reward_pending\"}" };
             try { await new StoreService(f,f,f).ClaimLevelReward(Guid.NewGuid().ToString()); Assert.Fail("Expected refusal"); }
-            catch (StoreHttpException error) { Assert.AreEqual(409,error.Status); }
+            catch (Orcub.Game.RewardPendingException) { }
         }
-        [TestCase(true,0,-1)] [TestCase(true,10,-1)] [TestCase(false,5,5)] [TestCase(false,0,0)]
+        [TestCase(true,0,-1)] [TestCase(true,10,-11)] [TestCase(false,5,5)] [TestCase(false,0,0)]
         public async Task SuccessfulRewardHonoursBackendDeferredFlag(bool deferred,int granted,int expected)
         {
             var f = new Fake { DeferredReward=deferred, GrantedReward=granted };

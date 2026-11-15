@@ -226,16 +226,20 @@ namespace Orcub.Store
             {
                 var response = await Wallet.Submit("/v1/wallet/grant", new { player_id = backend.PlayerId,
                     reason = "level_reward", ref_id = eventId, idempotency_key = eventId });
-                return (bool?)response["deferred"] == true ? Orcub.Game.RewardClaims.Deferred : (int?)response["granted"] ?? 0;
+                int granted = (int?)response["granted"] ?? 0;
+                // a capped level comes back as 200 deferred:true; "granted" is everything paid in this call (backlog too)
+                return (bool?)response["deferred"] == true ? Orcub.Game.RewardClaims.DeferredWith(granted) : granted;
             }
-            catch (StoreHttpException e) when (e.Status == 409 || e.Status == 410)
+            catch (StoreHttpException e) when (e.Status == 409)
             {
                 string reason = e.Message;
                 try { reason = (string)JObject.Parse(reason)["error"] ?? reason; }
                 catch (Newtonsoft.Json.JsonException) { }
-                if (reason == "reward_cap" || reason == "reward_deferred" || reason == "deferred")
-                    return Orcub.Game.RewardClaims.Deferred;
-                if (e.Status != 410) throw;
+                if (reason == "reward_pending") throw new Orcub.Game.RewardPendingException();   // evidence not on the server
+                throw;
+            }
+            catch (StoreHttpException e) when (e.Status == 410)
+            {
                 backend.Track("error", new { code = "level_reward_refused", context = "level_reward" });
                 return 0;
             }
@@ -267,13 +271,17 @@ namespace Orcub.Store
             finally { gate.Release(); }
             try { await Refresh(); } catch (Exception) { /* Retain last confirmed wallet; refresh next foreground. */ }
         }
+        /// <summary>Transactions the last Restore found; -1 before one completed.</summary>
+        public int LastRestoredCount { get; private set; } = -1;
         public async Task Restore()
         {
+            LastRestoredCount = -1;
             await gate.WaitAsync();
             try
             {
                 await backend.PrepareAccount();
                 var transactions = await kit.Restore();
+                LastRestoredCount = transactions.Count;   // 0: nothing to restore (the shop says so, not "restored")
                 string retryKey = "restore.retry." + backend.PlayerId;
                 if (transactions.Count > 100) throw new InvalidOperationException("restore_limit");
                 var response = await Wallet.Submit("/v1/iap/restore", new { player_id = backend.PlayerId, signed_transactions = transactions.Select(t => t.Jws).ToArray() });

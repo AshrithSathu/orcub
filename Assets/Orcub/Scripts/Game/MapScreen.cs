@@ -421,12 +421,14 @@ namespace Orcub.Game
         RectTransform _ticket;
 
         /// <summary>Approved win_streak_B: "Free Hint ready · 3/3 wins" in place of the goal line when a bonus waits.</summary>
-        void ShowWinTicket(bool boss)
+        void ShowWinTicket(bool boss, int level)
         {
             if (_ticket != null) Destroy(_ticket.gameObject);
             _ticket = null;
             var port = DailyGateway.Current;
-            bool show = port != null && port.BonusReady && !boss;
+            // review m, M1: no "Free Hint ready" on a level where Hint is still locked (the bonus waits for it)
+            bool show = port != null && port.BonusReady && !boss &&
+                        !TutorialFlow.Locked(port.NextBonus, level + 1, Chapters.Frontier + 1);
             _goalText.enabled = !show;
             if (!show) return;
             var slot = UiKit.Rect("TicketSlot", (RectTransform)_goalText.transform.parent);
@@ -475,7 +477,7 @@ namespace Orcub.Game
             var rules = LevelRules.For(def, tutorial: level < 3);
             int rings = def.Rings.Count;
             _goalText.text = $"Free all {rings} gears";
-            ShowWinTicket(boss);
+            ShowWinTicket(boss, level);
 
             for (int i = _goal.childCount - 1; i >= 0; i--) Destroy(_goal.GetChild(i).gameObject);
             float w = 1f / Mathf.Max(rings, 5);

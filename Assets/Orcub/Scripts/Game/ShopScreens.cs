@@ -598,7 +598,11 @@ namespace Orcub.Game
             var art = kit.Art;
             string name = kind == BoosterKind.Hint ? "Hint" : kind == BoosterKind.Undo ? "Undo" : "Unclamp";
             Sprite glyph = kind == BoosterKind.Hint ? art.iconHint : kind == BoosterKind.Undo ? art.iconUndo : art.iconUnclamp;
-            var o = AccountOverlay.Create(parent, kit, "BoosterSheet", ShopFlow.ShopOrder, 0.5f, onScrimTap: close);
+            // review m, M4: while a purchase is in flight the sheet can't be closed (X and scrim are inert), and a
+            // confirmed purchase always refreshes the tray, even if the sheet went away meanwhile
+            var spend = new GoldSpend();
+            void TryClose() { if (!spend.Busy) close(); }
+            var o = AccountOverlay.Create(parent, kit, "BoosterSheet", ShopFlow.ShopOrder, 0.5f, onScrimTap: TryClose);
             var card = o.Panel;
             float y = 40f;
             var head = AccountUi.Row(card, "Head", y, 132f, 52f, 150f);
@@ -612,7 +616,7 @@ namespace Orcub.Game
             var title = kit.MakeText(head, $"Get a {name}", UiKit.Display, UiKit.Ink, TextAnchor.MiddleLeft);
             UiKit.Anchor(title.rectTransform, 0, 0, 1, 1);
             title.rectTransform.offsetMin = new Vector2(160f, 0f);
-            ShopUi.Close(kit, card, 34f, 34f, close);
+            var x = ShopUi.Close(kit, card, 34f, 34f, TryClose);
             y += 132f + 30f;
 
             var buyRow = AccountUi.Row(card, "Buy", y, 150f, 46f, 46f);
@@ -627,7 +631,6 @@ namespace Orcub.Game
             Balance();
             y += 54f + 40f;
 
-            var spend = new GoldSpend();
             var b = buy.GetComponent<Button>();
             b.onClick.RemoveAllListeners();
             b.onClick.AddListener(async () =>
@@ -638,12 +641,15 @@ namespace Orcub.Game
                 if (port == null) { helper.text = "Not available right now"; return; }
                 label.text = "Buying…";
                 ShopUi.SetInteractable(buy, false);
+                ShopUi.SetInteractable(x, false);
                 var r = await spend.Run(key => port.BuyBooster(name.ToLowerInvariant(), key),
                     () => ShopFlow.OpenShop(Balance), port.Gold, ShopCatalog.BoosterGold);
+                if (r.Ok) onBought?.Invoke();   // the tray shows the new charge whatever happened to the sheet
                 if (o == null) return;
                 label.text = idle;
                 ShopUi.SetInteractable(buy, true);
-                if (r.Ok) { Haptics.Notify(Haptics.Notice.Success); close(); onBought?.Invoke(); return; }
+                ShopUi.SetInteractable(x, true);
+                if (r.Ok) { Haptics.Notify(Haptics.Notice.Success); close(); return; }
                 if (spend.Error != null) { helper.text = spend.Error; Haptics.Notify(Haptics.Notice.Warning); }
                 else Balance();
             });

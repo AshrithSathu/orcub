@@ -29,6 +29,15 @@ namespace Orcub.Game
     {
         public const int Order = 300;   // above the HUD (100), below cards / sheets (400+)
 
+        // review m, L11: the board keeps this much room above the tray on tutorial levels (BoardView.TutorialReserve),
+        // so Skip and the unlock callout sit on the felt, never on a ring.
+        const float SkipGap = 30f, SkipH = 132f;
+        /// <summary>Height above the tray's top edge reserved for the Skip row (level-1 / level-2 lessons).</summary>
+        public const float SkipRowHeight = SkipGap + SkipH + 26f;
+        const float UnlockLift = 170f, UnlockCalloutH = 66 + UiKit.Body + 92f;
+        /// <summary>Top of the unlock callout above the booster's top edge.</summary>
+        public const float UnlockCalloutTop = UnlockLift + UnlockCalloutH * 0.5f;
+
         UiKit _kit;
         Camera _cam;
         RectTransform _safe, _content, _skip;
@@ -177,7 +186,54 @@ namespace Orcub.Game
         TutorialTarget _t;
 
         /// <summary>Skip: centred just above the booster tray (approved rotate_B / release_A / pull_A).</summary>
-        Vector2 SkipHome => new Vector2(0f, LocalScreen(new Vector2(0f, _t.TrayTop)).y + 30f + 66f);
+        Vector2 SkipHome => new Vector2(0f, LocalScreen(new Vector2(0f, _t.TrayTop)).y + SkipGap + SkipH * 0.5f);
+
+        /// <summary>
+        /// review m, L11 (t01): Skip on the row above the tray, at the first of centre / right / left that keeps clear
+        /// of every ring and of the guide drawn round the target ring (the rotate arc runs round its left side).
+        /// </summary>
+        void PlaceSkip(Vector2 ringCentre, float ringRadius, float guideRadius)
+        {
+            var size = new Vector2(330f, SkipH);
+            float y = SkipHome.y;
+            float edge = HalfW - size.x * 0.5f - 34f;
+            var candidates = new[] { new Vector2(0f, y), new Vector2(edge, y), new Vector2(-edge, y) };
+            Vector2 best = candidates[0];
+            float bestClear = float.MinValue;
+            foreach (var c in candidates)
+            {
+                float clear = Clearance(c, size, ringCentre, ringRadius, guideRadius);
+                if (clear >= 0f) { best = c; bestClear = clear; break; }
+                if (clear > bestClear) { bestClear = clear; best = c; }
+            }
+            SkipPill(best, size.x, size.y);
+        }
+
+        /// <summary>Smallest gap (local units) between a pill and the rings / the target's guide; negative = overlap.</summary>
+        float Clearance(Vector2 centre, Vector2 size, Vector2 ring, float r, float guide)
+        {
+            var rect = new Rect(centre - size * 0.5f, size);
+            float Gap(Vector2 c, float radius)
+            {
+                var q = new Vector2(Mathf.Clamp(c.x, rect.xMin, rect.xMax), Mathf.Clamp(c.y, rect.yMin, rect.yMax));
+                return (q - c).magnitude - radius;
+            }
+            float clear = float.MaxValue;
+            if (r > 0f)
+            {
+                var q = new Vector2(Mathf.Clamp(ring.x, rect.xMin, rect.xMax), Mathf.Clamp(ring.y, rect.yMin, rect.yMax));
+                bool guideSide = q.x <= ring.x + r * 0.35f;   // the arc and its head sit on the ring's left
+                clear = Gap(ring, guideSide ? Mathf.Max(r + 20f, guide) : r + 20f);
+            }
+            if (_t.Others != null)
+                foreach (var o in _t.Others)
+                {
+                    var a = LocalScreen(o.min); var b = LocalScreen(o.max);
+                    var oc = (a + b) * 0.5f;
+                    clear = Mathf.Min(clear, Gap(oc, Mathf.Abs(b.x - a.x) * 0.5f - 20f));
+                }
+            return clear;
+        }
 
         /// <summary>Just under the goal band: the calm slot when the target's surroundings are full of rings.</summary>
         float TopSlot(float h) => LocalScreen(new Vector2(0f, _t.GoalBottom)).y - 36f - h * 0.5f;
@@ -223,7 +279,7 @@ namespace Orcub.Game
             art.localScale = new Vector3(t.TurnSign >= 0f ? 1f : -1f, 1f, 1f);   // sprite is counter-clockwise
             art.localRotation = Quaternion.Euler(0f, 0f, 90f);
             PlaceCallout("Turn toward the clamp", c, r);
-            SkipPill(SkipHome);
+            PlaceSkip(c, r, r + 56f + 120f);   // arc radius + its arrow head
             var hand = Hand(c + new Vector2(-r, 0f));   // drawn above Skip
             _anim = StartCoroutine(Orbit(hand.rectTransform, c, r, t.TurnSign >= 0f ? 1f : -1f));
         }
@@ -231,8 +287,9 @@ namespace Orcub.Game
         void Released(TutorialTarget t)
         {
             var c = Local(t.RingCenter);
-            PlaceCallout("Released!", c, LocalRadius(t));
-            SkipPill(SkipHome);
+            float rr = LocalRadius(t);
+            PlaceCallout("Released!", c, rr);
+            PlaceSkip(c, rr, rr + 20f);
         }
 
         void Pull(TutorialTarget t)
@@ -258,7 +315,7 @@ namespace Orcub.Game
             hrt.anchoredPosition = to;
             hrt.localRotation = Quaternion.Euler(0, 0, Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg + 90f);
             PlaceCallout("Drag the free ring out", c, r);
-            SkipPill(SkipHome);
+            PlaceSkip(c, r, r + 20f);
             var hand = Hand(from);
             _anim = StartCoroutine(Slide(hand.rectTransform, from, from + dir * 230f));
         }
@@ -288,7 +345,7 @@ namespace Orcub.Game
             string name = kind == BoosterKind.Hint ? "Hint" : kind == BoosterKind.Undo ? "Undo" : "Unclamp";
             var b = LocalScreen(t.Booster.center);
             float top = LocalScreen(new Vector2(t.Booster.center.x, t.Booster.yMax)).y;
-            var bubble = Callout($"{name} unlocked", $"Your first {name} is free", new Vector2(b.x + 230f, top + 170f), b.x, true, 66);
+            var bubble = Callout($"{name} unlocked", $"Your first {name} is free", new Vector2(b.x + 230f, top + UnlockLift), b.x, true, 66);
             // Skip beside the callout (approved boosters_B), on whichever side has room
             float bx = bubble.anchoredPosition.x, bw = bubble.sizeDelta.x;
             float right = HalfW - (bx + bw * 0.5f), left = (bx - bw * 0.5f) + HalfW;
@@ -298,7 +355,7 @@ namespace Orcub.Game
             if (Mathf.Abs(sx) + sw * 0.5f > HalfW - 10f)
             {   // no room beside: stack Skip under the callout's opposite edge
                 sx = onRight ? HalfW - sw * 0.5f - 24f : -HalfW + sw * 0.5f + 24f;
-                SkipPill(new Vector2(sx, top + 170f + bubble.sizeDelta.y * 0.5f + 90f), sw, 110f);
+                SkipPill(new Vector2(sx, top + UnlockLift + bubble.sizeDelta.y * 0.5f + 90f), sw, 110f);
             }
             else SkipPill(new Vector2(sx, bubble.anchoredPosition.y + 10f), sw, 110f);
         }
