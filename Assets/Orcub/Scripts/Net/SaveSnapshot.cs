@@ -45,9 +45,30 @@ namespace Orcub.Net
             foreach (var task in Workshop.Tasks) workshop[task.Id] = Workshop.IsRestored(task.Id) ? 1 : 0;
             var skill = new PlayerSkill(); var recent = new JArray();
             foreach (var s in skill.Recent) recent.Add(new JObject { ["won"] = s.Won, ["efficiency"] = s.Efficiency, ["seconds_per_move"] = s.SecondsPerMove, ["boosters"] = s.Boosters, ["continues"] = s.Continues });
-            return new JObject { ["highest_level"] = Progress.HighestUnlocked, ["stars"] = stars, ["workshop"] = workshop,
+            return new JObject { ["daily"] = CaptureDaily(), ["highest_level"] = Progress.HighestUnlocked, ["stars"] = stars, ["workshop"] = workshop,
                 ["settings"] = new JObject { ["sound"] = GameSettings.SoundOn, ["haptics"] = GameSettings.HapticsOn },
                 ["skill"] = new JObject { ["rating"] = skill.Rating, ["games"] = skill.Games, ["recent"] = recent } };
+        }
+        static JObject CaptureDaily()
+        {
+            var json=ClientGateway.DailyCapture?.Invoke();
+            return string.IsNullOrEmpty(json) ? null : JObject.Parse(json);
+        }
+        public static JObject MergeDaily(JObject local, JObject server)
+        {
+            if(server==null) return (JObject)local?.DeepClone();
+            var merged=(JObject)server.DeepClone(); if(local==null) return merged;
+            foreach(var key in new[]{"Completed","PendingPuzzleGrants"}) {
+                var union=new System.Collections.Generic.SortedSet<string>();
+                foreach(var item in local[key] as JArray ?? new JArray()) union.Add((string)item);
+                foreach(var item in server[key] as JArray ?? new JArray()) union.Add((string)item);
+                merged[key]=new JArray(union);
+            }
+            foreach(var key in new[]{"HighestUtcDay","LastGiftDay","LastPuzzleDay"})
+                if(string.CompareOrdinal((string)local[key],(string)merged[key])>0) merged[key]=local[key].DeepClone();
+            foreach(var day in (JArray)merged["PendingPuzzleGrants"])
+                if(string.CompareOrdinal((string)day,(string)merged["LastPuzzleDay"])>0) merged["LastPuzzleDay"]=day.DeepClone();
+            return merged;
         }
         // On conflict only monotonic progress is replayed; server owns the accepted mutable snapshot.
         public static JObject MergeProgress(JObject local, JObject server)
@@ -57,10 +78,12 @@ namespace Orcub.Net
             merged["highest_level"] = Math.Max((int)local["highest_level"], (int)server["highest_level"]);
             var stars = (JObject)merged["stars"];
             foreach (var p in ((JObject)local["stars"]).Properties()) stars[p.Name] = Math.Max((int?)stars[p.Name] ?? 0, (int)p.Value);
+            merged["daily"]=MergeDaily(local["daily"] as JObject,server["daily"] as JObject);
             return merged;
         }
         public static void Apply(JObject s)
         {
+            if(s["daily"] is JObject daily) ClientGateway.DailyRestore?.Invoke(daily.ToString());
             int oldHighest=Progress.HighestUnlocked;
             PlayerPrefs.SetInt("orcub.highest", (int)s["highest_level"]); PlayerPrefs.SetInt("orcub.level", (int)s["highest_level"]);
             for (int i = 0; i <= Math.Min(100000, Math.Max(LevelLibrary.Count, Math.Max(oldHighest, (int)s["highest_level"]))); i++) PlayerPrefs.SetInt("orcub.stars." + i, (int?)s["stars"]?[i.ToString()] ?? 0);

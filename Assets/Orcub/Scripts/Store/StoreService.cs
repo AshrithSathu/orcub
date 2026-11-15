@@ -59,7 +59,7 @@ namespace Orcub.Store
             if (Snapshot != null && (string)Snapshot["player_id"] != backend.PlayerId)
             { Snapshot = null; Balance = 0; RemoveAds = false; IsCached = true; Changed?.Invoke(); }
             var json = cache.Read("wallet." + backend.PlayerId);
-            try { if (!string.IsNullOrEmpty(json)) Apply(JObject.Parse(json), true); }
+            try { if (!string.IsNullOrEmpty(json)) Apply(JObject.Load(new Newtonsoft.Json.JsonTextReader(new System.IO.StringReader(json)) { DateParseHandling=Newtonsoft.Json.DateParseHandling.None }), true); }
             catch (Exception) { Snapshot=null; Balance=0; RemoveAds=false; cache.Write("quarantine.wallet." + backend.PlayerId, json); cache.Write("wallet." + backend.PlayerId, ""); }
             IsCached = true;
         }
@@ -71,7 +71,8 @@ namespace Orcub.Store
             if(value["lives"]!=null && value["lives"].Type!=JTokenType.Integer) throw new InvalidOperationException("wallet_cache_lives");
             if(value["inventory"] is JObject inventory && inventory.Properties().Any(x=>x.Value.Type!=JTokenType.Integer)) throw new InvalidOperationException("wallet_cache_inventory");
             Snapshot = (JObject)value.DeepClone(); Balance = (long)value["gold"]; RemoveAds = (bool)value["remove_ads"];
-            if(!cached) LastConfirmedRefresh=DateTimeOffset.UtcNow;
+            if(!cached) { LastConfirmedRefresh=DateTimeOffset.UtcNow; cache.Write("wallet.confirmed."+backend.PlayerId,LastConfirmedRefresh.ToString("o")); }
+            else LastConfirmedRefresh=DateTimeOffset.TryParse(cache.Read("wallet.confirmed."+backend.PlayerId),out var confirmed) ? confirmed : DateTimeOffset.MinValue;
             IsCached = cached; cache.Write("wallet." + backend.PlayerId, value.ToString()); afterPersist?.Invoke(); Changed?.Invoke();
         }
         public Func<string> OldestPending { get; set; }
@@ -185,6 +186,19 @@ namespace Orcub.Store
             await backend.PrepareAccount(); Wallet.LoadCache();
             await RetryPending(); await Refresh();
             Products = await kit.LoadProducts(ProductIds); Changed?.Invoke();
+        }
+        public async Task<bool> ClaimBoosterUnlock(string kind)
+        {
+            if(kind!="hint" && kind!="undo" && kind!="unclamp") throw new ArgumentException(nameof(kind));
+            var player=backend.PlayerId;
+            if(string.IsNullOrEmpty(player)) return false;
+            var slot="unlock."+player+"."+kind;
+            var key=cache.Read(slot);
+            if(string.IsNullOrEmpty(key)) { key=Guid.NewGuid().ToString(); cache.Write(slot,key); }
+            try {
+                await Wallet.Submit("/v1/wallet/grant",new {player_id=player,source="booster_unlock",kind,ref_id=key,idempotency_key=key});
+                cache.Write(slot,""); return true;
+            } catch(Exception) { return false; }
         }
         public Func<string> OldestPending { get; set; }
         public async Task Refresh()

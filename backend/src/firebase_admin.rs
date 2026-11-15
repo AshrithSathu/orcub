@@ -5,9 +5,9 @@ struct ServiceAccount {
     private_key: String,
     project_id: String,
 }
-pub async fn delete(uid: &str) -> Result<bool> {
+async fn request(action: &str, body: Value) -> Result<Value> {
     let Ok(raw) = std::env::var("FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON") else {
-        return Ok(false);
+        return Err(ApiError::unavailable());
     };
     let sa: ServiceAccount = serde_json::from_str(&raw).map_err(|_| ApiError::unavailable())?;
     if sa.project_id != "orcub-f0091" {
@@ -34,22 +34,45 @@ pub async fn delete(uid: &str) -> Result<bool> {
         .await
         .map_err(|_| ApiError::unavailable())?;
     let response = client
-        .post("https://identitytoolkit.googleapis.com/v1/projects/orcub-f0091/accounts:delete")
+        .post(format!(
+            "https://identitytoolkit.googleapis.com/v1/projects/orcub-f0091/accounts:{action}"
+        ))
         .bearer_auth(
             token["access_token"]
                 .as_str()
                 .ok_or(ApiError::unavailable())?,
         )
-        .json(&json!({"localId":uid}))
+        .json(&body)
         .send()
         .await
         .map_err(|_| ApiError::unavailable())?;
     if response.status().is_success() {
-        return Ok(true);
+        return response.json().await.map_err(|_| ApiError::unavailable());
     }
     let body: Value = response.json().await.map_err(|_| ApiError::unavailable())?;
     if body["error"]["message"] == "USER_NOT_FOUND" {
-        return Ok(true);
+        return Ok(json!({"missing":true}));
     }
     Err(ApiError::unavailable())
+}
+pub async fn delete(uid: &str) -> Result<bool> {
+    if std::env::var("FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON").is_err() {
+        return Ok(false);
+    }
+    request("delete", json!({"localId":uid})).await?;
+    Ok(true)
+}
+pub async fn anonymous(uid: &str) -> Result<bool> {
+    let value = request("lookup", json!({"localId":[uid]})).await?;
+    Ok(value["users"]
+        .as_array()
+        .and_then(|u| u.first())
+        .is_some_and(|u| {
+            u["disabled"] != true
+                && u["providerUserInfo"]
+                    .as_array()
+                    .is_none_or(|p| p.is_empty())
+                && u["email"].is_null()
+                && u["phoneNumber"].is_null()
+        }))
 }

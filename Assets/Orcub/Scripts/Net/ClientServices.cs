@@ -47,6 +47,7 @@ namespace Orcub.Net
             try { var stored = InstallStore.Read(); if (!string.IsNullOrEmpty(stored)) credentials = JObject.Parse(stored); }
             catch (Exception) { Debug.LogWarning("Install credentials unavailable"); }
             try { if (File.Exists(ConfigPath)) config = JObject.Parse(File.ReadAllText(ConfigPath)); } catch (Exception) { }
+            ClientGateway.LastLevelEndEventId = () => LastLevelEndEventId;
             ClientGateway.Event = Track;
             ClientGateway.Configure = Configure;
             ClientGateway.Paid = Paid;
@@ -233,11 +234,11 @@ namespace Orcub.Net
             try
             {
                 if (!Ready) { await Register(); return; }
-                if (queue.Count == 0) return;
+                if (queue.Count == 0) { ClientGateway.NotifyFlushed(); return; }
                 var batch = System.Array.FindAll(queue.Batch(AnalyticsConsent.BackendAllowed), e => AnalyticsConsent.BackendAllowed((string)e["kind"]));
                 if (batch.Length == 0) return;
                 using var req = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, batch));
-                if (req.responseCode >= 200 && req.responseCode < 300) { queue.Remove(batch); failures = 0; renewedInstall = false; }
+                if (req.responseCode >= 200 && req.responseCode < 300) { queue.Remove(batch); failures = 0; renewedInstall = false; ClientGateway.NotifyFlushed(); }
                 else if (req.responseCode == 400 || req.responseCode == 422)
                 {
                     // Isolate the rejected event without discarding valid neighbours.
@@ -246,7 +247,7 @@ namespace Orcub.Net
                         if (stopped) return;
                         var single = new[] { item };
                         using var check = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, single));
-                        if ((check.responseCode >= 200 && check.responseCode < 300) || check.responseCode == 400 || check.responseCode == 422) queue.Remove(single);
+                        if ((check.responseCode >= 200 && check.responseCode < 300) || check.responseCode == 400 || check.responseCode == 422) { queue.Remove(single); if(check.responseCode>=200 && check.responseCode<300) ClientGateway.NotifyFlushed(); }
                         else break;
                     }
                 }
@@ -267,10 +268,19 @@ namespace Orcub.Net
         void OnApplicationPause(bool paused) { if (stopped || queue == null) return; if (paused) { EndSession(); queue.Persist(); _ = Flush(); _ = SaveOnPause(); } else StartSession(); }
         async Task SaveOnPause() { try { if(Account!=null) await Account.Save(true); } catch(Exception) { } }
         void OnApplicationQuit() { if (stopped || queue == null) return; EndSession(); queue.Persist(); }
-        void OnDestroy() { AnalyticsConsent.Changed -= ApplyConsent; Application.logMessageReceived -= OnLog; if (Instance == this) { Instance = null; ClientGateway.Event = null; ClientGateway.Configure = null; ClientGateway.Paid = null; ClientGateway.Save = null; } }
-        public void SetPlayer(string id) { Orcub.Core.ConsumableGateway.MigrateSpends?.Invoke(PlayerId,id); credentials["player_id"] = id; InstallStore.Write(credentials.ToString(Formatting.None)); }
+        void OnDestroy() { AnalyticsConsent.Changed -= ApplyConsent; Application.logMessageReceived -= OnLog; if (Instance == this) { Instance = null; ClientGateway.LastLevelEndEventId=null; ClientGateway.Event = null; ClientGateway.Configure = null; ClientGateway.Paid = null; ClientGateway.Save = null; } }
+        internal string MergeProof => (string)credentials?["merge_proof"];
+        internal string MergeProofUid => (string)credentials?["merge_proof_uid"];
+        internal void SetMergeProof(string proof, string uid)
+        {
+            if(credentials==null) return;
+            credentials["merge_proof"]=proof; credentials["merge_proof_uid"]=uid;
+            InstallStore.Write(credentials.ToString(Formatting.None));
+        }
+        public void SetPlayer(string id) { var daily=ClientGateway.DailyCapture?.Invoke(); Orcub.Core.ConsumableGateway.MigrateSpends?.Invoke(PlayerId,id); credentials["player_id"] = id; InstallStore.Write(credentials.ToString(Formatting.None)); if(daily!=null) ClientGateway.DailyRestore?.Invoke(daily); }
         public async Task RenewInstall()
         {
+            if(PlayerPrefs.GetString("orcub.delete.intent","").Length>0 || PlayerPrefs.GetInt("orcub.delete.pending",0)!=0) throw new InvalidOperationException("deletion_in_progress");
             var old=PlayerId; credentials=null; InstallStore.Write(""); await Register();
             if(Ready) Orcub.Core.ConsumableGateway.MigrateSpends?.Invoke(old,PlayerId);
         }

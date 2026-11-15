@@ -21,6 +21,7 @@ namespace Orcub.Tests
             public readonly StoreTransaction Transaction = new StoreTransaction { Id = "123", ProductId = StoreService.ProductIds[0], Jws = "signed.jws.transaction" };
             public bool Reject, PendingPurchase, HasUnfinished, MixedRestore;
             public readonly List<string[]> RestoreBatches = new List<string[]>();
+            public JObject LastGrant;
             public int Debits, Finished;
             public long RejectStatus;
             readonly HashSet<string> spends = new HashSet<string>();
@@ -32,6 +33,7 @@ namespace Orcub.Tests
                 if (Reject) throw new InvalidOperationException("offline");
                 if (RejectStatus != 0) throw new StoreHttpException(RejectStatus);
                 var request = body == null ? new JObject() : JObject.FromObject(body);
+                if(path=="/v1/wallet/grant") { LastGrant=request; return Task.FromResult(new JObject { ["wallet"]=State }); }
                 if (path == "/v1/iap/apple") { Assert.AreEqual(Transaction.Jws, (string)request["signed_transaction"]); return Task.FromResult(new JObject { ["wallet"] = State, ["transaction_id"] = Transaction.Id }); }
                 if (path == "/v1/wallet/spend")
                 {
@@ -59,6 +61,18 @@ namespace Orcub.Tests
             public Task<IReadOnlyList<StoreTransaction>> Restore() => Task.FromResult<IReadOnlyList<StoreTransaction>>(MixedRestore ? new[] { Transaction, new StoreTransaction { Id = "456", ProductId = "bad", Jws = "bad.jws" } } : new[] { Transaction });
             public Task Finish(string id) { Calls.Add("finish"); Finished++; return Task.CompletedTask; }
             public void Update() => TransactionUpdated?.Invoke(Transaction);
+        }
+        [Test] public async Task UnlockRetriesSamePersistedKeyAcrossRelaunch()
+        {
+            var f=new Fake { RejectStatus=503 }; var service=new StoreService(f,f,f);
+            Assert.False(await service.ClaimBoosterUnlock("hint"));
+            var key=f.Read("unlock."+f.PlayerId+".hint"); Assert.True(Guid.TryParse(key,out _));
+            f.RejectStatus=0; service=new StoreService(f,f,f);
+            Assert.True(await service.ClaimBoosterUnlock("hint"));
+            Assert.AreEqual(key,(string)f.LastGrant["idempotency_key"]);
+            Assert.AreEqual("booster_unlock",(string)f.LastGrant["source"]);
+            Assert.AreEqual("hint",(string)f.LastGrant["kind"]);
+            Assert.AreEqual("",f.Read("unlock."+f.PlayerId+".hint"));
         }
         [Test]
         public async Task PurchaseAcknowledgesRefreshesThenFinishes()

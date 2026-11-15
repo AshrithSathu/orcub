@@ -6,7 +6,7 @@ using UnityEngine;
 namespace Orcub.Net
 {
     /// <summary>Exposes <see cref="AccountService"/> to the SDK-free UI through <see cref="AccountGateway"/>.</summary>
-    public sealed class AccountBridge : IAccountService
+    public sealed class AccountBridge : IAccountService, IAccountRecovery
     {
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         static void Install() => AccountGateway.Service = new AccountBridge();
@@ -38,6 +38,9 @@ namespace Orcub.Net
         public SaveSummary Cloud => A?.PendingCloud != null ? SaveSnapshot.Summary(A.PendingCloud) : default;
         public SaveSummary Local => SaveSnapshot.Summary(SaveSnapshot.Capture());
 
+        public bool DeletionNeedsConfirmation => A?.DeletionNeedsConfirmation ?? false;
+        public Task SignOut(bool discardUnsyncedProgress) => A != null ? A.SignOut(discardUnsyncedProgress) : Task.FromException(new InvalidOperationException("Offline"));
+        public void CancelReauthentication() => A?.CancelReauthentication();
         public Task SignInWithGoogle() => A != null ? A.SignInWithGoogle() : Task.FromException(new InvalidOperationException("Offline"));
         public Task SignOut() => A != null ? A.SignOut() : Task.FromException(new InvalidOperationException("Offline"));
         public Task DeleteAccount() => A != null ? A.DeleteAccount() : Task.FromException(new InvalidOperationException("Offline"));

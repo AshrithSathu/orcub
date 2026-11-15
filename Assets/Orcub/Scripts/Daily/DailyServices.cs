@@ -7,6 +7,8 @@ namespace Orcub.Daily
     // The composition owner replaces this instance after sign-in/sign-out/cloud restore.
     public sealed class DailyServices
     {
+        bool active=true;
+        public void Deactivate() { active=false; }
         public DailyContext Context { get; }
         public DailyPuzzleService Puzzle { get; }
         public DailyGiftService Gift { get; }
@@ -16,8 +18,8 @@ namespace Orcub.Daily
         {
             if (string.IsNullOrEmpty(canonicalPlayerId)) throw new ArgumentException(nameof(canonicalPlayerId));
             var state = DailyPersistence.Load(canonicalPlayerId);
-            Context = new DailyContext(state, clock ?? new SystemDailyClock(), () => DailyPersistence.Save(canonicalPlayerId, state), ClientGateway.Track);
-            var wallet = new DailyWalletClient();
+            Context = new DailyContext(state, clock ?? new SystemDailyClock(), () => { if(active) DailyPersistence.Save(canonicalPlayerId, state); }, ClientGateway.Track);
+            var wallet = new DailyWalletClient(canonicalPlayerId) { IsCurrent=()=>active };
             Wallet = wallet;
             Puzzle = new DailyPuzzleService(Context, wallet, () => Orcub.Net.ClientServices.Instance?.Flush() ?? System.Threading.Tasks.Task.CompletedTask); Gift = new DailyGiftService(Context, wallet);
             Wins = new WinStreakService(Context); Notifications = new NotificationService(Context, notifications);

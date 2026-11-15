@@ -11,3 +11,7 @@ Changes required outside this implementation scope:
 Policy: evidence must arrive on the completion date or the following UTC day. Missing proof after that window is permanently expired. This preserves the existing telemetry policy.
 
 Validation blocker on 2026-11-15: shared MCP returned no_unity_session and instances showed zero connected editors. Refresh(if_dirty) timed out waiting for readiness. Logs/Editor.log reported Game compilation errors (LoaderScreen.SetProgress, MechanicIntro, LevelHud.ShowMechanicIntro/SetBoss, ShowPause.onInfo). Those files belong to the Game agent; resolve and reconnect MCP, then rerun all EditMode tests and reopen Assets/Scenes/Game.unity.
+
+## Integrated in review h
+
+DailyRuntime now owns composition and the gateway hooks above. Net captures/restores the daily section and preserves pending/completed dates on merge; successful telemetry flushes trigger retry. Account-scoped DailyWalletClient rejects stale-account continuations. Device lifecycle validation remains pending; see review-h-resolution.md.

@@ -578,7 +578,7 @@ mod tests {
         let e = Event {
             dev: false,
             event_id: Uuid::new_v4(),
-            kind: "future".into(),
+            kind: "level_fallback".into(),
             occurred_at: Utc::now(),
             data: json!({"email":"hello@example.com"}),
         };
@@ -589,7 +589,7 @@ mod tests {
         let e = Event {
             dev: false,
             event_id: Uuid::new_v4(),
-            kind: "future".into(),
+            kind: "level_fallback".into(),
             occurred_at: Utc::now(),
             data: json!({"metric_count":-50}),
         };

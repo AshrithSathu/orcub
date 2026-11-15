@@ -44,7 +44,7 @@ pub(crate) async fn lock(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
     Ok(())
 }
 pub(crate) async fn snapshot(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
-    Ok(sqlx::query_scalar("SELECT to_jsonb(w) || jsonb_build_object('lives',LEAST(5,lives+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))::int),'lives_updated_at',CASE WHEN lives+floor(extract(epoch FROM (now()-lives_updated_at))/1800)>=5 THEN now() ELSE lives_updated_at+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))*interval '30 minutes' END,'applied_keys','[]'::jsonb,'rewarded_nonces',COALESCE((SELECT jsonb_agg(nonce) FROM (SELECT nonce FROM rewarded_nonces WHERE player_id=$1 AND confirmed_at>now()-interval '1 day' ORDER BY confirmed_at DESC LIMIT 40) recent),'[]'::jsonb),'remove_ads',EXISTS(SELECT 1 FROM purchases WHERE player_id=$1 AND product_id='com.orcub.puzzle.remove_ads' AND NOT revoked)) FROM wallets w WHERE player_id=$1").bind(id).fetch_one(&mut **tx).await?)
+    Ok(sqlx::query_scalar("SELECT to_jsonb(w) || jsonb_build_object('lives',LEAST(5,lives+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))::int),'lives_updated_at',CASE WHEN lives+floor(extract(epoch FROM (now()-lives_updated_at))/1800)>=5 THEN now() ELSE lives_updated_at+GREATEST(0,floor(extract(epoch FROM (now()-lives_updated_at))/1800))*interval '30 minutes' END,'applied_since',now(),'applied_keys','[]'::jsonb,'rewarded_nonces',COALESCE((SELECT jsonb_agg(nonce) FROM (SELECT nonce FROM rewarded_nonces WHERE player_id=$1 AND confirmed_at>now()-interval '1 day' ORDER BY confirmed_at DESC LIMIT 40) recent),'[]'::jsonb),'remove_ads',EXISTS(SELECT 1 FROM purchases WHERE player_id=$1 AND product_id='com.orcub.puzzle.remove_ads' AND NOT revoked)) FROM wallets w WHERE player_id=$1").bind(id).fetch_one(&mut **tx).await?)
 }
 pub(crate) async fn save_fields(tx: &mut Tx<'_>, id: Uuid, data: &mut SaveData) -> Result<()> {
     sqlx::query("INSERT INTO wallets(player_id) VALUES($1) ON CONFLICT DO NOTHING")
@@ -80,10 +80,37 @@ pub(crate) async fn entry(
         .await?;
     Ok(())
 }
+// At most 43 payments per call, regardless of lifetime level count.
+async fn pay_deferred(tx: &mut Tx<'_>, id: Uuid) -> Result<i64> {
+    let mut paid = 0;
+    for (boss, cap, amount) in [(false, 40_i64, 5_i64), (true, 3, 50)] {
+        let used: i64=sqlx::query_scalar("SELECT count(*) FROM wallet_ledger WHERE player_id=$1 AND reason='level_reward' AND delta=$2 AND created_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'").bind(id).bind(amount).fetch_one(&mut **tx).await?;
+        let levels: Vec<i32>=sqlx::query_scalar("SELECT level FROM deferred_level_rewards WHERE player_id=$1 AND (level%20=19)=$2 ORDER BY level LIMIT $3").bind(id).bind(boss).bind((cap-used).max(0)).fetch_all(&mut **tx).await?;
+        for level in levels {
+            entry(
+                tx,
+                id,
+                amount,
+                "level_reward",
+                &format!("level:{level}"),
+                &format!("level-payment:{level}"),
+                &json!({}),
+            )
+            .await?;
+            sqlx::query("DELETE FROM deferred_level_rewards WHERE player_id=$1 AND level=$2")
+                .bind(id)
+                .bind(level)
+                .execute(&mut **tx)
+                .await?;
+            paid += amount;
+        }
+    }
+    Ok(paid)
+}
 #[derive(Deserialize)]
 pub struct WalletQuery {
     player_id: Uuid,
-    applied_since: Option<DateTime<Utc>>,
+    applied_since: Option<String>,
 }
 pub(crate) async fn wallet(
     State(s): State<Arc<App>>,
@@ -93,9 +120,13 @@ pub(crate) async fn wallet(
     let id = owner(&s, &h, q.player_id).await?;
     let mut tx = s.pool.begin().await?;
     lock(&mut tx, id).await?;
+    pay_deferred(&mut tx, id).await?;
     let mut v = snapshot(&mut tx, id).await?;
-    if let Some(since) = q.applied_since {
-        let keys: Vec<String>=sqlx::query_scalar("SELECT idempotency_key FROM wallet_ledger WHERE player_id=$1 AND reason='consume' AND created_at >= $2 ORDER BY created_at DESC LIMIT 4096").bind(id).bind(since).fetch_all(&mut *tx).await?;
+    if let Some(since) = q
+        .applied_since
+        .and_then(|v| DateTime::parse_from_rfc3339(&v).ok())
+    {
+        let keys: Vec<String>=sqlx::query_scalar("SELECT idempotency_key FROM wallet_ledger WHERE player_id=$1 AND reason='consume' AND created_at >= $2 ORDER BY created_at DESC LIMIT 4096").bind(id).bind(since-chrono::Duration::hours(1)).fetch_all(&mut *tx).await?;
         v["applied_keys"] = json!(keys);
     }
     tx.commit().await?;
@@ -311,6 +342,7 @@ pub async fn grant(
     let id = owner(&s, &h, b.player_id).await?;
     let mut tx = s.pool.begin().await?;
     lock(&mut tx, id).await?;
+    pay_deferred(&mut tx, id).await?;
     if b.reason == "booster_unlock" {
         let receipt = unlock::claim(&mut tx, id, &b).await?;
         let wallet = snapshot(&mut tx, id).await?;
@@ -334,41 +366,54 @@ pub async fn grant(
                 catalog()["grants"]["daily_gift"].as_i64().unwrap()
             }
             "level_reward" => {
-                let level: Option<i32> = sqlx::query_scalar("SELECT (payload->>'LevelIndex')::int FROM events WHERE player_id=$1 AND event_id=$2 AND kind='level_end' AND (payload->'Result'->>'Outcome')::int=0 AND received_at>now()-interval '1 day'").bind(id).bind(b.ref_id).fetch_optional(&mut *tx).await?;
-                let level = match level {
-                    Some(level) if (0..100000).contains(&level) => level,
-                    Some(_) => return Err(ApiError::bad("invalid level index")),
-                    None => {
-                        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE player_id=$1 AND event_id=$2)").bind(id).bind(b.ref_id).fetch_one(&mut *tx).await?;
-                        return Err(if exists {
-                            ApiError(StatusCode::GONE, "reward_expired")
-                        } else {
-                            ApiError(StatusCode::CONFLICT, "reward_pending")
-                        });
+                let level: Option<i32> = sqlx::query_scalar("SELECT (payload->>'LevelIndex')::int FROM events WHERE player_id=$1 AND event_id=$2 AND kind='level_end' AND (payload->'Result'->>'Outcome')::int=0").bind(id).bind(b.ref_id).fetch_optional(&mut *tx).await?;
+                let level = level.ok_or(ApiError(StatusCode::CONFLICT, "reward_pending"))?;
+                if !(0..100000).contains(&level) {
+                    return Err(ApiError::bad("invalid level index"));
+                }
+                let mut frontier: i32 =
+                    sqlx::query_scalar("SELECT rewarded_frontier FROM players WHERE id=$1")
+                        .bind(id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                // Recover dropped claims from retained win evidence, one indexed lookup per new level.
+                while frontier < level {
+                    let next = frontier + 1;
+                    let win: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE player_id=$1 AND (payload->>'LevelIndex')::int=$2 AND kind='level_end' AND (payload->'Result'->>'Outcome')::int=0)").bind(id).bind(next).fetch_one(&mut *tx).await?;
+                    if !win {
+                        return Err(ApiError(StatusCode::CONFLICT, "reward_sequence_pending"));
                     }
-                };
-                let won: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wallet_ledger l WHERE l.player_id=$1 AND l.reason='level_reward' AND (l.ref_id=$2 OR EXISTS(SELECT 1 FROM events e WHERE e.player_id=$1 AND e.event_id::text=l.ref_id AND (e.payload->>'LevelIndex')::int=$3)))").bind(id).bind(format!("level:{level}")).bind(level).fetch_one(&mut *tx).await?;
-                if won {
-                    let w = snapshot(&mut tx, id).await?;
-                    tx.commit().await?;
-                    return Ok(Json(json!({"wallet":w,"granted":0})));
+                    sqlx::query(
+                        "INSERT INTO deferred_level_rewards VALUES($1,$2) ON CONFLICT DO NOTHING",
+                    )
+                    .bind(id)
+                    .bind(next)
+                    .execute(&mut *tx)
+                    .await?;
+                    frontier = next;
                 }
-                let missing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM generate_series(0,$2-1) n WHERE NOT EXISTS(SELECT 1 FROM wallet_ledger l WHERE l.player_id=$1 AND l.reason='level_reward' AND (l.ref_id='level:' || n::text OR EXISTS(SELECT 1 FROM events e WHERE e.player_id=$1 AND e.event_id::text=l.ref_id AND (e.payload->>'LevelIndex')::int=n))))").bind(id).bind(level).fetch_one(&mut *tx).await?;
-                if missing {
-                    return Err(ApiError(StatusCode::CONFLICT, "reward_sequence_pending"));
-                }
-                let boss = level % 20 == 19;
-                let n:i64=sqlx::query_scalar("SELECT count(*) FROM wallet_ledger WHERE player_id=$1 AND reason='level_reward' AND delta=$2 AND created_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'").bind(id).bind(if boss {50_i64} else {5_i64}).fetch_one(&mut *tx).await?;
-                if n >= if boss {
-                    3
-                } else {
-                    catalog()["grants"]["level_reward_daily_cap"]
-                        .as_i64()
-                        .unwrap()
-                } {
-                    return Err(ApiError(StatusCode::GONE, "reward_cap"));
-                }
-                if boss { 50 } else { 5 }
+                sqlx::query("UPDATE players SET rewarded_frontier=$2 WHERE id=$1")
+                    .bind(id)
+                    .bind(frontier)
+                    .execute(&mut *tx)
+                    .await?;
+                let paid = pay_deferred(&mut tx, id).await?;
+                entry(
+                    &mut tx,
+                    id,
+                    0,
+                    "level_claim",
+                    &format!("level:{level}"),
+                    &b.idempotency_key.to_string(),
+                    &request(&b),
+                )
+                .await?;
+                let deferred: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deferred_level_rewards WHERE player_id=$1 AND level=$2)").bind(id).bind(level).fetch_one(&mut *tx).await?;
+                let wallet = snapshot(&mut tx, id).await?;
+                tx.commit().await?;
+                return Ok(Json(
+                    json!({"wallet":wallet,"granted":paid,"deferred":deferred}),
+                ));
             }
             _ => {
                 return Err(ApiError::bad(
@@ -787,6 +832,8 @@ async fn revoke(pool: &PgPool, v: &Value) -> Result<()> {
 pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> {
     lock(tx, canonical).await?;
     lock(tx, guest).await?;
+    sqlx::query("INSERT INTO deferred_level_rewards SELECT $1,level FROM deferred_level_rewards WHERE player_id=$2 AND level>(SELECT rewarded_frontier FROM players WHERE id=$1) ON CONFLICT DO NOTHING").bind(canonical).bind(guest).execute(&mut **tx).await?;
+    sqlx::query("UPDATE players SET rewarded_frontier=GREATEST(rewarded_frontier,(SELECT rewarded_frontier FROM players WHERE id=$2)) WHERE id=$1").bind(canonical).bind(guest).execute(&mut **tx).await?;
     let mut carried = daily::merge(tx, canonical, guest).await?;
     carried.extend(unlock::merge(tx, canonical, guest).await?);
     let levels: Vec<i64> = sqlx::query_scalar("SELECT max(g.delta) FROM wallet_ledger g LEFT JOIN events e ON e.player_id=$2 AND e.event_id::text=g.ref_id WHERE g.player_id=$2 AND g.reason='level_reward' AND NOT EXISTS(SELECT 1 FROM wallet_ledger c LEFT JOIN events ce ON ce.player_id=$1 AND ce.event_id::text=c.ref_id WHERE c.player_id=$1 AND c.reason='level_reward' AND COALESCE(CASE WHEN c.ref_id LIKE 'level:%' THEN c.ref_id ELSE NULL END,'level:' || (ce.payload->>'LevelIndex'))=COALESCE(CASE WHEN g.ref_id LIKE 'level:%' THEN g.ref_id ELSE NULL END,'level:' || (e.payload->>'LevelIndex'))) GROUP BY COALESCE(CASE WHEN g.ref_id LIKE 'level:%' THEN g.ref_id ELSE NULL END,'level:' || (e.payload->>'LevelIndex'))").bind(canonical).bind(guest).fetch_all(&mut **tx).await?;
@@ -800,7 +847,8 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
         let reward: Value = row.get("reward");
         let at: DateTime<Utc> = row.get("created_at");
         let gold = reward["gold"].as_i64().unwrap_or(0);
-        if row.get::<String, _>("reason") == "booster" && held.get("gold").copied().unwrap_or(0) > 0
+        if row.get::<String, _>("reason") == "booster"
+            && held.get("gold").copied().unwrap_or(0) >= -row.get::<i64, _>("delta")
         {
             let request: Value = row.get("request");
             if let Some(kind) = request["booster"].as_str() {

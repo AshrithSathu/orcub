@@ -38,6 +38,8 @@ struct Cache {
     failures: u32,
 }
 pub struct Firebase {
+    #[cfg(test)]
+    pub(crate) test_permanent: std::sync::Mutex<std::collections::HashSet<String>>,
     client: reqwest::Client,
     endpoint: String,
     cache: Mutex<Cache>,
@@ -47,6 +49,8 @@ pub struct Firebase {
 impl Default for Firebase {
     fn default() -> Self {
         Self {
+            #[cfg(test)]
+            test_permanent: Default::default(),
             endpoint: "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com".into(),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -102,6 +106,13 @@ impl Firebase {
             return Err(ApiError::unavailable());
         }
         Ok((keys, ttl))
+    }
+    pub async fn current_anonymous(&self, uid: &str) -> Result<bool> {
+        #[cfg(test)]
+        if self.endpoint == "http://127.0.0.1:1" {
+            return Ok(!self.test_permanent.lock().unwrap().contains(uid));
+        }
+        crate::firebase_admin::anonymous(uid).await
     }
     pub async fn verify(&self, h: &HeaderMap) -> Result<String> {
         self.verify_kind(h, false).await
@@ -210,6 +221,7 @@ pub(crate) fn fixture() -> Firebase {
     let key =
         DecodingKey::from_rsa_pem(include_bytes!("../tests/fixtures/test-public.pem")).unwrap();
     Firebase {
+        test_permanent: Default::default(),
         endpoint: "http://127.0.0.1:1".into(),
         client: reqwest::Client::new(),
         refresh: Mutex::new(()),

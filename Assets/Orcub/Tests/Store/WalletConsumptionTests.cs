@@ -12,6 +12,8 @@ namespace Orcub.Tests
         {
             public string PlayerId { get; set; } = "player";
             public bool Offline, LoseAcknowledgement;
+            public string LastPath;
+            public const string Watermark="2026-11-15T03:04:05.123456+00:00";
             public long Reject;
             public int Debits, Hints = 3, LifeBalance = 2;
             public JArray ConfirmedAds = new JArray();
@@ -23,6 +25,7 @@ namespace Orcub.Tests
             public Task PrepareAccount() => Task.CompletedTask;
             public Task<JObject> Request(string path, string method, object body = null)
             {
+                LastPath=path;
                 if (path == "/v1/wallet/consume")
                 {
                     var r = JObject.FromObject(body);
@@ -41,7 +44,7 @@ namespace Orcub.Tests
                 if (path.StartsWith("/v1/wallet?")) return Task.FromResult(State);
                 return Task.FromResult(new JObject());
             }
-            public JObject State => new JObject { ["player_id"] = PlayerId, ["gold"] = 10, ["remove_ads"] = false,
+            public JObject State => new JObject { ["applied_since"]=Watermark, ["player_id"] = PlayerId, ["gold"] = 10, ["remove_ads"] = false,
                 ["rewarded_nonces"]=ConfirmedAds, ["inventory"] = new JObject { ["hint"] = Hints }, ["lives"] = LifeBalance, ["lives_updated_at"] = Stamp.ToString("o") };
             public void Track(string kind, object data) {}
             public string Read(string key) => cache.TryGetValue(key, out var s) ? s : "";
@@ -51,6 +54,18 @@ namespace Orcub.Tests
             public Task<IReadOnlyList<StoreTransaction>> Unfinished() => Task.FromResult<IReadOnlyList<StoreTransaction>>(Array.Empty<StoreTransaction>());
             public Task<IReadOnlyList<StoreTransaction>> Restore() => Unfinished();
             public Task Finish(string id) => Task.CompletedTask;
+        }
+        [Test] public async Task ServerWatermarkSurvivesPendingQueueRelaunchVerbatim()
+        {
+            var f=new Fake(); var service=new StoreService(f,f,f); await service.Wallet.Refresh();
+            var confirmed=service.Wallet.LastConfirmedRefresh;
+            f.Offline=true; var consume=new WalletConsumption(f,f,service.Wallet);
+            Assert.True(consume.TrySpend("booster_hint")); await consume.Reconcile();
+            var relaunched=new StoreService(f,f,f); var queue=new WalletConsumption(f,f,relaunched.Wallet);
+            Assert.True(queue.HasPending); Assert.AreEqual(confirmed,relaunched.Wallet.LastConfirmedRefresh);
+            Assert.AreEqual(Fake.Watermark,relaunched.Wallet.OldestPending());
+            f.Offline=false; await relaunched.Wallet.Refresh();
+            Assert.AreEqual("/v1/wallet?player_id=player&applied_since="+Uri.EscapeDataString(Fake.Watermark),f.LastPath);
         }
         [TestCase("editor:simulated",0)] [TestCase("expired",11)] [TestCase("active",0)]
         public async Task NonceTaggingOnlyUsesLiveServerGrantsForLives(string nonce, int ageMinutes)

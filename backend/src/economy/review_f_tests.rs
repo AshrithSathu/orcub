@@ -84,30 +84,67 @@ async fn lives_placement_alias_reaches_nonce(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn reward_refusals_distinguish_pending_expired_and_boss_cap(pool: PgPool) {
-    let (id,h)=player(&pool).await; let s=new_state(pool.clone(),"admin",false);
-    let event=Uuid::new_v4();
-    let claim=|| Action{player_id:id,idempotency_key:event,ref_id:event,reason:"level_reward".into(),booster:None,utc_day:None};
-    assert_eq!(grant(State(s.clone()),h.clone(),Json(claim())).await.unwrap_err().0,StatusCode::CONFLICT);
-    sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload,received_at) VALUES($1,$2,'level_end',now(),'{\"LevelIndex\":0,\"Result\":{\"Outcome\":0}}',now()-interval '2 days')").bind(event).bind(id).execute(&pool).await.unwrap();
-    assert_eq!(grant(State(s.clone()),h.clone(),Json(claim())).await.unwrap_err().0,StatusCode::GONE);
-    let mut tx=pool.begin().await.unwrap(); lock(&mut tx,id).await.unwrap();
-    for level in 0..79 {
-        entry(&mut tx,id,if level%20==19 {50} else {5},"level_reward",&format!("level:{level}"),&Uuid::new_v4().to_string(),&json!({})).await.unwrap();
-    }
-    tx.commit().await.unwrap();
-    sqlx::query("UPDATE events SET payload='{\"LevelIndex\":79,\"Result\":{\"Outcome\":0}}',received_at=now() WHERE event_id=$1").bind(event).execute(&pool).await.unwrap();
-    let err=grant(State(s),h,Json(claim())).await.unwrap_err(); assert_eq!(err.0,StatusCode::GONE); assert_eq!(err.1,"reward_cap");
-}
-
-#[sqlx::test(migrations = "./migrations")]
 async fn wallet_refresh_filters_acknowledgements_by_pending_age(pool: PgPool) {
     let (id,h)=player(&pool).await; let s=new_state(pool.clone(),"admin",false);
     let mut tx=pool.begin().await.unwrap(); lock(&mut tx,id).await.unwrap();
     entry(&mut tx,id,0,"consume","x","old-key",&json!({})).await.unwrap();
-    sqlx::query("UPDATE wallet_ledger SET created_at=now()-interval '1 hour' WHERE player_id=$1").bind(id).execute(&mut *tx).await.unwrap();
+    sqlx::query("UPDATE wallet_ledger SET created_at=now()-interval '2 hours' WHERE player_id=$1").bind(id).execute(&mut *tx).await.unwrap();
     entry(&mut tx,id,0,"consume","x","recent-key",&json!({})).await.unwrap(); tx.commit().await.unwrap();
-    let response=wallet(State(s),h,Query(WalletQuery{player_id:id,applied_since:Some(Utc::now()-chrono::Duration::minutes(5))})).await.unwrap();
+    let response=wallet(State(s),h,Query(WalletQuery{player_id:id,applied_since:Some((Utc::now()-chrono::Duration::minutes(5)).to_rfc3339())})).await.unwrap();
     let bytes=axum::body::to_bytes(response.into_body(),100000).await.unwrap();
     let value:Value=serde_json::from_slice(&bytes).unwrap(); assert_eq!(value["applied_keys"],json!(["recent-key"]));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deferred_caps_roll_over_and_expired_evidence_and_dropped_claims_recover(pool: PgPool) {
+    let (id,h)=player(&pool).await; let s=new_state(pool.clone(),"admin",false);
+    let mut paid=0; let mut deferred=0;
+    for level in 0..47 {
+        let event=Uuid::new_v4();
+        sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,received_at,payload) VALUES($1,$2,'level_end',now(),now()-interval '2 days',$3)").bind(event).bind(id).bind(json!({"LevelIndex":level,"Result":{"Outcome":0}})).execute(&pool).await.unwrap();
+        let b=Action{player_id:id,idempotency_key:event,ref_id:event,reason:"level_reward".into(),booster:None,utc_day:None};
+        let v=grant(State(s.clone()),h.clone(),Json(b)).await.unwrap().0;
+        if level%20!=19 { if v["granted"]==5 {paid+=1;} if v["deferred"]==true {deferred+=1;} }
+    }
+    assert_eq!((paid,deferred),(40,5));
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT gold FROM wallets WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap(),300);
+    sqlx::query("UPDATE wallet_ledger SET created_at=now()-interval '1 day' WHERE player_id=$1").bind(id).execute(&pool).await.unwrap();
+    let _=wallet(State(s.clone()),h.clone(),Query(WalletQuery{player_id:id,applied_since:None})).await.unwrap();
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT gold FROM wallets WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap(),325);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM deferred_level_rewards WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap(),0);
+    // Lost client queue item at 47 is recovered when 48 is claimed.
+    for level in 47..49 {
+        let event=Uuid::new_v4();
+        sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload) VALUES($1,$2,'level_end',now(),$3)").bind(event).bind(id).bind(json!({"LevelIndex":level,"Result":{"Outcome":0}})).execute(&pool).await.unwrap();
+        if level==48 { let b=Action{player_id:id,idempotency_key:event,ref_id:event,reason:"level_reward".into(),booster:None,utc_day:None}; assert_eq!(grant(State(s.clone()),h.clone(),Json(b)).await.unwrap().0["granted"],10); }
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn legacy_frontier_survives_pruning_and_mixed_paid_booster_survives_merge(pool: PgPool) {
+    let (guest,_)=player(&pool).await; let (account,_)=player(&pool).await;
+    let event=Uuid::new_v4();
+    sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload) VALUES($1,$2,'level_end',now(),'{\"LevelIndex\":4,\"Result\":{\"Outcome\":0}}')").bind(event).bind(guest).execute(&pool).await.unwrap();
+    let mut tx=pool.begin().await.unwrap(); lock(&mut tx,guest).await.unwrap();
+    entry(&mut tx,guest,5,"level_reward",&event.to_string(),"legacy",&json!({})).await.unwrap();
+    entry(&mut tx,guest,1000,"iap","paid","iap",&json!({})).await.unwrap();
+    entry(&mut tx,guest,-40,"booster","x","booster",&json!({"booster":"hint"})).await.unwrap();
+    sqlx::query("UPDATE wallets SET inventory='{\"hint\":1}' WHERE player_id=$1").bind(guest).execute(&mut *tx).await.unwrap(); tx.commit().await.unwrap();
+    sqlx::raw_sql("DROP TABLE deferred_level_rewards; DROP INDEX events_player_win_level; DROP INDEX ledger_reward_daily; ALTER TABLE players DROP COLUMN rewarded_frontier;").execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../../migrations/0011_review_h.sql")).execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM events WHERE player_id=$1").bind(guest).execute(&pool).await.unwrap();
+    assert_eq!(sqlx::query_scalar::<_,i32>("SELECT rewarded_frontier FROM players WHERE id=$1").bind(guest).fetch_one(&pool).await.unwrap(),4);
+    assert_eq!(sqlx::query_scalar::<_,String>("SELECT ref_id FROM wallet_ledger WHERE player_id=$1 AND reason='level_reward'").bind(guest).fetch_one(&pool).await.unwrap(),"level:4");
+    let mut tx=pool.begin().await.unwrap(); merge(&mut tx,account,guest).await.unwrap();
+    assert_eq!(snapshot(&mut tx,account).await.unwrap()["inventory"]["hint"],1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn boss_debt_and_normal_debt_have_independent_daily_caps(pool: PgPool) {
+    let (id,_)=player(&pool).await; let mut tx=pool.begin().await.unwrap(); lock(&mut tx,id).await.unwrap();
+    for level in 0..100 { sqlx::query("INSERT INTO deferred_level_rewards VALUES($1,$2)").bind(id).bind(level).execute(&mut *tx).await.unwrap(); }
+    assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),350); // 40 normals + 3 bosses
+    assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),0);
+    sqlx::query("UPDATE wallet_ledger SET created_at=now()-interval '1 day' WHERE player_id=$1").bind(id).execute(&mut *tx).await.unwrap();
+    assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),300); // 40 normals + remaining 2 bosses
 }

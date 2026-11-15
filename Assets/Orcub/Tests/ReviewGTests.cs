@@ -8,6 +8,15 @@ namespace Orcub.Tests
 {
     public class ReviewGTests
     {
+        [Test] public void DailyCloudMergePreservesPendingGuestDaysAndServerMutableState()
+        {
+            var guest=Newtonsoft.Json.Linq.JObject.Parse("{\"Completed\":[\"2026-11-14\"],\"PendingPuzzleGrants\":[\"2026-11-15\"],\"WinStreak\":3}");
+            var cloud=Newtonsoft.Json.Linq.JObject.Parse("{\"Completed\":[\"2026-11-13\"],\"PendingPuzzleGrants\":[],\"WinStreak\":1}");
+            var merged=SaveSnapshot.MergeDaily(guest,cloud);
+            Assert.AreEqual(1,(int)merged["WinStreak"]);
+            Assert.AreEqual(2,((Newtonsoft.Json.Linq.JArray)merged["Completed"]).Count);
+            Assert.AreEqual("2026-11-15",(string)merged["LastPuzzleDay"]);
+        }
         [TestCase("refill_lives")]
         [TestCase("out_of_lives")]
         [TestCase("retry_lives")]

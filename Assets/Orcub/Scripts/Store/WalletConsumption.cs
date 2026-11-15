@@ -18,7 +18,7 @@ namespace Orcub.Store
         public bool HasPending { get { Load(); return pending.Count>0; } }
         public string AttemptReference { get; set; } = Guid.NewGuid().ToString();
         public WalletConsumption(IStoreBackend backend, IStoreCache cache, Wallet wallet)
-        { this.backend = backend; this.cache = cache; this.wallet = wallet; wallet.OldestPending = () => { Load(); return pending.OfType<JObject>().Select(x=>(string)x["created_at"]).OrderBy(x=>x).FirstOrDefault(); }; }
+        { this.backend = backend; this.cache = cache; this.wallet = wallet; wallet.OldestPending = () => { Load(); return pending.OfType<JObject>().Select(x=>(string)x["applied_since"] ?? "1970-01-01T00:00:00Z").OrderBy(x=>x).FirstOrDefault(); }; }
         void Load()
         {
             var account = backend.PlayerId ?? "unregistered";
@@ -46,7 +46,7 @@ namespace Orcub.Store
             wallet.LoadCache();
         }
         JArray SafeArray(string key, string json) { try {
-            var array=string.IsNullOrEmpty(json) ? new JArray() : JArray.Parse(json);
+            var array=string.IsNullOrEmpty(json) ? new JArray() : JArray.Load(new Newtonsoft.Json.JsonTextReader(new System.IO.StringReader(json)) { DateParseHandling=Newtonsoft.Json.DateParseHandling.None });
             if(key.StartsWith("consume.") && array.Any(x=>!(x is JObject item) || item["count"]?.Type!=JTokenType.Integer || (int)item["count"]<1 || (int)item["count"]>100 || !Guid.TryParse((string)item["idempotency_key"],out _) || !Guid.TryParse((string)item["attempt_ref"],out _) || !new[]{"life","booster_hint","booster_undo","booster_unclamp"}.Contains((string)item["kind"]) || !TryTime(item["created_at"],out _))) throw new FormatException("Invalid consume queue");
             if(key.StartsWith("adgrants.") && array.Any(x=>!(x is JObject grant) || grant["nonce"]?.Type!=JTokenType.String || !TryTime(grant["at"],out _))) throw new FormatException("Invalid ad grant cache");
             return array;
@@ -138,7 +138,7 @@ namespace Orcub.Store
             if (Count(kind, DateTimeOffset.UtcNow) <= 0) return false;
             var grant=SafeArray("adgrants."+owner,cache.Read("adgrants."+owner)).OfType<JObject>().LastOrDefault(x=>TryTime(x["at"],out var at) && at>DateTimeOffset.UtcNow.AddMinutes(-10) && !(Snapshot["rewarded_nonces"] as JArray ?? new JArray()).Values<string>().Contains((string)x["nonce"]));
             pending.Add(new JObject { ["rewarded_nonce"]=kind=="life" && !((string)grant?["nonce"]??"").StartsWith("editor:") ? grant?["nonce"]?.DeepClone() : null, ["kind"] = kind, ["count"] = 1, ["attempt_ref"] = AttemptReference,
-                ["idempotency_key"] = Guid.NewGuid().ToString(), ["created_at"] = DateTimeOffset.UtcNow.ToString("o") });
+                ["applied_since"] = wallet.Snapshot?["applied_since"]?.DeepClone(), ["idempotency_key"] = Guid.NewGuid().ToString(), ["created_at"] = DateTimeOffset.UtcNow.ToString("o") });
             Save(); _ = Reconcile(); return true;
         }
         public Task<bool> Spend(string kind) => Task.FromResult(TrySpend(kind));

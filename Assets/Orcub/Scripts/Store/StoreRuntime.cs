@@ -23,6 +23,8 @@ namespace Orcub.Store
             instance=this; DontDestroyOnLoad(gameObject);
             var kit = gameObject.AddComponent<NativeStoreKit>();
             Service = new StoreService(kit, this, this);
+            Orcub.Game.ClientGateway.ClaimLevelReward=ClaimLevelReward;
+            Orcub.Game.ClientGateway.BoosterUnlock=Service.ClaimBoosterUnlock;
             consumption = new WalletConsumption(this, this, Service.Wallet); Consumption = consumption;
             ConsumableGateway.Count = kind => consumption.Count(kind, DateTimeOffset.UtcNow);
             ConsumableGateway.Spend = consumption.TrySpend;
@@ -39,6 +41,15 @@ namespace Orcub.Store
             Service.Wallet.Changed += () => { if (AdService.Instance != null) AdService.Instance.RemoveAds = Service.Wallet.RemoveAds; };
             try { await consumption.Reconcile(); await Service.Initialize(); await consumption.Reconcile(); } catch (Exception) { Debug.LogWarning("Store unavailable; retry on foreground"); }
         }
+        bool retryingUnlocks;
+        async Task RetryUnlocks()
+        {
+            if(retryingUnlocks || Service==null || string.IsNullOrEmpty(PlayerId)) return;
+            retryingUnlocks=true;
+            try { foreach(var kind in new[]{"hint","undo","unclamp"})
+                if(!string.IsNullOrEmpty(Read("unlock."+PlayerId+"."+kind))) await Service.ClaimBoosterUnlock(kind);
+            } finally { retryingUnlocks=false; }
+        }
         string earnedNonce; bool earnedApplied;
         public static async Task<string> PrepareAdRefill(string placement)
         {
@@ -46,7 +57,7 @@ namespace Orcub.Store
             placement=AdService.NormalizeRewardedPlacement(placement);
             using var response=await ClientServices.Instance.Request("/v1/ads/nonce","POST",new { player_id=ClientServices.Instance.PlayerId,placement });
             if(response.responseCode!=200) return null;
-            return (string)JObject.Parse(response.downloadHandler.text)["nonce"];
+            return (string)JObject.Load(new Newtonsoft.Json.JsonTextReader(new System.IO.StringReader(response.downloadHandler.text)) { DateParseHandling=Newtonsoft.Json.DateParseHandling.None })["nonce"];
         }
         public static void AdRefillEarned(string nonce) { if (instance!=null) { instance.earnedNonce=nonce; instance.earnedApplied=false; } }
         static StoreRuntime instance;
@@ -69,7 +80,7 @@ namespace Orcub.Store
         void Update()
         {
             if (consumption != null && Time.realtimeSinceStartupAsDouble >= nextReconcile)
-            { nextReconcile = Time.realtimeSinceStartupAsDouble + 15; _ = consumption.Reconcile(); }
+            { nextReconcile = Time.realtimeSinceStartupAsDouble + 15; _ = consumption.Reconcile(); _ = RetryUnlocks(); }
             if (owner == PlayerId) return;
             owner = PlayerId;
             if (Service != null) _ = Reload();
@@ -93,7 +104,7 @@ namespace Orcub.Store
                 return await RetryRequest(path,method,body);
             }
             if (response.responseCode != 200) { double.TryParse(response.GetResponseHeader("Retry-After"),out var retry); throw new StoreHttpException(response.responseCode, response.downloadHandler.text,retry); }
-            var result = JObject.Parse(response.downloadHandler.text);
+            var result = JObject.Load(new Newtonsoft.Json.JsonTextReader(new System.IO.StringReader(response.downloadHandler.text)) { DateParseHandling=Newtonsoft.Json.DateParseHandling.None });
             if (path.StartsWith("/v1/config") && AdService.Instance != null) AdService.Instance.ApplyBackendPolicy(result["ad_policy"], Service.Wallet.RemoveAds || (bool?)result["player_value"]?["remove_ads"] == true);
             return result;
         }
@@ -101,11 +112,11 @@ namespace Orcub.Store
         {
             using var response=await ClientServices.Instance.Request(path,method,body);
             if(response.responseCode!=200) { double.TryParse(response.GetResponseHeader("Retry-After"),out var retry); throw new StoreHttpException(response.responseCode,response.downloadHandler.text,retry); }
-            return JObject.Parse(response.downloadHandler.text);
+            return JObject.Load(new Newtonsoft.Json.JsonTextReader(new System.IO.StringReader(response.downloadHandler.text)) { DateParseHandling=Newtonsoft.Json.DateParseHandling.None });
         }
         public void Track(string kind, object data) => ClientServices.Instance.Track(kind, data);
         public string Read(string key) => PlayerPrefs.GetString("orcub.store." + key, "");
-        public void Write(string key, string value) { if(PlayerPrefs.GetString("orcub.store."+key, "") == value) return; PlayerPrefs.SetString("orcub.store." + key, value); prefsDirty=true; if(key.StartsWith("consume.") || key.StartsWith("adgrants.")) FlushPrefs(); }
+        public void Write(string key, string value) { if(PlayerPrefs.GetString("orcub.store."+key, "") == value) return; PlayerPrefs.SetString("orcub.store." + key, value); prefsDirty=true; if(key.StartsWith("consume.") || key.StartsWith("adgrants.") || key.StartsWith("unlock.")) FlushPrefs(); }
         void FlushPrefs() { if(prefsDirty) { PlayerPrefs.Save(); prefsDirty=false; } }
         void OnApplicationQuit() => FlushPrefs();
         bool prefsDirty; double nextPrefsSave;
@@ -133,6 +144,6 @@ namespace Orcub.Store
             try { await consumption.Reconcile(); await PrepareAccount(); await Service.Initialize(); } catch (Exception) { }
             await consumption.Reconcile();
         }
-        void OnDestroy() { Consumption = null; ConsumableGateway.HasPendingSpends=null; ConsumableGateway.PrepareAdRefill=null; ConsumableGateway.AdRefillEarned=null; ConsumableGateway.FlushSpends=null; ConsumableGateway.MigrateSpends=null; ConsumableGateway.RefillFromAd=null; ConsumableGateway.RefillWithGold=null; instance=null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
+        void OnDestroy() { Orcub.Game.ClientGateway.ClaimLevelReward=null; Orcub.Game.ClientGateway.BoosterUnlock=null; Consumption = null; ConsumableGateway.HasPendingSpends=null; ConsumableGateway.PrepareAdRefill=null; ConsumableGateway.AdRefillEarned=null; ConsumableGateway.FlushSpends=null; ConsumableGateway.MigrateSpends=null; ConsumableGateway.RefillFromAd=null; ConsumableGateway.RefillWithGold=null; instance=null; ConsumableGateway.BeginAttempt = null; ConsumableGateway.Count = null; ConsumableGateway.Spend = null; ConsumableGateway.Refill = null; ConsumableGateway.SecondsToNext = null; Service = null; }
     }
 }

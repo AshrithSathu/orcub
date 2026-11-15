@@ -7,6 +7,8 @@ namespace Orcub.Daily
 {
     public sealed class IosLocalNotifications : ILocalNotifications
     {
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.BeforeSceneLoad)]
+        static void Install() => DailyRuntime.NotificationsFactory=()=>new IosLocalNotifications();
         public bool Authorized => iOSNotificationCenter.GetNotificationSettings().AuthorizationStatus == AuthorizationStatus.Authorized;
         public string OpenedId => iOSNotificationCenter.GetLastRespondedNotification()?.Identifier;
         public async Task<bool> RequestPermission()
