@@ -418,6 +418,26 @@ namespace Orcub.Game
             _anim = StartCoroutine(Slide(true));
         }
 
+        RectTransform _ticket;
+
+        /// <summary>Approved win_streak_B: "Free Hint ready · 3/3 wins" in place of the goal line when a bonus waits.</summary>
+        void ShowWinTicket(bool boss)
+        {
+            if (_ticket != null) Destroy(_ticket.gameObject);
+            _ticket = null;
+            var port = DailyGateway.Current;
+            bool show = port != null && port.BonusReady && !boss;
+            _goalText.enabled = !show;
+            if (!show) return;
+            var slot = UiKit.Rect("TicketSlot", (RectTransform)_goalText.transform.parent);
+            slot.anchorMin = new Vector2(0.1f, 0.75f);
+            slot.anchorMax = new Vector2(0.9f, 0.83f);
+            slot.offsetMin = slot.offsetMax = Vector2.zero;
+            var t = DailyUi.Ticket(_kit, slot, port.NextBonus);
+            UiKit.Anchor(t, 0, 0, 1, 1);
+            _ticket = slot;
+        }
+
         IEnumerator FillWhenReady(int level)
         {
             // L9: wait on the generation task itself, so a faulted generation stops polling (the sheet keeps its
@@ -453,6 +473,7 @@ namespace Orcub.Game
             var rules = LevelRules.For(def, tutorial: level < 3);
             int rings = def.Rings.Count;
             _goalText.text = $"Free all {rings} gears";
+            ShowWinTicket(boss);
 
             for (int i = _goal.childCount - 1; i >= 0; i--) Destroy(_goal.GetChild(i).gameObject);
             float w = 1f / Mathf.Max(rings, 5);

@@ -157,10 +157,11 @@ namespace Orcub.Game
             _hud.Booster += UseBooster;
             _kit = new UiKit(art);
             _home = HomeScreen.Create(transform, _kit, _fx, onPlay: () => PlayLevel(Frontier), onMap: ShowChapters,
-                onSettings: () => _account.OpenSettings());
+                onSettings: () => _account.OpenSettings(), onDaily: () => ShowDaily());
             _account = AccountFlow.Create(transform, _kit, _home);
             ShopFlow.Create(transform, _kit, () => _account.OpenSettings(), () => _hud != null && _hud.Shown, msg => _hud?.ShowToast(msg));
             InitTutorial();
+            InitDaily();
             _map = MapScreen.Create(transform, _kit, onPlayLevel: PlayLevel, onBack: ShowChapters);
             _chapters = ChaptersScreen.Create(transform, _kit, onOpen: ShowMap, onBack: ShowHome);
             _home.Hide();
@@ -187,6 +188,7 @@ namespace Orcub.Game
         {
             _booted = true;
             ClientGateway.OpenApp(LivesClock.FullAt(DateTimeOffset.UtcNow));
+            if (_home != null && _home.Visible) StartCoroutine(HomeMomentsSoon(false));   // today's gift, once settled
             _ = RewardClaims.Drain(OnRewardGranted);   // first-clear gold that failed to claim earlier
         }
 
@@ -205,6 +207,8 @@ namespace Orcub.Game
 
         void ShowHome()
         {
+            LeaveDaily();
+            _dailyFlow?.CloseScreen();
             CancelLevelStart();
             _inputLocked = true;
             _hud.ClosePopup();
@@ -214,7 +218,10 @@ namespace Orcub.Game
             _chapters.Hide();
             _home.Show();
             LevelLibrary.Prefetch(Frontier);   // warm the next generated boards before Play is tapped
+            bool afterWin = _optInAfterWin;
+            _optInAfterWin = false;
             MaybeOfferStarter();
+            if (_booted || afterWin) StartCoroutine(HomeMomentsSoon(afterWin));
         }
 
         /// <summary>Home → All levels (chapter cards) → one chapter's map → level-start sheet → play.</summary>
@@ -355,6 +362,8 @@ namespace Orcub.Game
         public void LoadLevel(int index)
         {
             index = Mathf.Max(0, index);
+            LeaveDaily();
+            _dailyFlow?.CloseScreen();
             EndAttempt(AttemptOutcome.Quit);   // restart / skip before a result counts as a quit
             _plan = null;
             _levelIndex = index;
@@ -397,6 +406,7 @@ namespace Orcub.Game
             _fallbackData = fallback;
             if (fallback == null && (choices == null || choices.Length == 0)) choices = new[] { ReadyData(index, 0) };
             BeginAttempt(fallback, choices);
+            BeginStreak();
             if (fallback != null) TrackFallback(index, faulted);
             var data = fallback ?? choices[Mathf.Clamp(_plan.Variant, 0, choices.Length - 1)];
             Build(index, data);
@@ -512,6 +522,7 @@ namespace Orcub.Game
             }
             if (!Current()) yield break;
             BeginTutorial();
+            AnnounceStreakBonus();
             if (plan.ExtraMoves > 0 || plan.FreeHintGlow) yield return AnnounceAssist(plan, session);
         }
 
@@ -528,13 +539,14 @@ namespace Orcub.Game
                 $"{_levelData.rings.Length} rings · {_levelData.links.Length} holders · depth {_levelData.depth} · " +
                 $"best {_rules.MinMoves} · 3★ ≤{_rules.ThreeStar} · 2★ ≤{_rules.TwoStar} · limit {_rules.MoveLimit} · diff {_levelData.difficulty:F1}";
             _hud.SetLevel(_levelIndex + 1, info);
+            if (_daily) _hud.SetLevelText("Daily");
             _hud.SetBoss(_def != null && _def.IsBoss);
             _hud.SetMoves(MovesLeft);
             var colours = new List<Color>();
             foreach (var r in _model.Rings) colours.Add(art.RingColor(r.Color));
             _hud.SetGoal(colours);
             foreach (var r in _model.Rings) if (r.Removed) _hud.MarkGoalFreed(r.Id);
-            foreach (BoosterKind k in Enum.GetValues(typeof(BoosterKind))) _hud.SetBoosterCount(k, BoosterInventory.Count(k));
+            foreach (BoosterKind k in Enum.GetValues(typeof(BoosterKind))) _hud.SetBoosterCount(k, BoosterShown(k));
             ApplyBoosterLocks();
             _hud.SetBoosterReady(BoosterKind.Undo, _undo.Count > 0);
         }
@@ -620,6 +632,7 @@ namespace Orcub.Game
             if (_winAt > 0f && Time.time >= _winAt)
             {
                 _winAt = -1f;
+                if (_daily) { ShowDailyWin(); return; }
                 _wreath?.Show();
                 _hud?.ShowWin(_levelIndex + 1, _winStars,
                     onNext: () => _account.AfterWin(_levelIndex + 1, () =>
@@ -628,6 +641,7 @@ namespace Orcub.Game
                         else LoadLevel(_levelIndex + 1);
                     }),
                     onHome: () => _account.AfterWin(_levelIndex + 1, () => GoHome(costsLife: false)));
+                ShowStreakStrip();
             }
             if (_failCheckAt > 0f && Time.time >= _failCheckAt && !_spins.Busy && _active < 0)
             {
@@ -975,11 +989,12 @@ namespace Orcub.Game
             EndTutorial();
             _stuck = stuck;
             _wreath?.Show(frame: false);   // the sheet leaves the board in view (approved out_of_moves_gold_B)
+            if (_daily) { ShowDailyFail(stuck); return; }
             if (stuck)
             {
                 bool canUndo = _undo.Count > 0 && BoosterInventory.Count(BoosterKind.Undo) > 0;
                 _hud?.ShowOutOfMoves(0, false, null,
-                    onRetry: () => { EndAttempt(AttemptOutcome.Lose); SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain); },
+                    onRetry: () => LoseThen(() => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain)),
                     onHome: () => { EndAttempt(AttemptOutcome.Lose); GoHome(costsLife: true); },
                     title: _model.Rings.Count > 0 && AnyFrozen() ? "Rusted solid" : "No way out",
                     onUndo: canUndo ? (Action)(() =>
@@ -1001,7 +1016,7 @@ namespace Orcub.Game
             });
             AddGoldContinue(offer);
             _hud?.ShowOutOfMoves(offer,
-                onRetry: () => { EndAttempt(AttemptOutcome.Lose); SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain); },
+                onRetry: () => LoseThen(() => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain)),
                 onHome: () => { EndAttempt(AttemptOutcome.Lose); GoHome(costsLife: true); });
         }
 
@@ -1010,6 +1025,7 @@ namespace Orcub.Game
         {
             _wreath?.Hide();
             _attemptContinues++;
+            StreakContinued();
             _bonusMoves += moves;
             _levelOver = false;
             _hud.SetMoves(MovesLeft, bump: true);
@@ -1027,6 +1043,11 @@ namespace Orcub.Game
 
         void ShowPauseCard()
         {
+            if (_daily)
+            {   // the daily board is free to restart and leave (no lives, no saga progress)
+                _hud.ShowPause(onRestart: RetryDaily, onResume: () => _wreath?.Hide(), onHome: BackToDaily);
+                return;
+            }
             string intro = BoardIntroKey;
             _hud.ShowPause(
                 onInfo: intro == null ? null : (Action)(() => ShowIntro(intro, ShowPauseCard)),
@@ -1107,7 +1128,7 @@ namespace Orcub.Game
                 _hud.ShowToast($"{char.ToUpper(BoosterName(kind)[0])}{BoosterName(kind).Substring(1)} unlocks at level {TutorialFlow.UnlockLevel(kind)}");
                 return;
             }
-            if (BoosterInventory.Count(kind) <= 0)
+            if (BoosterShown(kind) <= 0)
             {
                 if (ShopFlow.Instance != null && ShopGateway.Current != null)
                     ShopFlow.OfferBooster(kind, () => { if (this != null) UpdateHud(); });   // one for 40 gold
@@ -1172,10 +1193,11 @@ namespace Orcub.Game
                 _lastGesture = Time.unscaledTime; _lockedTouches = 0;
             }
             ClientGateway.Track("booster_used", new { level = _levelIndex, booster = BoosterName(kind) });
-            BoosterInventory.TrySpend(kind);
+            if (_freeBooster == kind) _freeBooster = null;   // the win-streak bonus goes first (attempt-local, no wallet)
+            else BoosterInventory.TrySpend(kind);
             _attemptBoosters++;
             Haptics.Play(Haptics.Impact.Medium, 0.8f);
-            _hud.SetBoosterCount(kind, BoosterInventory.Count(kind));
+            _hud.SetBoosterCount(kind, BoosterShown(kind));
             _hud.SetBoosterReady(BoosterKind.Undo, _undo.Count > 0);
             _tutorial?.OnBooster(kind);
         }
@@ -1237,6 +1259,7 @@ namespace Orcub.Game
         /// <returns>True when a level_end went out for this attempt.</returns>
         bool EndAttempt(AttemptOutcome outcome)
         {
+            EndStreak(outcome);
             if (!_attemptOpen || _adaptive == null) return false;
             FinishFeature();
             _attemptOpen = false;
@@ -1286,6 +1309,8 @@ namespace Orcub.Game
 
         void OnSolved()
         {
+            if (_daily) { OnDailySolved(); return; }
+            _optInAfterWin = true;
             _levelOver = true;
             EndTutorial();
             _fx?.Cleared();

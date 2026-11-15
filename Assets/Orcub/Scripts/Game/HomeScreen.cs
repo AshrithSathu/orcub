@@ -25,7 +25,10 @@ namespace Orcub.Game
         Text _levelLabel;
         readonly Image[] _stars = new Image[3];
 
-        public static HomeScreen Create(Transform parent, UiKit kit, Feedback fx, Action onPlay, Action onMap, Action onSettings)
+        Action _onDaily;
+
+        public static HomeScreen Create(Transform parent, UiKit kit, Feedback fx, Action onPlay, Action onMap, Action onSettings,
+            Action onDaily = null)
         {
             var (canvas, safe) = UiKit.Screen("Home", parent, 200);
             var h = canvas.gameObject.AddComponent<HomeScreen>();
@@ -34,6 +37,7 @@ namespace Orcub.Game
             h._onPlay = onPlay;
             h._onMap = onMap;
             h._onSettings = onSettings;
+            h._onDaily = onDaily;
             h._group = canvas.GetComponent<CanvasGroup>();
             h._safe = safe;
             kit.Felt(canvas.transform).transform.SetAsFirstSibling();
@@ -58,7 +62,9 @@ namespace Orcub.Game
             var kit = _kit;
             var art = kit.Art;
 
-            _bar = TopBar.Create(_safe, kit, art.uiCogClay, UiKit.Brass, () => _onSettings?.Invoke());
+            // approved daily_puzzle_B: the labelled calendar chip sits at the end of the top bar
+            _bar = TopBar.Create(_safe, kit, art.uiCogClay, UiKit.Brass, () => _onSettings?.Invoke(),
+                _onDaily != null ? () => _onDaily?.Invoke() : (Action)null);
 
             // ---- wordmark + hero illustration
             var word = kit.MakeText(_safe, "orcub", 150, UiKit.Cream);

@@ -306,6 +306,25 @@ namespace Orcub.Game
             }
         }
 
+        /// <summary>Daily board: the level slot reads "Daily".</summary>
+        public void SetLevelText(string text) => _level.text = text;
+
+        /// <summary>A rect under the open wreath card (win-streak strip); its child sizes itself downward.</summary>
+        public RectTransform BelowCard()
+        {
+            if (_popup == null || _card == null) return null;
+            var old = _popup.Find("BelowCard");
+            if (old != null) Destroy(old.gameObject);
+            var rt = UiKit.Rect("BelowCard", _popup);
+            rt.anchorMin = new Vector2(0.06f, 0.5f);
+            rt.anchorMax = new Vector2(0.94f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.sizeDelta = new Vector2(0f, 10f);
+            rt.anchoredPosition = new Vector2(0f, -(_card.sizeDelta.y * 0.5f + 70f));
+            StartCoroutine(FadeIn(rt.gameObject.AddComponent<CanvasGroup>()));
+            return rt;
+        }
+
         public void SetLevel(int number, string info)
         {
             _level.text = $"Level {number}";
@@ -736,10 +755,12 @@ namespace Orcub.Game
         }
 
         /// <summary>Level complete: title, three clay stars (pop in one by one), Next, and a Home link.</summary>
-        public void ShowWin(int level, int stars, Action onNext, Action onHome)
+        public void ShowWin(int level, int stars, Action onNext, Action onHome) => ShowWin($"Level {level}", stars, onNext, onHome);
+
+        public void ShowWin(string title, int stars, Action onNext, Action onHome, string nextLabel = "Next")
         {
             var card = OpenCard();
-            Title(card, $"Level {level}", 0.77f, 0.93f);
+            Title(card, title, 0.77f, 0.93f);
             var full = new List<Image>();
             for (int i = 0; i < 3; i++)
             {
@@ -751,7 +772,7 @@ namespace Orcub.Game
                 star.transform.localScale = Vector3.zero;
                 full.Add(star);
             }
-            var next = _kit.Pill(card, "Next", UiKit.Mint, UiKit.Title, () => { ClosePopup(); onNext(); });
+            var next = _kit.Pill(card, nextLabel, UiKit.Mint, UiKit.Title, () => { ClosePopup(); onNext(); });
             UiKit.Anchor(next, 0.12f, 0.29f, 0.88f, 0.46f);
             var home = _kit.Link(card, "Home", OnCard, () => { ClosePopup(); onHome(); });
             UiKit.Anchor(home, 0.32f, 0.15f, 0.68f, 0.27f);

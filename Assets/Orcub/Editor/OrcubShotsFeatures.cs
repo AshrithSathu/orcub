@@ -72,6 +72,10 @@ namespace Orcub.EditorTools
             if (flow != null)
                 foreach (var name in new[] { "_shop", "_starter", "_booster", "_receipt" })
                     flow.GetType().GetField(name, Flags)?.SetValue(flow, null);
+            var daily = DailyFlow.Instance;
+            if (daily != null)
+                foreach (var name in new[] { "_gift", "_optIn", "_fresh" })
+                    daily.GetType().GetField(name, Flags)?.SetValue(daily, null);
             Hud?.ClosePopup();
         }
 
@@ -172,6 +176,119 @@ namespace Orcub.EditorTools
             Add(0.35f, null, "t08_locked_toast");
             Add(0f, () => { ResetTutorialPrefs(); CallBoard("ShowHome"); }, null);
             Start();
+        }
+
+        // ------------------------------------------------------------------ daily loop
+
+        /// <summary>Editor stand-in for the daily services: a fixed date, a 5-day streak, deterministic outcomes.</summary>
+        public sealed class DemoDailyPort : IDailyPort
+        {
+            public string Today = "2026-11-13";
+            public readonly System.Collections.Generic.HashSet<string> Done = new System.Collections.Generic.HashSet<string>
+                { "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-03", "2026-11-04" };
+            public int StreakValue = 4, WinCount = 2;
+            public bool Gift = true, GiftFails, Bonus, OptIn = true;
+            public event Action Changed;
+            public string TodayUtc => Today;
+            public DailyDay StateFor(string d) => Done.Contains(d) ? DailyDay.Completed
+                : string.CompareOrdinal(d, Today) < 0 ? DailyDay.Missed : d == Today ? DailyDay.Available : DailyDay.Upcoming;
+            public bool CanPlay => !Done.Contains(Today);
+            public int Streak => StreakValue;
+            public bool HasFreeze => false;
+            public Task<LevelData> PrepareDaily() => Task.FromResult(LevelLibrary.Get(37));
+            public bool StartDaily() => CanPlay;
+            public Task CompleteDaily(bool won) { if (won) { Done.Add(Today); StreakValue++; Changed?.Invoke(); } return Task.CompletedTask; }
+            public bool CanClaimGift => Gift;
+            public DateTimeOffset NextGiftAt => DateTimeOffset.UtcNow.AddHours(9).AddMinutes(12);
+            public DailyRewardView GiftFor(string day)
+            {
+                int slot = (int)(DailyCalendar.Parse(day) - new DateTime(1970, 1, 1)).TotalDays % 3;
+                return slot == 0 ? new DailyRewardView("gold", 20) : slot == 1 ? new DailyRewardView("hint", 1) : new DailyRewardView("unlimited_lives_minutes", 30);
+            }
+            public async Task<bool> ClaimGift() { await Task.Yield(); if (GiftFails) return false; Gift = false; Changed?.Invoke(); return true; }
+            public int Wins => WinCount;
+            public bool BonusReady => Bonus;
+            public BoosterKind NextBonus => BoosterKind.Hint;
+            public BoosterKind? WinStart(string id) => null;
+            public void WinContinue(string id) { }
+            public void WinEnd(string id, StreakOutcome o, bool firstTry) { }
+            public bool ShouldOfferOptIn => OptIn;
+            public bool OptInShown() => OptIn;
+            public Task<bool> ContinueOptIn() => Task.FromResult(false);
+            public void Reschedule(DateTimeOffset? at) { }
+        }
+
+        static DailyFlow DailyFlowNow => DailyFlow.Instance;
+
+        [MenuItem("Orcub/Capture Daily")]
+        public static void CaptureDaily()
+        {
+            Begin("d");
+            var demo = new DemoDailyPort { Gift = false };   // the gift sheet is captured on its own step
+            Add(0f, () => { foreach (var u in TutorialFlow.Unlocks) PlayerPrefs.SetInt("orcub.tutorial." + (int)u.step, 1); DailyGateway.Fake = demo; ShopGateway.Fake = new DemoShopPort(); ClearOverlays(); DailyFlowNow.CloseScreen(); CallBoard("ShowHome"); }, null);
+            Add(0.9f, null, "d01_home_daily_chip");
+            Add(0f, () => CallBoard("ShowDaily"), null);
+            Add(0.8f, null, "d02_daily_puzzle");
+            Add(0f, () => CallBoard("PlayDaily"), null);
+            Add(2.6f, null, "d03_daily_board");
+            Add(0f, () => { Hud.ClosePopup(); CallBoard("ShowDailyFail", false); }, null);
+            Add(0.9f, null, "d04_daily_out_of_moves");
+            Add(0f, () =>
+            {
+                Hud.ClosePopup();
+                var bv = Board;
+                bv.GetType().GetField("_winStars", Flags).SetValue(bv, 3);
+                demo.CompleteDaily(true);
+                CallBoard("ShowDailyWin");
+            }, null);
+            Add(1.0f, null, "d05_daily_win");
+            Add(0f, () => { Hud.ClosePopup(); CallBoard("ShowDaily"); }, null);
+            Add(0.8f, null, "d06_daily_done");
+            Add(0f, () => { ClearOverlays(); DailyFlowNow.CloseScreen(); CallBoard("ShowHome"); demo.Gift = true; DailyFlowNow.ShowGift(); }, null);
+            Add(0.8f, null, "d07_daily_gift");
+            Add(0f, () => { demo.GiftFails = true; ClickButtonLabelled("Collect gift"); }, null);
+            Add(0.6f, null, "d08_daily_gift_failed");
+            Add(0f, () => { demo.GiftFails = false; ClickButtonLabelled("Collect gift"); }, null);
+            Add(0.25f, null, "d09_daily_gift_collected");
+            Add(0f, () => { ClearOverlays(); DailyFlowNow.ShowOptIn(demo); }, null);
+            Add(0.8f, null, "d10_notifications");
+            Add(0f, () =>
+            {
+                ClearOverlays();
+                demo.Bonus = true;
+                CallBoard("ShowMap", Chapters.Of(Chapters.Frontier));
+                var map = UnityEngine.Object.FindFirstObjectByType<MapScreen>();
+                ((LevelStartSheet)map.GetType().GetField("_sheet", Flags).GetValue(map)).Open(Chapters.Frontier);
+            }, null);
+            Add(0.8f, null, "d11_win_streak_ticket");
+            Add(0f, () =>
+            {
+                demo.Bonus = false; demo.WinCount = 2;
+                var map = UnityEngine.Object.FindFirstObjectByType<MapScreen>();
+                ((LevelStartSheet)map.GetType().GetField("_sheet", Flags).GetValue(map)).gameObject.SetActive(false);
+                CallBoard("PlayLevel", Chapters.Frontier);
+            }, null);
+            Add(2.4f, () =>
+            {
+                var bv = Board;
+                Board.GetType().GetField("_wreath", Flags).GetValue(bv).GetType().GetMethod("Show").Invoke(bv.GetType().GetField("_wreath", Flags).GetValue(bv), new object[] { true });
+                Hud.ShowWin(Chapters.Frontier + 1, 2, () => { }, () => { });
+                CallBoard("ShowStreakStrip");
+            }, null);
+            Add(1.2f, null, "d12_win_streak_track");
+            Add(0f, () => { Hud.ClosePopup(); DailyFlowNow.ShowFreshStart(BoosterKind.Hint, () => { }); }, null);
+            Add(0.8f, null, "d13_fresh_start");
+            Add(0f, () => { ClearOverlays(); ResetTutorialPrefs(); DailyGateway.Fake = null; ShopGateway.Fake = null; CallBoard("ShowHome"); }, null);
+            Start();
+        }
+
+        static void ClickButtonLabelled(string label)
+        {
+            foreach (var b in UnityEngine.Object.FindObjectsByType<UnityEngine.UI.Button>(FindObjectsSortMode.None))
+            {
+                var t = b.GetComponentInChildren<UnityEngine.UI.Text>();
+                if (t != null && t.text == label && b.isActiveAndEnabled) { b.onClick.Invoke(); return; }
+            }
         }
     }
 }

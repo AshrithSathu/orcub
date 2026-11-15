@@ -151,7 +151,7 @@ namespace Orcub.Game
             float H = _root.rect.height, W = _root.rect.width;
             float gap = H * 0.14f;
             _button.sizeDelta = new Vector2(H, 0f);
-            float chipW = _chip != null ? H * 1.62f : 0f;
+            float chipW = _chip != null ? H * 1.5f : 0f;
             if (_chip != null)
             {
                 _chip.anchorMin = new Vector2(1f, 0f);
@@ -172,14 +172,22 @@ namespace Orcub.Game
             float labelW = Mathf.Max(TextWidth(_livesLabel, "Full"), _livesLabel.preferredWidth) + 8f;
             Place(_livesLabel.rectTransform, labelX, labelW, fh);
 
-            float ps = fh * 0.78f;
+            float ps = fh * (_chip != null ? 0.7f : 0.78f);
             float plusX = pw - pad * 0.7f - ps;
             Place(_plus, plusX, ps, ps);
             float countW = Mathf.Max(TextWidth(_count, "000"), _count.preferredWidth) + 6f;
             float countX = plusX - H * 0.12f - countW;
             Place(_count.rectTransform, countX, countW, fh);
-            float gh = fh * 0.56f, gw = gh * 1.7f;
+            // with the Daily chip the pill is narrower (approved daily_puzzle_B): a smaller gold icon keeps "Full" clear
+            float gh = fh * (_chip != null ? 0.44f : 0.56f), gw = gh * 1.7f;
             float goldX = countX - H * 0.1f - gw;
+            float leftEnd0 = labelX + labelW, minGap = H * 0.3f;
+            if (goldX < leftEnd0 + minGap)
+            {   // a narrow pill (Daily chip): the gold icon gives way so "Full" / the timer never collides
+                gw = Mathf.Max(H * 0.42f, gw - (leftEnd0 + minGap - goldX));
+                gh = gw / 1.7f;
+                goldX = countX - H * 0.06f - gw;
+            }
             Place(_gold, goldX, gw, gh);
             Place(_goldHit, goldX - 10f, plusX + ps - goldX + 20f, fh);
 
