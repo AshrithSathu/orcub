@@ -301,24 +301,31 @@ namespace Orcub.Game
 
         void ConfirmSignOut()
         {
-            // review f: the protective sign-out (final save first) may fail. Then a second, explicit tap signs out
-            // anyway via SignOut(discardUnsyncedProgress: true); the error line says exactly what that loses.
+            // review f: the protective sign-out (final save first) may fail. Review i, L6: only THAT failure turns the
+            // confirm into a clearly different, destructive "Sign out anyway" (unsaved progress here is lost). Being
+            // offline (no account service) is a plain retryable error and never arms the discard.
             var recovery = Recovery;
             bool saveFailed = false;
+            AccountDialog dialog = null;
             async Task Run()
             {
-                if (Svc == null) throw new InvalidOperationException("Offline");
+                if (Svc == null) { dialog?.SetError("Couldn’t sign out. Check your connection and try again."); throw new InvalidOperationException("Offline"); }
                 if (saveFailed && recovery != null) { await recovery.SignOut(true); return; }
                 try { await Svc.SignOut(); }
-                catch { saveFailed = true; throw; }
+                catch
+                {
+                    if (recovery != null)
+                    {
+                        saveFailed = true;
+                        dialog?.Escalate("Sign out anyway", "Couldn’t save your latest progress. Sign out anyway to continue; unsaved progress on this phone will be lost.");
+                    }
+                    else dialog?.SetError("Couldn’t sign out. Check your connection and try again.");
+                    throw;
+                }
             }
-            _dialog = AccountDialog.Open(transform, _kit, AccountArt.Cloud, new Vector2(200f, 147f), "Sign out?",
+            _dialog = dialog = AccountDialog.Open(transform, _kit, AccountArt.Cloud, new Vector2(200f, 147f), "Sign out?",
                 "Your progress stays saved in the cloud; this phone continues as a guest.", null,
-                "Sign out", "Signing out…",
-                recovery != null
-                    ? "Couldn’t save your latest progress. Tap Sign out again to sign out anyway; unsaved progress on this phone will be lost."
-                    : "Couldn’t sign out. Check your connection and try again.",
-                Run);
+                "Sign out", "Signing out…", "Couldn’t sign out. Check your connection and try again.", Run);
         }
 
         void ConfirmFinishDelete()
@@ -498,6 +505,23 @@ namespace Orcub.Game
             srt.anchorMin = srt.anchorMax = new Vector2(0.5f, 0.53f);
             srt.sizeDelta = new Vector2(s, s);
             srt.anchoredPosition = new Vector2(-(lw + gap + s) * 0.5f + s * 0.5f, 0f);
+        }
+
+        /// <summary>The next failure message (e.g. offline vs. a failed final save).</summary>
+        public void SetError(string error) => _error = error;
+
+        /// <summary>
+        /// Review i, L6: after a failed protective action the confirm becomes a distinct destructive one: new label,
+        /// the delete red, and the error that says what it costs.
+        /// </summary>
+        public void Escalate(string action, string error)
+        {
+            _actionText = action;
+            _error = error;
+            _actionLabel.text = action;
+            var img = _action.GetComponent<Image>();
+            if (img != null) img.color = AccountUi.DeleteRed;
+            _actionLabel.color = UiKit.Cream;
         }
 
         public void ShowError()

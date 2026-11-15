@@ -88,7 +88,6 @@ namespace Orcub.Game
         bool _inputLocked;
         SplashView _splash;
         int _session;              // bumped when a level start is cancelled (Home) or replaced: stale callbacks bail
-        bool _stuck;               // the open fail card is the "no way out" variant (rust / spring dead end)
         bool _boosterUnlockBusy;
         SpinSet.TurnFn _turnFn;
 
@@ -144,7 +143,7 @@ namespace Orcub.Game
             Application.targetFrameRate = Mathf.Max(60, hz);
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
 
-            _spins.Ended += _ => _failCheckAt = Time.time + 0.15f;
+            _spins.Ended += _ => _failCheckAt = Mathf.Max(_failCheckAt, Time.time + 0.15f);   // L2: keep a longer dead-end beat
             _fx = Feedback.Create(transform, art);
             MechSprites.Warm();   // the procedural arc arrow, built now rather than on the first linked board
             _crumbs = ClayCrumbs.Create(transform, art.spriteMaterial);
@@ -207,6 +206,9 @@ namespace Orcub.Game
 
         void ShowHome()
         {
+            // review i, L1: a tap spin or a pending fail check never finishes under Home (no card over Home)
+            _failCheckAt = -1f;
+            _spins.Clear();
             LeaveDaily();
             _dailyFlow?.CloseScreen();
             CancelLevelStart();
@@ -406,11 +408,24 @@ namespace Orcub.Game
             _fallbackData = fallback;
             if (fallback == null && (choices == null || choices.Length == 0)) choices = new[] { ReadyData(index, 0) };
             BeginAttempt(fallback, choices);
-            BeginStreak();
             if (fallback != null) TrackFallback(index, faulted);
             var data = fallback ?? choices[Mathf.Clamp(_plan.Variant, 0, choices.Length - 1)];
-            Build(index, data);
-            _rules = LevelRules.For(_def, tutorial: _levelIndex < 3, extraMoves: _plan.ExtraMoves);
+            // review i, M4: a broken board (bad gear group, unsolvable, too many rings) throws in Build / LevelRules.
+            // Never leave a half-started level: drop this attempt unrecorded and start the ready stand-in.
+            bool built;
+            try { Build(index, data); built = FailFlow.TryRules(_def, _levelIndex, _plan.ExtraMoves, out _rules); }
+            catch (Exception e) { Debug.LogWarning("Board failed to build: " + e.Message); built = false; }
+            if (!built)
+            {
+                if (_attemptOpen) { _adaptive.CancelAttempt(); _attemptOpen = false; ConsumableGateway.LevelEnded?.Invoke(); }
+                _neutralAttempt = false;
+                if (fallback == null) { StartLevel(index, LevelLibrary.Get(FallbackIndex(index)), null, faulted: true); return; }
+                Debug.LogError("Fallback board failed to build; returning home");
+                ShowHome();
+                return;
+            }
+            if (_neutralAttempt) TrackNeutralStart();   // H1: reward evidence even when adaptive selection failed
+            BeginStreak();
             UpdateHud();
             HideRingsForIntro();
             DropInRings();
@@ -643,7 +658,8 @@ namespace Orcub.Game
                     onHome: () => _account.AfterWin(_levelIndex + 1, () => GoHome(costsLife: false)));
                 ShowStreakStrip();
             }
-            if (_failCheckAt > 0f && Time.time >= _failCheckAt && !_spins.Busy && _active < 0)
+            if (_failCheckAt > 0f && Time.time >= _failCheckAt && !_spins.Busy && _active < 0 &&
+                (_hud == null || !_hud.PopupOpen) && (_home == null || !_home.Visible))
             {
                 _failCheckAt = -1f;
                 CheckOutOfMoves();
@@ -790,7 +806,7 @@ namespace Orcub.Game
                     {
                         CountMove();
                         _gesture.Complete();       // exactly once per counted gesture
-                        _failCheckAt = Time.time + 0.15f;
+                        _failCheckAt = Mathf.Max(_failCheckAt, Time.time + 0.15f);
                     }
                     _gesture = null;
                     break;
@@ -983,31 +999,29 @@ namespace Orcub.Game
             // M5: rust (or a spring re-close) can leave no way out with moves still in hand: end the attempt the
             // normal way instead of making the player burn every remaining move. Extra moves can't help here, so
             // the card offers Undo (if there is one to take back) and Retry, never a paid/video continue.
-            bool stuck = MovesLeft > 0 && Deadlock.IsDead(_model);
-            if (MovesLeft > 0 && !stuck) return;
+            // review i, M1: a dead board is a dead end even on the last move; it never gets a "+N moves" continue
+            var card = FailFlow.Decide(MovesLeft, Deadlock.IsDead(_model));
+            if (card == FailFlow.Card.None) return;
+            bool stuck = card == FailFlow.Card.DeadEnd;
             _levelOver = true;
             EndTutorial();
-            _stuck = stuck;
             _wreath?.Show(frame: false);   // the sheet leaves the board in view (approved out_of_moves_gold_B)
             if (_daily) { ShowDailyFail(stuck); return; }
             if (stuck)
             {
-                bool canUndo = _undo.Count > 0 && BoosterInventory.Count(BoosterKind.Undo) > 0;
-                _hud?.ShowOutOfMoves(0, false, null,
-                    onRetry: () => LoseThen(() => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain)),
-                    onHome: () => { EndAttempt(AttemptOutcome.Lose); GoHome(costsLife: true); },
-                    title: _model.Rings.Count > 0 && AnyFrozen() ? "Rusted solid" : "No way out",
-                    onUndo: canUndo ? (Action)(() =>
-                    {
-                        _wreath?.Hide();
-                        _levelOver = false;
-                        _stuck = false;
-                        UseBooster(BoosterKind.Undo);
-                    }) : null);
+                var dead = new LevelHud.ContinueOffer { Title = FrozenHolds() ? "Rusted solid" : "No way out" };
+                if (_undo.Count > 0 && BoosterShown(BoosterKind.Undo) > 0)
+                    dead.Extra.Add(("Undo", art.iconUndo, () => Rescue(BoosterKind.Undo)));
+                // M2: an owned Unclamp that can open something rescues the board (a frozen ring's own clamp first)
+                if (BoosterShown(BoosterKind.Unclamp) > 0 && !_hud.BoosterLocked(BoosterKind.Unclamp) && FailFlow.RescueLink(_model) >= 0)
+                    dead.Extra.Add(("Unclamp", art.iconUnclamp, () => Rescue(BoosterKind.Unclamp)));
+                _hud?.ShowOutOfMoves(dead, onRetry: RetryAfterLoss,
+                    onHome: () => { EndAttempt(AttemptOutcome.Lose); GoHome(costsLife: true); });
                 return;
             }
             bool canWatch = !_usedAdContinue;
-            if (canWatch) AdsGateway.Service?.RewardedOfferShown("continue_moves");   // ad_offer: the video pill is visible
+            // review i, L4: ad_offer means "the video pill is visible AND an ad is ready"
+            if (canWatch && AdsGateway.Service?.RewardedReady == true) AdsGateway.Service.RewardedOfferShown("continue_moves");
             var offer = new LevelHud.ContinueOffer { Moves = ContinueMoves, CanWatch = canWatch };
             offer.OnWatch = () => ShowRewarded("continue_moves", () =>
             {
@@ -1015,9 +1029,43 @@ namespace Orcub.Game
                 Continued(ContinueMoves);
             });
             AddGoldContinue(offer);
-            _hud?.ShowOutOfMoves(offer,
-                onRetry: () => LoseThen(() => SpendLifeThen(() => LoadLevel(_levelIndex), reopen: CheckOutOfMovesAgain)),
+            _hud?.ShowOutOfMoves(offer, onRetry: RetryAfterLoss,
                 onHome: () => { EndAttempt(AttemptOutcome.Lose); GoHome(costsLife: true); });
+        }
+
+        /// <summary>
+        /// Retry from a fail card (review i, M3): the loss is recorded only once a life is actually spent. With no
+        /// lives the out-of-lives sheet opens and Back returns to the same card with the attempt still open.
+        /// </summary>
+        void RetryAfterLoss()
+        {
+            var port = DailyGateway.Current;
+            int wins = port?.Wins ?? 0;
+            SpendLifeThen(() =>
+            {
+                EndAttempt(AttemptOutcome.Lose);
+                if (wins > 0 && port != null && _dailyFlow != null) _dailyFlow.ShowFreshStart(port.NextBonus, () => LoadLevel(_levelIndex));
+                else LoadLevel(_levelIndex);
+            }, reopen: CheckOutOfMovesAgain);
+        }
+
+        /// <summary>A dead-end card's booster rescue: back to the board, the booster acts, the check runs again.</summary>
+        void Rescue(BoosterKind kind)
+        {
+            _wreath?.Hide();
+            _levelOver = false;
+            UseBooster(kind);
+        }
+
+        /// <summary>L8: "Rusted solid" only when a frozen ring is what holds the board (not any rust anywhere).</summary>
+        bool FrozenHolds()
+        {
+            foreach (var r in _model.Rings)
+            {
+                if (r.Removed || !r.Frozen) continue;
+                foreach (int id in r.Incoming) if (_model.Links[id].Active) return true;
+            }
+            return false;
         }
 
         /// <summary>A continue (video or gold) landed: the attempt stays open and resumes with the extra moves.</summary>
@@ -1027,6 +1075,7 @@ namespace Orcub.Game
             _attemptContinues++;
             StreakContinued();
             _bonusMoves += moves;
+            _failCheckAt = Time.time + 0.3f;   // M1: a dead end found after a continue is reported without a move
             _levelOver = false;
             _hud.SetMoves(MovesLeft, bump: true);
             Haptics.Play(Haptics.Impact.Medium, 0.8f);
@@ -1070,25 +1119,17 @@ namespace Orcub.Game
             CheckOutOfMoves();
         }
 
-        bool AnyFrozen()
-        {
-            foreach (var r in _model.Rings) if (!r.Removed && r.Frozen) return true;
-            return false;
-        }
-
         /// <summary>
         /// Spend a life and run <paramref name="action"/>. With no lives left, show the out-of-lives card instead:
         /// "Refill with ad" refills and then runs the action; "Back" returns to the card that asked (<paramref name="reopen"/>).
         /// </summary>
         void SpendLifeThen(Action action, Action reopen)
         {
-            if (Lives.TrySpend())
+            FailFlow.SpendThen(Lives.TrySpend, null, action, () =>
             {
-                action();
-                return;
-            }
-            _wreath?.Show(frame: false);
-            ShowOutOfLives(() => { if (Lives.TrySpend()) action(); else SpendLifeThen(action, reopen); }, reopen);
+                _wreath?.Show(frame: false);
+                ShowOutOfLives(() => { if (Lives.TrySpend()) action(); else SpendLifeThen(action, reopen); }, reopen);
+            });
         }
 
         /// <summary>
@@ -1100,7 +1141,8 @@ namespace Orcub.Game
         void ShowOutOfLives(Action onRefilled, Action onBack)
         {
             const string placement = "refill_lives";
-            AdsGateway.Service?.RewardedOfferShown(placement);   // ad_offer: once per sheet opening
+            // review i, L4: ad_offer only when an ad can actually play, under the same name ad_shown uses
+            if (AdsGateway.Service?.RewardedReady == true) AdsGateway.Service.RewardedOfferShown("lives");
             _hud.ShowOutOfLives(
                 onRefillAd: () => ShowRewarded(placement, async () =>
                 {
@@ -1167,7 +1209,7 @@ namespace Orcub.Game
                     else refusal = "Nothing to undo yet";
                     break;
                 case BoosterKind.Unclamp:
-                    int linkId = Unclamp.PickLink(_model);
+                    int linkId = FailFlow.RescueLink(_model);   // a frozen ring's own clamp first (review i, M2)
                     if (linkId < 0 || !_model.ReleaseLink(linkId)) refusal = "No clamps left";
                     else
                     {
@@ -1210,6 +1252,7 @@ namespace Orcub.Game
         /// </summary>
         void BeginAttempt(LevelData fallback, LevelData[] choices)
         {
+            _neutralAttempt = false;
             _attemptStart = _lastGesture = Time.unscaledTime;
             _attemptBoosters = _attemptContinues = _lockedTouches = 0;
             _featurePending = false; _gestures = 0;
@@ -1228,6 +1271,7 @@ namespace Orcub.Game
                 // unrecorded (no attempt is open, so no level_start/level_end and no rating change).
                 if (_adaptive != null) _adaptive.CancelAttempt();
                 _plan = AttemptPlan.Neutral();
+                _neutralAttempt = true;   // H1: level_start / level_end still go out (no rating change); see TrackNeutralStart
                 if (_toldOnce.Add("adaptive_failed")) Debug.LogWarning("Adaptive plan unavailable, using neutral: " + e.Message);
                 ClientGateway.Track("error", new { code = "adaptive_begin_failed", context = "level_start" });
                 return;
@@ -1260,10 +1304,10 @@ namespace Orcub.Game
         bool EndAttempt(AttemptOutcome outcome)
         {
             EndStreak(outcome);
-            if (!_attemptOpen || _adaptive == null) return false;
+            if (!_attemptOpen || _adaptive == null) return EndNeutralAttempt(outcome);
             FinishFeature();
             _attemptOpen = false;
-            if (_gestures == 0)
+            if (_gestures == 0 && outcome != AttemptOutcome.Win)   // H1: a win always sends its level_end evidence
             {
                 _adaptive.CancelAttempt();   // left without touching the board: not evidence of anything
                 ConsumableGateway.LevelEnded?.Invoke();   // no level_end goes out: apply deferred ad policy here

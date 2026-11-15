@@ -48,6 +48,11 @@ namespace Orcub.Core
         static readonly Dictionary<string, (bool solved, Result result)> Cache = new Dictionary<string, (bool, Result)>();
         static readonly object CacheLock = new object();
         const int CacheCapacity = 256;
+        // Review i, L9: boards solved ahead of time by Warm() live in their own small LRU, so a generation burst
+        // that fills (and clears) the main cache never evicts the next level's board before it is played.
+        static readonly Dictionary<string, (bool solved, Result result)> Warmed = new Dictionary<string, (bool, Result)>();
+        static readonly LinkedList<string> WarmedOrder = new LinkedList<string>();
+        const int WarmedCapacity = 32;
 
         /// <summary>Stable key for a board: everything the search reads.</summary>
         public static string Fingerprint(LevelDef def)
@@ -69,16 +74,30 @@ namespace Orcub.Core
         }
 
         /// <summary>Cached exact search (no removal order). Thread-safe; results are shared, treat them as read-only.</summary>
-        public static bool SolveCached(LevelDef def, out Result result)
+        public static bool SolveCached(LevelDef def, out Result result) => SolveCached(def, out result, warm: false);
+
+        static bool SolveCached(LevelDef def, out Result result, bool warm)
         {
             string key = Fingerprint(def);
             lock (CacheLock)
+            {
+                if (Warmed.TryGetValue(key, out var w)) { result = w.result; return w.solved; }
                 if (Cache.TryGetValue(key, out var hit)) { result = hit.result; return hit.solved; }
+            }
             bool solved = Solve(def, out result, out _);
             lock (CacheLock)
             {
-                if (Cache.Count >= CacheCapacity) Cache.Clear();
-                Cache[key] = (solved, result);
+                if (warm)
+                {
+                    if (!Warmed.ContainsKey(key)) WarmedOrder.AddLast(key);
+                    Warmed[key] = (solved, result);
+                    while (WarmedOrder.Count > WarmedCapacity) { Warmed.Remove(WarmedOrder.First.Value); WarmedOrder.RemoveFirst(); }
+                }
+                else
+                {
+                    if (Cache.Count >= CacheCapacity) Cache.Clear();
+                    Cache[key] = (solved, result);
+                }
             }
             return solved;
         }
@@ -87,7 +106,7 @@ namespace Orcub.Core
         public static bool IsCached(LevelDef def)
         {
             string key = Fingerprint(def);
-            lock (CacheLock) return Cache.ContainsKey(key);
+            lock (CacheLock) return Cache.ContainsKey(key) || Warmed.ContainsKey(key);
         }
 
         /// <summary>Solves mechanic boards on a worker thread so a later level start finds them cached.</summary>
@@ -99,7 +118,7 @@ namespace Orcub.Core
             return System.Threading.Tasks.Task.Run(() =>
             {
                 foreach (var d in list)
-                    try { SolveCached(d, out _); }
+                    try { SolveCached(d, out _, warm: true); }
                     catch (Exception) { /* the main thread reports it when the board is used */ }
             });
         }

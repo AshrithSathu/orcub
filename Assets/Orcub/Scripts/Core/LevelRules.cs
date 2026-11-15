@@ -76,9 +76,13 @@ namespace Orcub.Core
         public static int BestStars(int levelIndex) => PlayerPrefs.GetInt(StarsPrefix + levelIndex, 0);
 
         /// <summary>Records a win; keeps the best star count. Returns true if this is a new best.</summary>
+        /// <summary>Bumped whenever a best-star count changes (screens cache star totals against it).</summary>
+        public static int StarsVersion { get; private set; }
+
         public static bool RecordWin(int levelIndex, int stars)
         {
             bool better = stars > BestStars(levelIndex);
+            if (better) StarsVersion++;
             if (better) PlayerPrefs.SetInt(StarsPrefix + levelIndex, stars);
             HighestUnlocked = levelIndex + 1;
             PlayerPrefs.Save();

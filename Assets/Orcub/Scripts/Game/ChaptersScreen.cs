@@ -99,10 +99,19 @@ namespace Orcub.Game
         }
 
         /// <summary>Star total: one pass over the stored best-star keys up to the frontier (no per-card work).</summary>
+        static int _starsTotal = -1, _starsLast = -1, _starsVersion = -1;
+
+        /// <summary>
+        /// Review i, L9: the pass over every level's key runs only when the frontier or a best-star count changed
+        /// since the last time (a deep infinite player has thousands of keys).
+        /// </summary>
         static int EarnedStars()
         {
-            int total = 0, last = Mathf.Max(LevelLibrary.CuratedCount, Progress.HighestUnlocked + 1);
+            int last = Mathf.Max(LevelLibrary.CuratedCount, Progress.HighestUnlocked + 1);
+            if (_starsTotal >= 0 && last == _starsLast && Progress.StarsVersion == _starsVersion) return _starsTotal;
+            int total = 0;
             for (int i = 0; i < last; i++) total += Progress.BestStars(i);
+            _starsTotal = total; _starsLast = last; _starsVersion = Progress.StarsVersion;
             return total;
         }
 

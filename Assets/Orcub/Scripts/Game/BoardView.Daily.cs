@@ -132,13 +132,12 @@ namespace Orcub.Game
 
         void ShowDailyFail(bool stuck)
         {
-            var offer = new LevelHud.ContinueOffer { Title = stuck ? (AnyFrozen() ? "Rusted solid" : "No way out") : "Out of moves" };
+            var offer = new LevelHud.ContinueOffer { Title = stuck ? (FrozenHolds() ? "Rusted solid" : "No way out") : "Out of moves" };
             if (stuck && _undo.Count > 0 && BoosterInventory.Count(BoosterKind.Undo) > 0)
                 offer.Extra.Add(("Undo", art.iconUndo, () =>
                 {
                     _wreath?.Hide();
                     _levelOver = false;
-                    _stuck = false;
                     UseBooster(BoosterKind.Undo);
                 }));
             _hud?.ShowOutOfMoves(offer, onRetry: RetryDaily, onHome: BackToDaily);
@@ -186,16 +185,6 @@ namespace Orcub.Game
             if (_streakAttempt == null) return;
             try { DailyGateway.Current?.WinContinue(_streakAttempt); }
             catch (Exception e) { Debug.LogWarning("Win streak continue skipped: " + e.Message); }
-        }
-
-        /// <summary>A loss; if it ends a streak, "A fresh start" comes first and its Try again runs <paramref name="then"/>.</summary>
-        void LoseThen(Action then)
-        {
-            var port = DailyGateway.Current;
-            int wins = port?.Wins ?? 0;
-            EndAttempt(AttemptOutcome.Lose);
-            if (wins > 0 && port != null && _dailyFlow != null) _dailyFlow.ShowFreshStart(port.NextBonus, then);
-            else then();
         }
 
         /// <summary>The win card's streak strip (approved win_streak_B "2/3 wins").</summary>

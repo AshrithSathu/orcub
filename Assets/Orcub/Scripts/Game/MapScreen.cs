@@ -452,10 +452,12 @@ namespace Orcub.Game
 
         void Fill(int level, LevelData data)
         {
-            bool boss = data != null ? data.is_boss : LevelLibrary.ChapterInfo(LevelLibrary.ChapterOf(level)).IsBoss(level);
+            // review i, L5: one boss predicate (the server's index % 20 == 19), and the bigger reward panel only for a
+            // first clear (a cleared boss pays nothing again)
+            bool boss = LevelRewards.IsBoss(level);
             _title.text = $"Level {level + 1}";
             if (_boss != null) _boss.gameObject.SetActive(boss);
-            bool reward = boss && LevelRewards.Live;
+            bool reward = boss && LevelRewards.Live && Progress.BestStars(level) == 0;
             _reward.gameObject.SetActive(reward);
             _starBox.gameObject.SetActive(!reward);
             _rewardText.text = $"Boss reward · {LevelRewards.Boss} gold";
