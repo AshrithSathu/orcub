@@ -20,7 +20,7 @@ namespace Orcub.Daily
         string preparingDay;
         bool granting;
         int rewardFailures;
-        DateTimeOffset nextRewardRetry;
+        double nextRewardRetry;
         string startedDay;
         public event Action Changed;
         public event Action<string> RewardGranted;
@@ -99,7 +99,7 @@ namespace Orcub.Daily
         }
         public async Task RetryRewards()
         {
-            if (granting || c.Clock.UtcNow < nextRewardRetry) return;
+            if (granting || UnityEngine.Time.realtimeSinceStartupAsDouble < nextRewardRetry) return;
             granting = true;
             try
             {
@@ -116,7 +116,7 @@ namespace Orcub.Daily
             }
             catch (Exception) {
                 rewardFailures = Math.Min(rewardFailures + 1, 8);
-                nextRewardRetry = c.Clock.UtcNow.AddSeconds(Math.Pow(2, rewardFailures) * 5);
+                nextRewardRetry = UnityEngine.Time.realtimeSinceStartupAsDouble + Math.Pow(2, rewardFailures) * 5;
                 throw;
             }
             finally { granting = false; if(c.State.PendingPuzzleGrants.Count == 0) { rewardFailures=0; nextRewardRetry=default; } }

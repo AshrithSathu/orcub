@@ -65,6 +65,15 @@ namespace Orcub.Net
             }
             return result.ToArray();
         }
+        public async Task IsolateRejected(JObject[] batch, Func<JObject,Task<long>> send, Action<string,long> rejected)
+        {
+            foreach(var item in batch) {
+                long code=await send(item);
+                if(code>=200 && code<300) Remove(new[] {item});
+                else if(code==400 || code==422) { Remove(new[] {item}); rejected((string)item["kind"],code); }
+                else break;
+            }
+        }
         public static byte[] Serialize(string player, JObject[] batch)
         {
             var json = new JObject { ["player_id"] = player, ["events"] = new JArray(batch.Select(e => { var copy=(JObject)e.DeepClone(); copy.Remove("_consent"); return copy; })) }.ToString(Formatting.None);

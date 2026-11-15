@@ -55,6 +55,14 @@ async fn install_events_config_admin_and_retention(pool: PgPool) {
             .1["player_id"],
         player
     );
+    let (status, mixed) = call(app.clone(), "POST", "/v1/events", json!({"player_id":player,"events":[
+        {"event_id":Uuid::new_v4(),"kind":"level_end","occurred_at":chrono::Utc::now(),"data":{"LevelIndex":"bad","Result":{"Outcome":0}}},
+        {"event_id":Uuid::new_v4(),"kind":"level_end","occurred_at":chrono::Utc::now(),"data":{"LevelIndex":1,"Result":{"Outcome":0},"TuningVersion":"November (b)"}}
+    ]}), Some(token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mixed["accepted"], 1);
+    assert_eq!(mixed["duplicates"], 0);
+    assert_eq!(mixed["rejected"].as_array().unwrap().len(), 1);
     let path = format!("/v1/config?player_id={player}");
     assert_eq!(
         call(app.clone(), "GET", &path, Value::Null, None).await.0,
@@ -150,12 +158,10 @@ async fn install_events_config_admin_and_retention(pool: PgPool) {
     assert_eq!(res.status(), 413);
     let mut invalid = batch.clone();
     invalid["events"][0]["data"] = json!({"email":"test@example.com"});
-    assert_eq!(
-        call(app.clone(), "POST", "/v1/events", invalid, Some(token))
-            .await
-            .0,
-        400
-    );
+    let (status, result) = call(app.clone(), "POST", "/v1/events", invalid, Some(token)).await;
+    assert_eq!(status, 200);
+    assert_eq!(result["accepted"], 0);
+    assert_eq!(result["rejected"].as_array().unwrap().len(), 1);
     let mut unknown = batch;
     unknown["events"][0]["event_id"] = json!(Uuid::new_v4());
     unknown["events"][0]["kind"] = json!("future");
@@ -209,7 +215,7 @@ async fn install_events_config_admin_and_retention(pool: PgPool) {
         .execute(&pool)
         .await
         .unwrap();
-    assert_eq!(orcub_backend::retain(&pool, 400).await.unwrap(), 5);
+    assert_eq!(orcub_backend::retain(&pool, 400).await.unwrap(), 6);
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM raw_events")
         .fetch_one(&pool)
         .await

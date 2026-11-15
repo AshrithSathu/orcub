@@ -95,8 +95,15 @@ fn reward_limits(config: &Value) -> [(bool, i64, i64); 2] {
         ),
     ]
 }
+async fn cap_boss_backlog(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
+    // Bound existing and newly accrued boss debt, retaining the earliest 60 claims.
+    sqlx::query("DELETE FROM deferred_level_rewards WHERE player_id=$1 AND level IN (SELECT level FROM deferred_level_rewards WHERE player_id=$1 AND level%20=19 ORDER BY level OFFSET 60)")
+        .bind(id).execute(&mut **tx).await?;
+    Ok(())
+}
 // Payments per call are bounded by the configured daily caps.
 async fn pay_deferred(tx: &mut Tx<'_>, id: Uuid) -> Result<i64> {
+    cap_boss_backlog(tx, id).await?;
     let mut paid = 0;
     let config = catalog();
     for (boss, cap, amount) in reward_limits(&config) {
@@ -835,6 +842,7 @@ pub async fn merge(tx: &mut Tx<'_>, canonical: Uuid, guest: Uuid) -> Result<()> 
     sqlx::query("INSERT INTO deferred_level_rewards SELECT $1,level FROM deferred_level_rewards WHERE player_id=$2 AND level>(SELECT rewarded_frontier FROM players WHERE id=$1) ON CONFLICT DO NOTHING").bind(canonical).bind(guest).execute(&mut **tx).await?;
     sqlx::query("UPDATE players SET rewarded_frontier=GREATEST(rewarded_frontier,(SELECT rewarded_frontier FROM players WHERE id=$2)) WHERE id=$1").bind(canonical).bind(guest).execute(&mut **tx).await?;
     sqlx::query("DELETE FROM deferred_level_rewards d WHERE d.player_id=$1 AND EXISTS(SELECT 1 FROM wallet_ledger g WHERE g.player_id=$2 AND g.reason='level_reward' AND g.ref_id='level:'||d.level)").bind(canonical).bind(guest).execute(&mut **tx).await?;
+    cap_boss_backlog(tx, canonical).await?;
     let mut carried = daily::merge(tx, canonical, guest).await?;
     carried.extend(unlock::merge(tx, canonical, guest).await?);
     let levels: Vec<i64> = sqlx::query_scalar("SELECT max(g.delta) FROM wallet_ledger g LEFT JOIN events e ON e.player_id=$2 AND e.event_id::text=g.ref_id WHERE g.player_id=$2 AND g.reason='level_reward' AND NOT EXISTS(SELECT 1 FROM wallet_ledger c LEFT JOIN events ce ON ce.player_id=$1 AND ce.event_id::text=c.ref_id WHERE c.player_id=$1 AND c.reason='level_reward' AND COALESCE(CASE WHEN c.ref_id LIKE 'level:%' THEN c.ref_id ELSE NULL END,'level:' || (ce.payload->>'LevelIndex'))=COALESCE(CASE WHEN g.ref_id LIKE 'level:%' THEN g.ref_id ELSE NULL END,'level:' || (e.payload->>'LevelIndex'))) GROUP BY COALESCE(CASE WHEN g.ref_id LIKE 'level:%' THEN g.ref_id ELSE NULL END,'level:' || (e.payload->>'LevelIndex'))").bind(canonical).bind(guest).fetch_all(&mut **tx).await?;

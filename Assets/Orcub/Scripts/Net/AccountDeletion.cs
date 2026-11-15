@@ -5,6 +5,18 @@ namespace Orcub.Net
 {
     public static class AccountDeletion
     {
+        public static async Task<bool> Resume(bool intent, bool confirmed, Func<Task<bool>> probe, Func<Task> reset)
+        {
+            if(!intent) return false;
+            if(!confirmed) { try { confirmed=await probe(); } catch(Exception) { return false; } }
+            if(!confirmed) return false;
+            await reset(); return true;
+        }
+        public static async Task<bool> ConfirmBackendDeletion(Func<Task<bool>> request)
+        {
+            try { return await request(); }
+            catch(Firebase.FirebaseException e) when ((Firebase.Auth.AuthError)e.ErrorCode==Firebase.Auth.AuthError.UserNotFound) { return true; }
+        }
         public static async Task Prepare(Func<Task> save, Func<Task> flush)
         {
             try { await Task.WhenAny(save(), Task.Delay(2000)); } catch(Exception) { }

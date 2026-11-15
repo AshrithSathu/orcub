@@ -42,13 +42,20 @@ namespace Orcub.Store
             try { await consumption.Reconcile(); await Service.Initialize(); await consumption.Reconcile(); } catch (Exception) { Debug.LogWarning("Store unavailable; retry on foreground"); }
         }
         bool retryingUnlocks;
+        int unlockFailures;
+        double nextUnlockRetry;
         async Task RetryUnlocks()
         {
-            if(retryingUnlocks || Service==null || string.IsNullOrEmpty(PlayerId)) return;
+            if(Time.realtimeSinceStartupAsDouble < nextUnlockRetry || retryingUnlocks || Service==null || string.IsNullOrEmpty(PlayerId)) return;
             retryingUnlocks=true;
             try { foreach(var kind in Orcub.Game.BoosterUnlocks.Due(Progress.HighestUnlocked+1,
                 kind => Read("unlock-claimed."+PlayerId+"."+kind)=="1"))
-                await Service.ClaimBoosterUnlock(kind);
+                if(!await Service.ClaimBoosterUnlock(kind)) {
+                    unlockFailures=Math.Min(unlockFailures+1,8);
+                    nextUnlockRetry=Time.realtimeSinceStartupAsDouble+15*Math.Pow(2,unlockFailures);
+                    return;
+                }
+                unlockFailures=0; nextUnlockRetry=0;
             } finally { retryingUnlocks=false; }
         }
         string earnedNonce; bool earnedApplied;
@@ -83,7 +90,7 @@ namespace Orcub.Store
             if (consumption != null && Time.realtimeSinceStartupAsDouble >= nextReconcile)
             { nextReconcile = Time.realtimeSinceStartupAsDouble + 15; _ = consumption.Reconcile(); _ = RetryUnlocks(); }
             if (owner == PlayerId) return;
-            owner = PlayerId;
+            owner = PlayerId; unlockFailures=0; nextUnlockRetry=0;
             if (Service != null) _ = Reload();
         }
         async Task Reload() { try { await consumption.Reconcile(); await Service.Initialize(); await consumption.Reconcile(); } catch (Exception) { } }

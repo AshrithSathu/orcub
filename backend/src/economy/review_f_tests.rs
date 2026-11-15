@@ -104,7 +104,8 @@ async fn deferred_caps_roll_over_and_expired_evidence_and_dropped_claims_recover
         sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,received_at,payload) VALUES($1,$2,'level_end',now(),now()-interval '2 days',$3)").bind(event).bind(id).bind(json!({"LevelIndex":level,"Result":{"Outcome":0}})).execute(&pool).await.unwrap();
         let b=Action{player_id:id,idempotency_key:event,ref_id:event,reason:"level_reward".into(),booster:None,utc_day:None};
         let v=grant(State(s.clone()),h.clone(),Json(b)).await.unwrap().0;
-        if level%20!=19 { if v["granted"]==5 {paid+=1;} if v["deferred"]==true {deferred+=1;} }
+        if level%20!=19 { if v["granted"]==5 {paid+=1;}
+            if v["deferred"]==true {deferred+=1;} }
     }
     assert_eq!((paid,deferred),(20,25));
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT gold FROM wallets WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap(),200);
@@ -182,4 +183,20 @@ fn reward_limits_read_config() {
     let mut config=catalog();
     config["grants"]=json!({"level_reward_daily_cap":2,"level_reward":7,"boss_reward_daily_cap":1,"boss_reward":31});
     assert_eq!(reward_limits(&config),[(false,2,7),(true,1,31)]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn boss_backlog_is_capped_and_excess_does_not_return(pool: PgPool) {
+    let (id,h)=player(&pool).await;
+    let s=new_state(pool.clone(),"admin",false);
+    sqlx::query("INSERT INTO deferred_level_rewards(player_id,level) SELECT $1,n*20+19 FROM generate_series(0,4999) n").bind(id).execute(&pool).await.unwrap();
+    let mut tx=pool.begin().await.unwrap();
+    lock(&mut tx,id).await.unwrap();
+    assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),150);
+    tx.commit().await.unwrap();
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM deferred_level_rewards WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap();
+    assert_eq!(count,57);
+    let _=wallet(State(s),h,Query(WalletQuery{player_id:id,applied_since:None})).await.unwrap();
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM deferred_level_rewards WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap();
+    assert_eq!(count,57);
 }

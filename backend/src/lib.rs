@@ -370,11 +370,7 @@ async fn events(
     if body.events.is_empty() || body.events.len() > 500 {
         return Err(ApiError::bad("batch size must be 1..500"));
     }
-    let validated: Vec<_> = body
-        .events
-        .iter()
-        .map(Event::validated)
-        .collect::<Result<_>>()?;
+    let validated: Vec<_> = body.events.iter().map(Event::validated).collect::<Vec<_>>();
     let mut tx = s.pool.begin().await?;
     sqlx::query("SELECT id FROM players WHERE id=$1 FOR SHARE")
         .bind(body.player_id)
@@ -386,7 +382,15 @@ async fn events(
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "daily event cap"));
     }
     let mut inserted = 0;
-    for (event, (data, raw)) in body.events.iter().zip(validated) {
+    let mut rejected = Vec::new();
+    for (event, result) in body.events.iter().zip(validated) {
+        let (data, raw) = match result {
+            Ok(value) => value,
+            Err(_) => {
+                rejected.push(json!({"event_id":event.event_id,"kind":event.kind,"code":400}));
+                continue;
+            }
+        };
         let n=sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload,dev) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(event.event_id).bind(body.player_id).bind(&event.kind).bind(event.ingested_at()).bind(if raw {json!({})} else {data.clone()}).bind(event.dev).execute(&mut *tx).await?.rows_affected();
         if n > 0 && raw {
             sqlx::query("INSERT INTO raw_events(event_id,payload) VALUES($1,$2)")
@@ -399,7 +403,7 @@ async fn events(
     }
     tx.commit().await?;
     Ok(Json(
-        json!({"accepted":inserted,"duplicates":body.events.len() as u64-inserted}),
+        json!({"accepted":inserted,"duplicates":body.events.len() as u64-inserted-rejected.len() as u64,"rejected":rejected}),
     ))
 }
 #[derive(Deserialize)]

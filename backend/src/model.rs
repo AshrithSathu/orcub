@@ -88,7 +88,7 @@ pub struct Event {
     pub data: Value,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub struct Attempt {
     #[serde(default, rename = "gen_version")]
@@ -111,7 +111,7 @@ pub struct Attempt {
     pub rating_after: f64,
     pub result: AttemptResult,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub struct Features {
     pub moves: Vec<Move>,
@@ -121,7 +121,7 @@ pub struct Features {
     pub locked: f64,
     pub undo: f64,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub struct Move {
     pub useful: bool,
@@ -129,7 +129,7 @@ pub struct Move {
     pub think_seconds: f64,
     pub locked_touches: u32,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct Plan {
     pub variant: u32,
     #[serde(rename = "extraMoves")]
@@ -140,7 +140,7 @@ pub struct Plan {
     #[serde(rename = "moveLimit")]
     pub move_limit: u32,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub struct AttemptResult {
     pub outcome: u8,
@@ -218,7 +218,8 @@ pub struct Ad {
 impl Event {
     pub fn ingested_at(&self) -> DateTime<Utc> {
         if matches!(self.kind.as_str(), "level_start" | "level_end") {
-            self.occurred_at.min(Utc::now())
+            self.occurred_at
+                .clamp(Utc::now() - chrono::Duration::days(399), Utc::now())
         } else {
             self.occurred_at
         }
@@ -270,19 +271,36 @@ impl Event {
             clamp(&mut data, "");
             return Ok((data, true));
         }
-        let mut typed: KnownEvent =
-            serde_json::from_value(json!({"kind":self.kind,"data":self.data}))
-                .map_err(|_| ApiError::bad("event does not match typed schema"))?;
-        if let KnownEvent::LevelEnd(a) = &mut typed {
-            if a.level_index >= 100000
-                || a.version != 2
-                || a.result.outcome > 2
-                || a.features.moves.len() > 32
+        let mut input = self.data.clone();
+        if self.kind == "level_end" {
+            if !input["LevelIndex"].as_u64().is_some_and(|n| n < 100000)
+                || !input["Result"]["Outcome"].as_u64().is_some_and(|n| n <= 2)
             {
-                return Err(ApiError::bad("invalid attempt schema"));
+                return Err(ApiError::bad("invalid required level or outcome"));
             }
-            a.started_utc = a.started_utc.min(Utc::now());
-            timestamp(a.started_utc)?;
+            let started = input["StartedUtc"]
+                .as_str()
+                .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+                .unwrap_or_else(Utc::now);
+            input = normalize_level(&serde_json::to_value(Attempt::default()).unwrap(), &input);
+            input["StartedUtc"] =
+                json!(started.clamp(Utc::now() - chrono::Duration::days(399), Utc::now()));
+        } else if self.kind == "level_start" {
+            if !input["LevelIndex"].as_u64().is_some_and(|n| n < 100000) {
+                return Err(ApiError::bad("invalid required level"));
+            }
+            input = normalize_level(
+                &json!({"gen_version":0,"curated":false,"LevelIndex":0,"Variant":0,"Plan":serde_json::to_value(Plan::default()).unwrap()}),
+                &input,
+            );
+        }
+        let mut typed: KnownEvent = serde_json::from_value(json!({"kind":self.kind,"data":input}))
+            .map_err(|_| ApiError::bad("event does not match typed schema"))?;
+        if let KnownEvent::LevelEnd(a) = &mut typed {
+            a.features.moves.truncate(32);
+            a.started_utc = a
+                .started_utc
+                .clamp(Utc::now() - chrono::Duration::days(399), Utc::now());
         }
         if let KnownEvent::AdPaid {
             currency,
@@ -302,7 +320,9 @@ impl Event {
         }
         let mut data =
             serde_json::to_value(typed).map_err(|_| ApiError::bad("serialization"))?["data"].take();
-        validate_labels(&data)?;
+        if !matches!(self.kind.as_str(), "level_start" | "level_end") {
+            validate_labels(&data)?;
+        }
         clamp(&mut data, "");
         // Derive aggregate features from bounded per-move inputs; never trust client sums.
         if let Some(f) = data.get_mut("Features") {
@@ -325,6 +345,55 @@ impl Event {
             f["Locked"] = json!(locked);
         }
         Ok((data, false))
+    }
+}
+// Only reward-critical level index/outcome are strict; telemetry can drift between builds.
+fn normalize_level(default: &Value, input: &Value) -> Value {
+    match default {
+        Value::Object(fields) => fields
+            .iter()
+            .map(|(k, v)| (k.clone(), normalize_level(v, &input[k])))
+            .collect(),
+        Value::Array(_) => input
+            .as_array()
+            .map(|a| {
+                Value::Array(
+                    a.iter()
+                        .take(32)
+                        .map(|v| {
+                            normalize_level(&serde_json::to_value(Move::default()).unwrap(), v)
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or(json!([])),
+        Value::Number(n) => {
+            let x = input
+                .as_f64()
+                .filter(|n| n.is_finite())
+                .unwrap_or(0.)
+                .clamp(0., u32::MAX as f64);
+            if n.is_f64() {
+                json!(x)
+            } else {
+                json!(x as u32)
+            }
+        }
+        Value::Bool(_) => json!(input.as_bool().unwrap_or(false)),
+        Value::String(_) => {
+            let s = input.as_str().unwrap_or("");
+            json!(
+                s.chars()
+                    .take(128)
+                    .map(|c| if c.is_alphanumeric() || "_.- /;=:+,()#".contains(c) {
+                        c
+                    } else {
+                        '_'
+                    })
+                    .collect::<String>()
+            )
+        }
+        _ => default.clone(),
     }
 }
 fn currency_code(s: &str) -> Result<()> {
@@ -588,6 +657,32 @@ mod tests {
             ..start
         };
         assert!(bad.validated().is_err());
+    }
+    #[test]
+    fn level_telemetry_drift_does_not_reject_rewards() {
+        let mut data: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/attempt.json")).unwrap();
+        data["TuningVersion"] = json!("2026-11-15 (b) #2.x_y-z");
+        data["Version"] = json!(3);
+        data["ModelPrediction"] = json!("NaN");
+        data["SkillEstimate"] = json!(-100);
+        data["Plan"]["reason"] = json!("target 1٫2");
+        data["Features"]["Moves"][0]["LockedTouches"] = json!(1e20);
+        data.as_object_mut().unwrap().remove("ModelVersion");
+        data["StartedUtc"] = json!(Utc::now() - chrono::Duration::days(401));
+        let e = Event {
+            dev: false,
+            event_id: Uuid::new_v4(),
+            kind: "level_end".into(),
+            occurred_at: Utc::now() - chrono::Duration::days(401),
+            data,
+        };
+        let clean = e.validated().unwrap().0;
+        assert_eq!(clean["TuningVersion"], "2026-11-15 (b) #2.x_y-z");
+        assert_eq!(clean["Version"], 3);
+        assert_eq!(clean["ModelPrediction"], 0.);
+        assert_eq!(clean["SkillEstimate"], 0.);
+        assert!(clean["ModelVersion"].as_str().unwrap().is_empty());
     }
     #[test]
     fn progress_never_regresses() {

@@ -17,7 +17,7 @@ namespace Orcub.Net
         TaskCompletionSource<bool> disconnect;
         bool linked, deleting;
         string linkedUid;
-        public bool DeletionNeedsConfirmation => false;
+        public bool DeletionNeedsConfirmation => UnityEngine.PlayerPrefs.GetString("orcub.delete.intent", "").Length>0;
         public bool Linked => linked && linkedUid==User?.UserId;
         string lastSaved;
         DateTime nextSave;
@@ -48,12 +48,26 @@ namespace Orcub.Net
             if(!string.IsNullOrEmpty(legacyProof) && string.IsNullOrEmpty(client.MergeProof)) client.SetMergeProof(legacyProof,"legacy");
             UnityEngine.PlayerPrefs.DeleteKey("orcub.link.previous"); UnityEngine.PlayerPrefs.DeleteKey("orcub.link.proof"); UnityEngine.PlayerPrefs.Save();
             var intent=UnityEngine.PlayerPrefs.GetString("orcub.delete.intent", "");
-            if(intent.Length>0 && intent!=User?.UserId) {
-                if(UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending",0)!=1) throw new InvalidOperationException("deletion_requires_original_account");
-                auth.SignOut(); await client.ResetLocalAsync(); return;
+            if(await AccountDeletion.Resume(intent.Length>0, UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending",0)==1,
+                async () => {
+                    if(!client.Ready) return false;
+                    using var probe=await client.Request("/v1/config?player_id="+client.PlayerId,"GET");
+                    return probe.responseCode==401 || probe.responseCode==404;
+                }, async () => {
+                    if(User?.UserId==intent) { UnityEngine.PlayerPrefs.SetString(PendingDelete,intent); UnityEngine.PlayerPrefs.Save(); }
+                    await RevokeGoogle(intent); auth.SignOut();
+                    Firebase.Analytics.FirebaseAnalytics.ResetAnalyticsData();
+                    await client.ResetLocalAsync();
+                })) return;
+            if(intent.Length>0) {
+                // An offline probe keeps the durable intent; it must not fail boot.
+                if(User?.UserId==intent) {
+                    resumingDeletion=true;
+                    try { await DeleteAccount(); } catch(Exception) { } finally { resumingDeletion=false; }
+                }
+                Changed?.Invoke(); return;
             }
             if (User == null) await auth.SignInAnonymouslyAsync();
-            if (UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending", 0) == 1 || HasDeletionIntent) { resumingDeletion=true; try { await DeleteAccount(); } finally { resumingDeletion=false; } return; }
             if (await RetryIdentityDeletion()) return;
             await Link(); Changed?.Invoke();
         }
@@ -209,28 +223,31 @@ namespace Orcub.Net
         public async Task DeleteAccount()
         {
             if (User == null) throw new InvalidOperationException("No account");
-            await AccountDeletion.Prepare(() => Save(true), FlushSpends);
+            string uid = User.UserId;
+            if(!resumingDeletion) await AccountDeletion.Prepare(() => Save(true), FlushSpends);
             await gate.WaitAsync(); deleting = true;
-            string uid = User.UserId; bool identityDeleted=false;
+            bool identityDeleted=false;
             try
             {
                 await AccountDeletion.Run(async () => {
                     if(resumingDeletion || UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending",0)==1) return;
                     try { await Reauthenticate(); }
-                    catch(Firebase.FirebaseException e) when ((AuthError)e.ErrorCode==AuthError.UserNotFound || (AuthError)e.ErrorCode==AuthError.UserDisabled) { }
+                    catch(Firebase.FirebaseException e) when (IdentityGone(e)) {
+                        identityDeleted=true;
+                        UnityEngine.PlayerPrefs.SetString("orcub.delete.intent",uid);
+                        UnityEngine.PlayerPrefs.SetInt("orcub.delete.pending",1); UnityEngine.PlayerPrefs.Save();
+                    }
+                    catch(Firebase.FirebaseException e) when ((AuthError)e.ErrorCode==AuthError.UserDisabled) { }
                 }, async () => {
                     if (UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending", 0) == 0)
                     {
                         UnityEngine.PlayerPrefs.SetString("orcub.delete.intent",uid); UnityEngine.PlayerPrefs.Save();
-                        UnityWebRequest req;
-                        try { req=await Authorized("/v1/account", "DELETE"); }
-                        catch(Firebase.FirebaseException e) when (resumingDeletion && IdentityGone(e)) {
-                            throw new InvalidOperationException("backend_deletion_unconfirmed",e);
-                        }
-                        using var deletionRequest=req;
-                        if(req.responseCode>=400 && req.responseCode<500 && req.responseCode!=401 && req.responseCode!=404) { UnityEngine.PlayerPrefs.DeleteKey("orcub.delete.intent"); UnityEngine.PlayerPrefs.Save(); }
-                        Ensure(req);
-                        identityDeleted=(bool?)JObject.Parse(req.downloadHandler.text)["identity_deleted"]==true;
+                        identityDeleted=await AccountDeletion.ConfirmBackendDeletion(async () => {
+                            using var req=await Authorized("/v1/account", "DELETE");
+                            if(req.responseCode>=400 && req.responseCode<500 && req.responseCode!=401 && req.responseCode!=404) { UnityEngine.PlayerPrefs.DeleteKey("orcub.delete.intent"); UnityEngine.PlayerPrefs.Save(); }
+                            Ensure(req);
+                            return (bool?)JObject.Parse(req.downloadHandler.text)["identity_deleted"]==true;
+                        });
                         UnityEngine.PlayerPrefs.SetInt("orcub.delete.pending", 1); UnityEngine.PlayerPrefs.Save();
                     }
                 }, () => identityDeleted ? Task.CompletedTask : User.DeleteAsync(), () => {

@@ -8,6 +8,67 @@ namespace Orcub.Tests
     /// <summary>Cloud-restore decision rules and account display helpers.</summary>
     public class AccountFlowTests
     {
+        [TestCase(Firebase.Auth.AuthError.UserDisabled)]
+        [TestCase(Firebase.Auth.AuthError.UserTokenExpired)]
+        public void OtherAuthFailuresDoNotConfirmDeletion(Firebase.Auth.AuthError code)
+        {
+            Assert.ThrowsAsync<Firebase.FirebaseException>(async ()=> {
+                await AccountDeletion.ConfirmBackendDeletion(()=>throw new Firebase.FirebaseException((int)code,"auth failure"));
+            });
+        }
+        [Test] public async System.Threading.Tasks.Task UserNotFoundDuringDeletionTokenRefreshConfirmsWipe()
+        {
+            bool wiped=false, identityDeleted=false;
+            await AccountDeletion.Run(()=>System.Threading.Tasks.Task.CompletedTask,
+                async ()=> { identityDeleted=await AccountDeletion.ConfirmBackendDeletion(
+                    ()=>throw new Firebase.FirebaseException((int)Firebase.Auth.AuthError.UserNotFound,"missing")); },
+                ()=> { Assert.IsTrue(identityDeleted); return System.Threading.Tasks.Task.CompletedTask; },
+                ()=>Assert.Fail("identity cleanup should not fail"),
+                ()=> { wiped=true; return System.Threading.Tasks.Task.CompletedTask; });
+            Assert.IsTrue(wiped);
+        }
+        [Test] public async System.Threading.Tasks.Task LostDeleteResponseRelaunchResetsToGuest()
+        {
+            bool backendDeleted=false, wiped=false;
+            string localPlayer="old-player";
+            try {
+                await AccountDeletion.Run(()=>System.Threading.Tasks.Task.CompletedTask,
+                    ()=> { backendDeleted=true; throw new System.IO.IOException("lost DELETE response"); },
+                    ()=>System.Threading.Tasks.Task.CompletedTask,()=>{},()=> { wiped=true; return System.Threading.Tasks.Task.CompletedTask; });
+                Assert.Fail("lost response must leave a resumable intent");
+            } catch(System.IO.IOException) { }
+            Assert.IsFalse(wiped);
+            Assert.IsTrue(await AccountDeletion.Resume(true,false,()=>System.Threading.Tasks.Task.FromResult(backendDeleted),()=> {
+                wiped=true; localPlayer="fresh-guest"; return System.Threading.Tasks.Task.CompletedTask;
+            }));
+            Assert.IsTrue(wiped); Assert.AreEqual("fresh-guest",localPlayer);
+        }
+
+        [Test] public async System.Threading.Tasks.Task RelaunchWithoutIntentNeverProbesOrWipes()
+        {
+            bool probed=false, wiped=false;
+            Assert.IsFalse(await AccountDeletion.Resume(false,false,
+                ()=> { probed=true; return System.Threading.Tasks.Task.FromResult(true); },
+                ()=> { wiped=true; return System.Threading.Tasks.Task.CompletedTask; }));
+            Assert.IsFalse(probed); Assert.IsFalse(wiped);
+        }
+        [Test] public async System.Threading.Tasks.Task OfflineDeletionProbeKeepsIntentWithoutFailingBoot()
+        {
+            Assert.IsFalse(await AccountDeletion.Resume(true,false,
+                ()=>throw new System.Exception("offline"),()=>throw new System.Exception("unexpected wipe")));
+        }
+        [Test] public async System.Threading.Tasks.Task BadLevelEventDoesNotBlockThreeGoodEvents()
+        {
+            var path=System.IO.Path.Combine(System.IO.Path.GetTempPath(),System.Guid.NewGuid()+".json");
+            var queue=new EventQueue(path);
+            try {
+                for(int i=0;i<4;i++) queue.Add("level_end",new {LevelIndex=i});
+                int sent=0, dropped=0;
+                await queue.IsolateRejected(queue.Batch(), item=>System.Threading.Tasks.Task.FromResult(++sent==1?400L:200L),
+                    (kind,code)=> { Assert.AreEqual("level_end",kind); Assert.AreEqual(400,code); dropped++; });
+                Assert.AreEqual(4,sent); Assert.AreEqual(1,dropped); Assert.AreEqual(0,queue.Count);
+            } finally { await queue.Stop(); if(System.IO.File.Exists(path)) System.IO.File.Delete(path); }
+        }
         static JObject Save(int highest, params (int level, int stars)[] stars)
         {
             var s = new JObject();

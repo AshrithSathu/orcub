@@ -238,18 +238,23 @@ namespace Orcub.Net
                 var batch = System.Array.FindAll(queue.Batch(AnalyticsConsent.BackendAllowed), e => AnalyticsConsent.BackendAllowed((string)e["kind"]));
                 if (batch.Length == 0) return;
                 using var req = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, batch));
-                if (req.responseCode >= 200 && req.responseCode < 300) { queue.Remove(batch); failures = 0; renewedInstall = false; ClientGateway.NotifyFlushed(); }
+                if (req.responseCode >= 200 && req.responseCode < 300) { queue.Remove(batch);
+                    var rejected=JObject.Parse(req.downloadHandler.text)["rejected"] as JArray;
+                    if(rejected!=null) foreach(var item in rejected) Debug.LogWarning((string)item["kind"]+" "+(int)item["code"]);
+                    failures = 0; renewedInstall = false; ClientGateway.NotifyFlushed(); }
                 else if (req.responseCode == 400 || req.responseCode == 422)
                 {
-                    // Isolate the rejected event without discarding valid neighbours.
-                    foreach (var item in batch)
-                    {
-                        if (stopped) return;
-                        var single = new[] { item };
-                        using var check = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, single));
-                        if ((check.responseCode >= 200 && check.responseCode < 300) || ((check.responseCode == 400 || check.responseCode == 422) && (string)item["kind"] != "level_end")) { queue.Remove(single); if(check.responseCode>=200 && check.responseCode<300) ClientGateway.NotifyFlushed(); }
-                        else break;
-                    }
+                    await queue.IsolateRejected(batch, async item => {
+                        if(stopped) return 0;
+                        using var check = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, new[] { item }));
+                        if(check.responseCode >= 200 && check.responseCode < 300) ClientGateway.NotifyFlushed();
+                        else if(check.responseCode != 400 && check.responseCode != 422) {
+                            failures=Math.Min(failures+1,8);
+                            double.TryParse(check.GetResponseHeader("Retry-After"),out var retry);
+                            nextFlush=Time.realtimeSinceStartupAsDouble+Math.Max(retry,Math.Pow(2,failures));
+                        }
+                        return check.responseCode;
+                    }, (kind,code) => Debug.LogWarning(kind+" "+code));
                 }
                 else if (req.responseCode == 401 && !renewedInstall)
                 {
