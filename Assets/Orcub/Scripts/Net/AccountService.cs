@@ -50,9 +50,12 @@ namespace Orcub.Net
             var intent=UnityEngine.PlayerPrefs.GetString("orcub.delete.intent", "");
             if(await AccountDeletion.Resume(intent.Length>0, UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending",0)==1,
                 async () => {
-                    if(!client.Ready) return false;
+                    // With the original account still signed in, resuming the (idempotent) DELETE below is the
+                    // reliable path; the probe is only for when that identity is already gone. Only the server's
+                    // own 401 body is proof: an edge 404 or a proxy page must never wipe a live player.
+                    if(!client.Ready || User?.UserId==intent) return false;
                     using var probe=await client.Request("/v1/config?player_id="+client.PlayerId,"GET");
-                    return probe.responseCode==401 || probe.responseCode==404;
+                    return probe.responseCode==401 && (probe.downloadHandler?.text ?? "").Contains("\"unauthorized\"");
                 }, async () => {
                     if(User?.UserId==intent) { UnityEngine.PlayerPrefs.SetString(PendingDelete,intent); UnityEngine.PlayerPrefs.Save(); }
                     await RevokeGoogle(intent); auth.SignOut();
