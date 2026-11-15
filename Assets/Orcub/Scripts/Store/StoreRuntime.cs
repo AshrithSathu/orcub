@@ -46,8 +46,9 @@ namespace Orcub.Store
         {
             if(retryingUnlocks || Service==null || string.IsNullOrEmpty(PlayerId)) return;
             retryingUnlocks=true;
-            try { foreach(var kind in new[]{"hint","undo","unclamp"})
-                if(!string.IsNullOrEmpty(Read("unlock."+PlayerId+"."+kind))) await Service.ClaimBoosterUnlock(kind);
+            try { foreach(var kind in Orcub.Game.BoosterUnlocks.Due(Progress.HighestUnlocked+1,
+                kind => Read("unlock-claimed."+PlayerId+"."+kind)=="1"))
+                await Service.ClaimBoosterUnlock(kind);
             } finally { retryingUnlocks=false; }
         }
         string earnedNonce; bool earnedApplied;

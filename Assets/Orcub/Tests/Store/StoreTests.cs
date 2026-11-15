@@ -15,7 +15,7 @@ namespace Orcub.Tests
         sealed class Fake : IStoreKit, IStoreBackend, IStoreCache
         {
             public event Action<StoreTransaction> TransactionUpdated;
-            public string PlayerId { get; } = Guid.NewGuid().ToString();
+            public string PlayerId { get; set; } = Guid.NewGuid().ToString();
             public readonly List<string> Calls = new List<string>();
             readonly Dictionary<string,string> cache = new Dictionary<string,string>();
             public readonly StoreTransaction Transaction = new StoreTransaction { Id = "123", ProductId = StoreService.ProductIds[0], Jws = "signed.jws.transaction" };
@@ -61,6 +61,16 @@ namespace Orcub.Tests
             public Task<IReadOnlyList<StoreTransaction>> Restore() => Task.FromResult<IReadOnlyList<StoreTransaction>>(MixedRestore ? new[] { Transaction, new StoreTransaction { Id = "456", ProductId = "bad", Jws = "bad.jws" } } : new[] { Transaction });
             public Task Finish(string id) { Calls.Add("finish"); Finished++; return Task.CompletedTask; }
             public void Update() => TransactionUpdated?.Invoke(Transaction);
+        }
+        [Test] public async Task UnlockConfirmationBelongsToPlayer()
+        {
+            var f=new Fake(); var service=new StoreService(f,f,f); var first=f.PlayerId;
+            Assert.True(await service.ClaimBoosterUnlock("hint"));
+            Assert.AreEqual("1",f.Read("unlock-claimed."+first+".hint"));
+            f.PlayerId=Guid.NewGuid().ToString();
+            Assert.AreEqual("",f.Read("unlock-claimed."+f.PlayerId+".hint"));
+            Assert.True(await service.ClaimBoosterUnlock("hint"));
+            Assert.AreEqual("1",f.Read("unlock-claimed."+f.PlayerId+".hint"));
         }
         [Test] public async Task UnlockRetriesSamePersistedKeyAcrossRelaunch()
         {

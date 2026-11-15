@@ -89,7 +89,7 @@ pub struct Event {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "PascalCase")]
+#[serde(rename_all = "PascalCase")]
 pub struct Attempt {
     #[serde(default, rename = "gen_version")]
     pub gen_version: u32,
@@ -112,7 +112,7 @@ pub struct Attempt {
     pub result: AttemptResult,
 }
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "PascalCase")]
+#[serde(rename_all = "PascalCase")]
 pub struct Features {
     pub moves: Vec<Move>,
     pub count: u32,
@@ -122,7 +122,7 @@ pub struct Features {
     pub undo: f64,
 }
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "PascalCase")]
+#[serde(rename_all = "PascalCase")]
 pub struct Move {
     pub useful: bool,
     pub undo: bool,
@@ -130,7 +130,6 @@ pub struct Move {
     pub locked_touches: u32,
 }
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Plan {
     pub variant: u32,
     #[serde(rename = "extraMoves")]
@@ -142,7 +141,7 @@ pub struct Plan {
     pub move_limit: u32,
 }
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "PascalCase")]
+#[serde(rename_all = "PascalCase")]
 pub struct AttemptResult {
     pub outcome: u8,
     pub moves_used: u32,
@@ -151,12 +150,7 @@ pub struct AttemptResult {
     pub continues: u32,
 }
 #[derive(Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    content = "data",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum KnownEvent {
     SessionStart {
         session_id: Uuid,
@@ -222,13 +216,20 @@ pub struct Ad {
     pub network: String,
 }
 impl Event {
+    pub fn ingested_at(&self) -> DateTime<Utc> {
+        if matches!(self.kind.as_str(), "level_start" | "level_end") {
+            self.occurred_at.min(Utc::now())
+        } else {
+            self.occurred_at
+        }
+    }
     pub fn validated(&self) -> Result<(Value, bool)> {
         if matches!(self.kind.as_str(), "ad_paid" | "iap")
             && self.occurred_at < Utc::now() - chrono::Duration::days(30)
         {
             return Err(ApiError::bad("revenue timestamp outside 30 days"));
         }
-        timestamp(self.occurred_at)?;
+        timestamp(self.ingested_at())?;
         label(&self.kind, 64)?;
         let known = [
             "session_start",
@@ -269,9 +270,10 @@ impl Event {
             clamp(&mut data, "");
             return Ok((data, true));
         }
-        let typed: KnownEvent = serde_json::from_value(json!({"kind":self.kind,"data":self.data}))
-            .map_err(|_| ApiError::bad("event does not match typed schema"))?;
-        if let KnownEvent::LevelEnd(a) = &typed {
+        let mut typed: KnownEvent =
+            serde_json::from_value(json!({"kind":self.kind,"data":self.data}))
+                .map_err(|_| ApiError::bad("event does not match typed schema"))?;
+        if let KnownEvent::LevelEnd(a) = &mut typed {
             if a.level_index >= 100000
                 || a.version != 2
                 || a.result.outcome > 2
@@ -279,6 +281,7 @@ impl Event {
             {
                 return Err(ApiError::bad("invalid attempt schema"));
             }
+            a.started_utc = a.started_utc.min(Utc::now());
             timestamp(a.started_utc)?;
         }
         if let KnownEvent::AdPaid {
@@ -550,6 +553,42 @@ fn validate_daily(v: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn future_level_events_and_extra_fields_are_tolerated() {
+        let now = Utc::now();
+        let mut data: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/attempt.json")).unwrap();
+        data["StartedUtc"] = json!(now + chrono::Duration::hours(24));
+        data["NewField"] = json!("ignored");
+        data["Plan"]["newField"] = json!(true);
+        data["Features"]["NewField"] = json!(1);
+        data["Result"]["NewField"] = json!(1);
+        let event = Event {
+            dev: false,
+            event_id: Uuid::new_v4(),
+            kind: "level_end".into(),
+            occurred_at: now + chrono::Duration::hours(24),
+            data,
+        };
+        let (clean, _) = event.validated().unwrap();
+        assert!(event.ingested_at() <= Utc::now());
+        assert!(
+            DateTime::parse_from_rfc3339(clean["StartedUtc"].as_str().unwrap()).unwrap()
+                <= Utc::now()
+        );
+        assert!(clean.get("NewField").is_none());
+        let start = Event {
+            data: json!({"LevelIndex":2,"Variant":0,"Plan":clean["Plan"],"newField":true}),
+            kind: "level_start".into(),
+            ..event
+        };
+        assert!(start.validated().is_ok());
+        let bad = Event {
+            data: json!({"LevelIndex":"bad","Variant":0,"Plan":clean["Plan"]}),
+            ..start
+        };
+        assert!(bad.validated().is_err());
+    }
     #[test]
     fn progress_never_regresses() {
         let mut old = SaveData {

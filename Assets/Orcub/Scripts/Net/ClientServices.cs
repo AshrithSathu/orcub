@@ -247,7 +247,7 @@ namespace Orcub.Net
                         if (stopped) return;
                         var single = new[] { item };
                         using var check = await Request("/v1/events", "POST", bytes: EventQueue.Serialize(PlayerId, single));
-                        if ((check.responseCode >= 200 && check.responseCode < 300) || check.responseCode == 400 || check.responseCode == 422) { queue.Remove(single); if(check.responseCode>=200 && check.responseCode<300) ClientGateway.NotifyFlushed(); }
+                        if ((check.responseCode >= 200 && check.responseCode < 300) || ((check.responseCode == 400 || check.responseCode == 422) && (string)item["kind"] != "level_end")) { queue.Remove(single); if(check.responseCode>=200 && check.responseCode<300) ClientGateway.NotifyFlushed(); }
                         else break;
                     }
                 }

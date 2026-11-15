@@ -387,7 +387,7 @@ async fn events(
     }
     let mut inserted = 0;
     for (event, (data, raw)) in body.events.iter().zip(validated) {
-        let n=sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload,dev) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(event.event_id).bind(body.player_id).bind(&event.kind).bind(event.occurred_at).bind(if raw {json!({})} else {data.clone()}).bind(event.dev).execute(&mut *tx).await?.rows_affected();
+        let n=sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload,dev) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(event.event_id).bind(body.player_id).bind(&event.kind).bind(event.ingested_at()).bind(if raw {json!({})} else {data.clone()}).bind(event.dev).execute(&mut *tx).await?.rows_affected();
         if n > 0 && raw {
             sqlx::query("INSERT INTO raw_events(event_id,payload) VALUES($1,$2)")
                 .bind(event.event_id)

@@ -48,7 +48,10 @@ namespace Orcub.Net
             if(!string.IsNullOrEmpty(legacyProof) && string.IsNullOrEmpty(client.MergeProof)) client.SetMergeProof(legacyProof,"legacy");
             UnityEngine.PlayerPrefs.DeleteKey("orcub.link.previous"); UnityEngine.PlayerPrefs.DeleteKey("orcub.link.proof"); UnityEngine.PlayerPrefs.Save();
             var intent=UnityEngine.PlayerPrefs.GetString("orcub.delete.intent", "");
-            if(intent.Length>0 && intent!=User?.UserId) { auth.SignOut(); await client.ResetLocalAsync(); return; }
+            if(intent.Length>0 && intent!=User?.UserId) {
+                if(UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending",0)!=1) throw new InvalidOperationException("deletion_requires_original_account");
+                auth.SignOut(); await client.ResetLocalAsync(); return;
+            }
             if (User == null) await auth.SignInAnonymouslyAsync();
             if (UnityEngine.PlayerPrefs.GetInt("orcub.delete.pending", 0) == 1 || HasDeletionIntent) { resumingDeletion=true; try { await DeleteAccount(); } finally { resumingDeletion=false; } return; }
             if (await RetryIdentityDeletion()) return;
@@ -67,7 +70,7 @@ namespace Orcub.Net
                 if (client.Stopped) return;
                 if(Orcub.Core.ConsumableGateway.FlushSpends!=null) { await FlushSpends(); if(Orcub.Core.ConsumableGateway.HasPendingSpends?.Invoke()==true) throw new InvalidOperationException("guest_spends_pending"); }
                 using var req = await Authorized("/v1/link", "POST", new { player_id = client.PlayerId }, previous);
-                if(req.responseCode>=200 && req.responseCode<500 && req.responseCode!=429) client.SetMergeProof(null,null);
+                if(req.responseCode>=200 && req.responseCode<300) client.SetMergeProof(null,null);
                 Ensure(req);
                 if (client.Stopped) return;
                 client.SetPlayer((string)JObject.Parse(req.downloadHandler.text)["player_id"]); linked = true; linkedUid=User.UserId;
@@ -222,7 +225,7 @@ namespace Orcub.Net
                         UnityWebRequest req;
                         try { req=await Authorized("/v1/account", "DELETE"); }
                         catch(Firebase.FirebaseException e) when (resumingDeletion && IdentityGone(e)) {
-                            identityDeleted=true; UnityEngine.PlayerPrefs.SetInt("orcub.delete.pending",1); UnityEngine.PlayerPrefs.Save(); return;
+                            throw new InvalidOperationException("backend_deletion_unconfirmed",e);
                         }
                         using var deletionRequest=req;
                         if(req.responseCode>=400 && req.responseCode<500 && req.responseCode!=401 && req.responseCode!=404) { UnityEngine.PlayerPrefs.DeleteKey("orcub.delete.intent"); UnityEngine.PlayerPrefs.Save(); }
@@ -241,7 +244,7 @@ namespace Orcub.Net
             catch (Exception) { Failed?.Invoke("account_delete_failed"); throw; }
             finally { deleting = false; gate.Release(); }
         }
-        static bool IdentityGone(Firebase.FirebaseException e) => (AuthError)e.ErrorCode==AuthError.UserNotFound || (AuthError)e.ErrorCode==AuthError.UserDisabled || (AuthError)e.ErrorCode==AuthError.UserTokenExpired;
+        static bool IdentityGone(Firebase.FirebaseException e) => (AuthError)e.ErrorCode==AuthError.UserNotFound;
         public async void RequestSave() { try { await Save(); } catch (Exception) { Failed?.Invoke("cloud_save_failed"); } }
         public async Task Save(bool force = false)
         {

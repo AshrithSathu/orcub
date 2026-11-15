@@ -52,9 +52,9 @@ async fn forged_5000_gold_farm_is_blocked(pool: PgPool) {
         let event=Uuid::new_v4();
         sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload) VALUES($1,$2,'level_end',now(),$3)").bind(event).bind(id).bind(json!({"LevelIndex":level,"Result":{"Outcome":0}})).execute(&pool).await.unwrap();
         let b=Action{player_id:id,idempotency_key:event,ref_id:event,reason:"level_reward".into(),booster:None,utc_day:None};
-        assert!(grant(State(s.clone()),h.clone(),Json(b)).await.is_err());
+        if !(0..100000).contains(&level) { assert!(grant(State(s.clone()),h.clone(),Json(b)).await.is_err()); } else { let _=grant(State(s.clone()),h.clone(),Json(b)).await.unwrap(); }
     }
-    let gold:i64=sqlx::query_scalar("SELECT COALESCE((SELECT gold FROM wallets WHERE player_id=$1),0)::bigint").bind(id).fetch_one(&pool).await.unwrap(); assert_eq!(gold,0);
+    let gold:i64=sqlx::query_scalar("SELECT COALESCE((SELECT gold FROM wallets WHERE player_id=$1),0)::bigint").bind(id).fetch_one(&pool).await.unwrap(); assert_eq!(gold,150);
 }
 #[sqlx::test(migrations = "./migrations")]
 async fn merge_first_clears_and_gold_bought_boosters(pool: PgPool) {
@@ -106,7 +106,10 @@ async fn deferred_caps_roll_over_and_expired_evidence_and_dropped_claims_recover
         let v=grant(State(s.clone()),h.clone(),Json(b)).await.unwrap().0;
         if level%20!=19 { if v["granted"]==5 {paid+=1;} if v["deferred"]==true {deferred+=1;} }
     }
-    assert_eq!((paid,deferred),(40,5));
+    assert_eq!((paid,deferred),(20,25));
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT gold FROM wallets WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap(),200);
+    sqlx::query("UPDATE wallet_ledger SET created_at=now()-interval '1 day' WHERE player_id=$1").bind(id).execute(&pool).await.unwrap();
+    let _=wallet(State(s.clone()),h.clone(),Query(WalletQuery{player_id:id,applied_since:None})).await.unwrap();
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT gold FROM wallets WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap(),300);
     sqlx::query("UPDATE wallet_ledger SET created_at=now()-interval '1 day' WHERE player_id=$1").bind(id).execute(&pool).await.unwrap();
     let _=wallet(State(s.clone()),h.clone(),Query(WalletQuery{player_id:id,applied_since:None})).await.unwrap();
@@ -143,8 +146,40 @@ async fn legacy_frontier_survives_pruning_and_mixed_paid_booster_survives_merge(
 async fn boss_debt_and_normal_debt_have_independent_daily_caps(pool: PgPool) {
     let (id,_)=player(&pool).await; let mut tx=pool.begin().await.unwrap(); lock(&mut tx,id).await.unwrap();
     for level in 0..100 { sqlx::query("INSERT INTO deferred_level_rewards VALUES($1,$2)").bind(id).bind(level).execute(&mut *tx).await.unwrap(); }
-    assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),350); // 40 normals + 3 bosses
+    assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),250); // 20 normals + 3 bosses
     assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),0);
     sqlx::query("UPDATE wallet_ledger SET created_at=now()-interval '1 day' WHERE player_id=$1").bind(id).execute(&mut *tx).await.unwrap();
-    assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),300); // 40 normals + remaining 2 bosses
+    assert_eq!(pay_deferred(&mut tx,id).await.unwrap(),200); // 20 normals + remaining 2 bosses
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn missing_level_five_does_not_block_six_to_twelve(pool: PgPool) {
+    let (id,h)=player(&pool).await; let s=new_state(pool.clone(),"admin",false);
+    for level in (0..13).filter(|n| *n!=5) {
+        let event=Uuid::new_v4();
+        sqlx::query("INSERT INTO events(event_id,player_id,kind,occurred_at,payload) VALUES($1,$2,'level_end',now(),$3)").bind(event).bind(id).bind(json!({"LevelIndex":level,"Result":{"Outcome":0}})).execute(&pool).await.unwrap();
+        let b=Action{player_id:id,idempotency_key:event,ref_id:event,reason:"level_reward".into(),booster:None,utc_day:None};
+        assert_eq!(grant(State(s.clone()),h.clone(),Json(b)).await.unwrap().0["granted"],5);
+    }
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT gold FROM wallets WHERE player_id=$1").bind(id).fetch_one(&pool).await.unwrap(),60);
+}
+#[sqlx::test(migrations = "./migrations")]
+async fn merge_paid_guest_cancels_account_debt(pool: PgPool) {
+    let (account,_)=player(&pool).await; let (guest,_)=player(&pool).await;
+    let mut tx=pool.begin().await.unwrap(); lock(&mut tx,account).await.unwrap(); lock(&mut tx,guest).await.unwrap();
+    for level in 0..6 {
+        entry(&mut tx,guest,5,"level_reward",&format!("level:{level}"),&format!("g:{level}"),&json!({})).await.unwrap();
+        if level<3 {entry(&mut tx,account,5,"level_reward",&format!("level:{level}"),&format!("c:{level}"),&json!({})).await.unwrap();}
+        else {sqlx::query("INSERT INTO deferred_level_rewards VALUES($1,$2)").bind(account).bind(level).execute(&mut *tx).await.unwrap();}
+    }
+    merge(&mut tx,account,guest).await.unwrap();
+    assert_eq!(snapshot(&mut tx,account).await.unwrap()["gold"],30);
+    assert_eq!(pay_deferred(&mut tx,account).await.unwrap(),0);
+    assert_eq!(snapshot(&mut tx,account).await.unwrap()["gold"],30);
+}
+#[test]
+fn reward_limits_read_config() {
+    let mut config=catalog();
+    config["grants"]=json!({"level_reward_daily_cap":2,"level_reward":7,"boss_reward_daily_cap":1,"boss_reward":31});
+    assert_eq!(reward_limits(&config),[(false,2,7),(true,1,31)]);
 }

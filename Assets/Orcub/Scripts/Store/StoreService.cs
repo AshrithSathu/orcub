@@ -197,7 +197,7 @@ namespace Orcub.Store
             if(string.IsNullOrEmpty(key)) { key=Guid.NewGuid().ToString(); cache.Write(slot,key); }
             try {
                 await Wallet.Submit("/v1/wallet/grant",new {player_id=player,source="booster_unlock",kind,ref_id=key,idempotency_key=key});
-                cache.Write(slot,""); return true;
+                cache.Write("unlock-claimed."+player+"."+kind,"1"); cache.Write(slot,""); return true;
             } catch(Exception) { return false; }
         }
         public Func<string> OldestPending { get; set; }

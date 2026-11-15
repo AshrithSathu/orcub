@@ -68,7 +68,9 @@
   "grants": {
     "daily_gift": 20,
     "level_reward": 5,
-    "level_reward_daily_cap": 40
+    "level_reward_daily_cap": 20,
+    "boss_reward": 50,
+    "boss_reward_daily_cap": 3
   },
   "offers": {
     "starter_min_level": 10,
