@@ -14,6 +14,55 @@ namespace Orcub.Tests
         string directory, path;
         [SetUp] public void Setup() { directory = Path.Combine(Path.GetTempPath(), "orcub-tests-" + Guid.NewGuid()); Directory.CreateDirectory(directory); path = Path.Combine(directory, "events.json"); }
         [TearDown] public void Cleanup() => Directory.Delete(directory, true);
+        [Test] public async Task ContinueHookUsesCapturedLevelStartId()
+        {
+            var start = Orcub.Game.ClientGateway.LastLevelStartEventId;
+            var end = Orcub.Game.ClientGateway.LastLevelEndEventId;
+            var begin = Orcub.Core.ConsumableGateway.BeginAttempt;
+            var started = Orcub.Core.ConsumableGateway.LevelStarted;
+            var ended = Orcub.Core.ConsumableGateway.LevelEnded;
+            var go = new UnityEngine.GameObject("ClientHookTest"); go.SetActive(false);
+            var queue = new EventQueue(path);
+            try
+            {
+                Orcub.Core.ConsumableGateway.BeginAttempt=null;
+                Orcub.Core.ConsumableGateway.LevelStarted=null;
+                Orcub.Core.ConsumableGateway.LevelEnded=null;
+                var client=go.AddComponent<ClientServices>();
+                var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
+                typeof(ClientServices).GetField("queue",flags).SetValue(client,queue);
+                typeof(ClientServices).GetMethod("BindEventIds",flags).Invoke(client,null);
+                client.Track("level_start",new { LevelIndex=3 });
+                var id=Orcub.Game.ClientGateway.LastLevelStartEventId();
+                Assert.True(Guid.TryParse(id,out _)); Assert.AreEqual(queue.LastAddedId,id);
+                client.Track("level_end",new { LevelIndex=3 });
+                Assert.AreEqual(id,Orcub.Game.ClientGateway.LastLevelStartEventId());
+                client.Track("level_start",new { LevelIndex=4 });
+                Assert.AreNotEqual(id,Orcub.Game.ClientGateway.LastLevelStartEventId());
+                Assert.AreEqual(queue.LastAddedId,Orcub.Game.ClientGateway.LastLevelStartEventId());
+            }
+            finally
+            {
+                await queue.Stop(); UnityEngine.Object.DestroyImmediate(go);
+                Orcub.Game.ClientGateway.LastLevelStartEventId=start; Orcub.Game.ClientGateway.LastLevelEndEventId=end;
+                Orcub.Core.ConsumableGateway.BeginAttempt=begin; Orcub.Core.ConsumableGateway.LevelStarted=started; Orcub.Core.ConsumableGateway.LevelEnded=ended;
+            }
+        }
+        [TestCase("lives")] [TestCase("refill_lives")] [TestCase("rewarded_refill_lives")] [TestCase("rewarded_lives")]
+        public void LivesOfferUsesSamePlacementAsReward(string placement)
+        {
+            var track=Orcub.Game.ClientGateway.Event;
+            var go=new UnityEngine.GameObject("AdOfferTest"); go.SetActive(false);
+            try
+            {
+                string kind=null, actual=null;
+                Orcub.Game.ClientGateway.Event=(k,data)=> { kind=k; actual=(string)JObject.FromObject(data)["placement"]; };
+                go.AddComponent<Orcub.Ads.AdService>().RewardedOfferShown(placement);
+                Assert.AreEqual("ad_offer",kind); Assert.AreEqual("rewarded_lives",actual);
+                Assert.AreEqual(Orcub.Ads.AdService.NormalizeRewardedPlacement(placement),actual);
+            }
+            finally { UnityEngine.Object.DestroyImmediate(go); Orcub.Game.ClientGateway.Event=track; }
+        }
         [Test] public async Task DeniedCaptureNeverUploadsAfterConsentChanges()
         {
             var q=new EventQueue(path);

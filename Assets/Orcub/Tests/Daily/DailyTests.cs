@@ -70,14 +70,15 @@ namespace Orcub.Daily.Tests
         [Test] public async Task RewardRetriesBackOffExponentially()
         {
             state.PendingPuzzleGrants.Add("2026-11-15"); wallet.Errors["2026-11-15"]=new TimeoutException();
-            var service=new DailyPuzzleService(c,wallet);
+            double elapsed = 0;
+            var service=new DailyPuzzleService(c,wallet, elapsed: () => elapsed);
             Assert.ThrowsAsync<TimeoutException>(async()=>await service.RetryRewards());
             await service.RetryRewards(); Assert.AreEqual(1,wallet.Calls);
-            clock.UtcNow=clock.UtcNow.AddSeconds(10);
+            elapsed += 10;
             Assert.ThrowsAsync<TimeoutException>(async()=>await service.RetryRewards());
-            clock.UtcNow=clock.UtcNow.AddSeconds(10);
+            elapsed += 10;
             await service.RetryRewards(); Assert.AreEqual(2,wallet.Calls);
-            clock.UtcNow=clock.UtcNow.AddSeconds(10); wallet.Errors.Clear();
+            elapsed += 10; wallet.Errors.Clear();
             await service.RetryRewards(); Assert.AreEqual(3,wallet.Calls); Assert.IsEmpty(state.PendingPuzzleGrants);
         }
         [Test] public void RestoredStreakReflectsBreakage()

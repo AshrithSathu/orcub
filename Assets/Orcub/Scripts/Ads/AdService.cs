@@ -168,7 +168,7 @@ namespace Orcub.Ads
             load();
         }
         public static string NormalizeRewardedPlacement(string placement) => placement.Contains("lives") ? "rewarded_lives" : placement.StartsWith("rewarded_") ? placement : "rewarded_" + placement;
-        public void RewardedOfferShown(string placement) => TrackAd("ad_offer", placement.StartsWith("rewarded_") ? placement : "rewarded_" + placement);
+        public void RewardedOfferShown(string placement) => TrackAd("ad_offer", NormalizeRewardedPlacement(placement));
         public async void ShowRewarded(string placement, Action onReward, Action onClosedWithoutReward)
         {
             placement = NormalizeRewardedPlacement(placement);

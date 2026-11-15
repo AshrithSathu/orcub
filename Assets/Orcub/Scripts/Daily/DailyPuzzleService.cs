@@ -16,6 +16,7 @@ namespace Orcub.Daily
         readonly DailyContext c;
         readonly IDailyWallet wallet;
         readonly Func<Task> flush;
+        readonly Func<double> elapsed;
         Task<DailyPuzzle> preparing;
         string preparingDay;
         bool granting;
@@ -24,8 +25,8 @@ namespace Orcub.Daily
         string startedDay;
         public event Action Changed;
         public event Action<string> RewardGranted;
-        public DailyPuzzleService(DailyContext context, IDailyWallet wallet, Func<Task> flush = null)
-        { c = context; this.wallet = wallet; this.flush = flush ?? (() => Task.CompletedTask); c.Changed += () => Changed?.Invoke(); }
+        public DailyPuzzleService(DailyContext context, IDailyWallet wallet, Func<Task> flush = null, Func<double> elapsed = null)
+        { this.elapsed = elapsed ?? (() => UnityEngine.Time.realtimeSinceStartupAsDouble); c = context; this.wallet = wallet; this.flush = flush ?? (() => Task.CompletedTask); c.Changed += () => Changed?.Invoke(); }
         public int Streak
         {
             get
@@ -99,7 +100,7 @@ namespace Orcub.Daily
         }
         public async Task RetryRewards()
         {
-            if (granting || UnityEngine.Time.realtimeSinceStartupAsDouble < nextRewardRetry) return;
+            if (granting || elapsed() < nextRewardRetry) return;
             granting = true;
             try
             {
@@ -116,7 +117,7 @@ namespace Orcub.Daily
             }
             catch (Exception) {
                 rewardFailures = Math.Min(rewardFailures + 1, 8);
-                nextRewardRetry = UnityEngine.Time.realtimeSinceStartupAsDouble + Math.Pow(2, rewardFailures) * 5;
+                nextRewardRetry = elapsed() + Math.Pow(2, rewardFailures) * 5;
                 throw;
             }
             finally { granting = false; if(c.State.PendingPuzzleGrants.Count == 0) { rewardFailures=0; nextRewardRetry=default; } }

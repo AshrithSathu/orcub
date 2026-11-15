@@ -134,14 +134,7 @@ namespace Orcub.Store
         {
             if(instance==null || !Guid.TryParse(eventId,out _)) throw new InvalidOperationException("reward_not_ready");
             await ClientServices.Instance.Flush();
-            try {
-                var response=await Service.Wallet.Submit("/v1/wallet/grant",new { player_id=instance.PlayerId,reason="level_reward",ref_id=eventId,idempotency_key=eventId });
-                return (int?)response["granted"] ?? 0;
-            }
-            catch(StoreHttpException e) when (e.Status==410 || e.Status==400 || e.Status==422) {
-                instance.Track("error",new { code="level_reward_refused",context="level_reward" });
-                return 0;
-            }
+            return await Service.ClaimLevelReward(eventId);
         }
         double nextForeground;
         async void OnApplicationFocus(bool focused)

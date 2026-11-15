@@ -47,7 +47,7 @@ namespace Orcub.Net
             try { var stored = InstallStore.Read(); if (!string.IsNullOrEmpty(stored)) credentials = JObject.Parse(stored); }
             catch (Exception) { Debug.LogWarning("Install credentials unavailable"); }
             try { if (File.Exists(ConfigPath)) config = JObject.Parse(File.ReadAllText(ConfigPath)); } catch (Exception) { }
-            ClientGateway.LastLevelEndEventId = () => LastLevelEndEventId;
+            BindEventIds();
             ClientGateway.Event = Track;
             ClientGateway.Configure = Configure;
             ClientGateway.Paid = Paid;
@@ -169,6 +169,12 @@ namespace Orcub.Net
             var p = config?["ad_policy"] ?? remote?["ad_policy"]; if (p == null) return;
             ClientGateway.AdCaps?.Invoke((double?)p["interstitial_min_interval_seconds"] ?? 150, (int?)p["interstitial_daily_cap"] ?? 6, (int?)p["rewarded_daily_cap"] ?? 20);
         }
+        void BindEventIds()
+        {
+            ClientGateway.LastLevelStartEventId = () => LastLevelStartEventId;
+            ClientGateway.LastLevelEndEventId = () => LastLevelEndEventId;
+        }
+        public string LastLevelStartEventId { get; private set; }
         public string LastLevelEndEventId { get; private set; }
         public void Track(string kind, object data)
         {
@@ -180,6 +186,7 @@ namespace Orcub.Net
             if (data is AttemptRecord record) data = JObject.Parse(JsonUtility.ToJson(record));
             if(kind=="level_start" || kind=="level_end") { var payload=JObject.FromObject(data); int index=(int?)payload["LevelIndex"]??0; payload["gen_version"]=index<LevelLibrary.CuratedCount ? 0 : InfiniteGenerator.Version; payload["curated"]=index<LevelLibrary.CuratedCount; data=payload; }
             queue.AddCaptured(kind, data, Application.isEditor || Debug.isDebugBuild, AnalyticsConsent.Resolved ? (AnalyticsConsent.Allowed ? 1 : 0) : -1);
+            if(kind=="level_start") LastLevelStartEventId=queue.LastAddedId;
             if(kind=="level_end") LastLevelEndEventId=queue.LastAddedId;
             if (!firebaseReady || !AnalyticsConsent.Allowed) return;
             var fields = JObject.FromObject(data);
@@ -273,7 +280,7 @@ namespace Orcub.Net
         void OnApplicationPause(bool paused) { if (stopped || queue == null) return; if (paused) { EndSession(); queue.Persist(); _ = Flush(); _ = SaveOnPause(); } else StartSession(); }
         async Task SaveOnPause() { try { if(Account!=null) await Account.Save(true); } catch(Exception) { } }
         void OnApplicationQuit() { if (stopped || queue == null) return; EndSession(); queue.Persist(); }
-        void OnDestroy() { AnalyticsConsent.Changed -= ApplyConsent; Application.logMessageReceived -= OnLog; if (Instance == this) { Instance = null; ClientGateway.LastLevelEndEventId=null; ClientGateway.Event = null; ClientGateway.Configure = null; ClientGateway.Paid = null; ClientGateway.Save = null; } }
+        void OnDestroy() { AnalyticsConsent.Changed -= ApplyConsent; Application.logMessageReceived -= OnLog; if (Instance == this) { Instance = null; ClientGateway.LastLevelStartEventId=null; ClientGateway.LastLevelEndEventId=null; ClientGateway.Event = null; ClientGateway.Configure = null; ClientGateway.Paid = null; ClientGateway.Save = null; } }
         internal string MergeProof => (string)credentials?["merge_proof"];
         internal string MergeProofUid => (string)credentials?["merge_proof_uid"];
         internal void SetMergeProof(string proof, string uid)

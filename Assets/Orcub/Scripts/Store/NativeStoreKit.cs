@@ -36,7 +36,8 @@ namespace Orcub.Store
             var value = JObject.Parse(json);
             if ((string)value["id"] == "update") { TransactionUpdated?.Invoke(value["transaction"].ToObject<StoreTransaction>()); return; }
             if (!calls.TryGetValue((string)value["id"], out var source)) return;
-            if (value["error"] != null) source.TrySetException(new InvalidOperationException((string)value["error"]));
+            if ((string)value["error"] == "cancelled") source.TrySetException(new OperationCanceledException("cancelled"));
+            else if (value["error"] != null) source.TrySetException(new InvalidOperationException((string)value["error"]));
             else source.TrySetResult(value);
         }
         public async Task<IReadOnlyList<StoreProduct>> LoadProducts(string[] ids) => (await Call("products", new { ids }))["products"].ToObject<List<StoreProduct>>();

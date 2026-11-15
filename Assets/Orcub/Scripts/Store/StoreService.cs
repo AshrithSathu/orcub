@@ -147,7 +147,7 @@ namespace Orcub.Store
         public IReadOnlyList<StoreProduct> Products { get; private set; } = Array.Empty<StoreProduct>();
         public JArray Offers { get; private set; } = new JArray();
         public JObject Economy { get; private set; }
-        public event Action<string> Purchased, Failed, Pending;
+        public event Action<string> Purchased, Failed, Pending, Cancelled;
         public event Action Changed;
         public StoreService(IStoreKit kit, IStoreBackend backend, IStoreCache cache)
         {
@@ -217,7 +217,33 @@ namespace Orcub.Store
                 if (transaction == null) { Pending?.Invoke(id); return; }
                 await Process(transaction);
             }
+            catch (OperationCanceledException) { Cancelled?.Invoke(id); }
             catch (Exception) { backend.Track("iap_failed", new { metric_count = 1, metric_success = false }); Failed?.Invoke(id); }
+        }
+        public async Task<int> ClaimLevelReward(string eventId)
+        {
+            try
+            {
+                var response = await Wallet.Submit("/v1/wallet/grant", new { player_id = backend.PlayerId,
+                    reason = "level_reward", ref_id = eventId, idempotency_key = eventId });
+                return (bool?)response["deferred"] == true ? Orcub.Game.RewardClaims.Deferred : (int?)response["granted"] ?? 0;
+            }
+            catch (StoreHttpException e) when (e.Status == 409 || e.Status == 410)
+            {
+                string reason = e.Message;
+                try { reason = (string)JObject.Parse(reason)["error"] ?? reason; }
+                catch (Newtonsoft.Json.JsonException) { }
+                if (reason == "reward_cap" || reason == "reward_deferred" || reason == "deferred")
+                    return Orcub.Game.RewardClaims.Deferred;
+                if (e.Status != 410) throw;
+                backend.Track("error", new { code = "level_reward_refused", context = "level_reward" });
+                return 0;
+            }
+            catch (StoreHttpException e) when (e.Status == 400 || e.Status == 422)
+            {
+                backend.Track("error", new { code = "level_reward_refused", context = "level_reward" });
+                return 0;
+            }
         }
         public async Task RetryPending()
         {

@@ -60,12 +60,12 @@ namespace Orcub.Features
             PurchaseOutcome? result = null;
             void Ok(string id) { if (id == productId) result = PurchaseOutcome.Purchased; }
             void Wait(string id) { if (id == productId && result == null) result = PurchaseOutcome.Pending; }
-            // MISSING API: StoreService reports a StoreKit cancellation as Failed, so cancel reads as a failure here.
+            void Cancel(string id) { if (id == productId && result == null) result = PurchaseOutcome.Cancelled; }
             void Bad(string id) { if (id == productId && result == null) result = PurchaseOutcome.Failed; }
-            s.Purchased += Ok; s.Pending += Wait; s.Failed += Bad;
+            s.Purchased += Ok; s.Pending += Wait; s.Failed += Bad; s.Cancelled += Cancel;
             try { await s.Purchase(productId); }
             catch (Exception) { result ??= PurchaseOutcome.Failed; }
-            finally { s.Purchased -= Ok; s.Pending -= Wait; s.Failed -= Bad; }
+            finally { s.Purchased -= Ok; s.Pending -= Wait; s.Failed -= Bad; s.Cancelled -= Cancel; }
             return result ?? PurchaseOutcome.Failed;
         }
 

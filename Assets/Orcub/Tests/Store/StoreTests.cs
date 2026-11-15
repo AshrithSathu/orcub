@@ -19,7 +19,10 @@ namespace Orcub.Tests
             public readonly List<string> Calls = new List<string>();
             readonly Dictionary<string,string> cache = new Dictionary<string,string>();
             public readonly StoreTransaction Transaction = new StoreTransaction { Id = "123", ProductId = StoreService.ProductIds[0], Jws = "signed.jws.transaction" };
-            public bool Reject, PendingPurchase, HasUnfinished, MixedRestore;
+            public bool Reject, PendingPurchase, HasUnfinished, MixedRestore, CancelPurchase;
+            public string RejectReason;
+            public bool DeferredReward;
+            public int GrantedReward;
             public readonly List<string[]> RestoreBatches = new List<string[]>();
             public JObject LastGrant;
             public int Debits, Finished;
@@ -31,9 +34,9 @@ namespace Orcub.Tests
             {
                 Calls.Add(path);
                 if (Reject) throw new InvalidOperationException("offline");
-                if (RejectStatus != 0) throw new StoreHttpException(RejectStatus);
+                if (RejectStatus != 0) throw new StoreHttpException(RejectStatus, RejectReason);
                 var request = body == null ? new JObject() : JObject.FromObject(body);
-                if(path=="/v1/wallet/grant") { LastGrant=request; return Task.FromResult(new JObject { ["wallet"]=State }); }
+                if(path=="/v1/wallet/grant") { LastGrant=request; return Task.FromResult(new JObject { ["wallet"]=State, ["granted"]=GrantedReward, ["deferred"]=DeferredReward }); }
                 if (path == "/v1/iap/apple") { Assert.AreEqual(Transaction.Jws, (string)request["signed_transaction"]); return Task.FromResult(new JObject { ["wallet"] = State, ["transaction_id"] = Transaction.Id }); }
                 if (path == "/v1/wallet/spend")
                 {
@@ -56,11 +59,70 @@ namespace Orcub.Tests
             public string Read(string key) => cache.TryGetValue(key, out var value) ? value : "";
             public void Write(string key, string value) { cache[key] = value; }
             public Task<IReadOnlyList<StoreProduct>> LoadProducts(string[] ids) => Task.FromResult<IReadOnlyList<StoreProduct>>(new[] { new StoreProduct { Id = Transaction.ProductId, LocalizedPrice = "₹ 199" } });
-            public Task<StoreTransaction> Purchase(string id, string appAccountToken) { Assert.AreEqual(PlayerId, appAccountToken); return Task.FromResult(PendingPurchase ? null : Transaction); }
+            public Task<StoreTransaction> Purchase(string id, string appAccountToken) { Assert.AreEqual(PlayerId, appAccountToken); if (CancelPurchase) throw new OperationCanceledException("cancelled"); return Task.FromResult(PendingPurchase ? null : Transaction); }
             public Task<IReadOnlyList<StoreTransaction>> Unfinished() => Task.FromResult<IReadOnlyList<StoreTransaction>>(HasUnfinished ? new[] { Transaction } : Array.Empty<StoreTransaction>());
             public Task<IReadOnlyList<StoreTransaction>> Restore() => Task.FromResult<IReadOnlyList<StoreTransaction>>(MixedRestore ? new[] { Transaction, new StoreTransaction { Id = "456", ProductId = "bad", Jws = "bad.jws" } } : new[] { Transaction });
             public Task Finish(string id) { Calls.Add("finish"); Finished++; return Task.CompletedTask; }
             public void Update() => TransactionUpdated?.Invoke(Transaction);
+        }
+        [Test] public async Task CancelledPurchaseIsDistinctAndBridgeStaysQuiet()
+        {
+            var f = new Fake { CancelPurchase = true }; var service = new StoreService(f,f,f);
+            await service.Initialize();
+            int cancelled=0, failed=0, pending=0;
+            service.Cancelled += _ => cancelled++; service.Failed += _ => failed++; service.Pending += _ => pending++;
+            var property = typeof(StoreRuntime).GetProperty("Service");
+            var previous = property.GetValue(null);
+            try
+            {
+                property.SetValue(null, service);
+                Assert.AreEqual(Orcub.Game.PurchaseOutcome.Cancelled, await new Orcub.Features.StoreShopPort().Purchase(f.Transaction.ProductId));
+                Assert.AreEqual(1,cancelled); Assert.AreEqual(0,failed); Assert.AreEqual(0,pending);
+                Assert.AreEqual(0,f.Finished); Assert.False(f.Calls.Contains("iap_failed"));
+            }
+            finally { property.SetValue(null, previous); }
+        }
+        [Test] public async Task NativeCancellationBecomesOperationCancelled()
+        {
+            var go = new GameObject("StoreCancelTest");
+            try
+            {
+                var kit = go.AddComponent<NativeStoreKit>();
+                var calls = (Dictionary<string, TaskCompletionSource<JObject>>)typeof(NativeStoreKit)
+                    .GetField("calls",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance).GetValue(kit);
+                var source = new TaskCompletionSource<JObject>(); calls.Add("cancel-test",source);
+                kit.StoreResult("{\"id\":\"cancel-test\",\"error\":\"cancelled\"}");
+                try { await source.Task; Assert.Fail("Expected cancellation"); }
+                catch (OperationCanceledException) { }
+            }
+            finally { UnityEngine.Object.DestroyImmediate(go); }
+        }
+        [TestCase(409,"reward_cap")] [TestCase(410,"reward_cap")]
+        [TestCase(409,"reward_deferred")] [TestCase(410,"deferred")]
+        [TestCase(410,"{\"error\":\"reward_cap\"}")]
+        public async Task CappedRewardIsDeferred(long status,string reason)
+        {
+            var f = new Fake { RejectStatus=status, RejectReason=reason };
+            Assert.AreEqual(Orcub.Game.RewardClaims.Deferred, await new StoreService(f,f,f).ClaimLevelReward(Guid.NewGuid().ToString()));
+        }
+        [TestCase(400)] [TestCase(422)] [TestCase(410)]
+        public async Task PermanentRewardRefusalReturnsZero(long status)
+        {
+            var f = new Fake { RejectStatus=status, RejectReason="reward_expired" };
+            Assert.AreEqual(0, await new StoreService(f,f,f).ClaimLevelReward(Guid.NewGuid().ToString()));
+        }
+        [TestCase("reward_pending")] [TestCase("reward_sequence_pending")]
+        public async Task PendingRewardRemainsRetryable(string reason)
+        {
+            var f = new Fake { RejectStatus=409, RejectReason=reason };
+            try { await new StoreService(f,f,f).ClaimLevelReward(Guid.NewGuid().ToString()); Assert.Fail("Expected refusal"); }
+            catch (StoreHttpException error) { Assert.AreEqual(409,error.Status); }
+        }
+        [TestCase(true,0,-1)] [TestCase(true,10,-1)] [TestCase(false,5,5)] [TestCase(false,0,0)]
+        public async Task SuccessfulRewardHonoursBackendDeferredFlag(bool deferred,int granted,int expected)
+        {
+            var f = new Fake { DeferredReward=deferred, GrantedReward=granted };
+            Assert.AreEqual(expected,await new StoreService(f,f,f).ClaimLevelReward(Guid.NewGuid().ToString()));
         }
         [Test] public async Task UnlockConfirmationBelongsToPlayer()
         {
